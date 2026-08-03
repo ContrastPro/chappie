@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chappie-trader"
+version = "0.1.0"
+description = "Modular trading agent and future Chappie financial core"
+readme = "README.md"
+requires-python = ">=3.13"
+
+dependencies = [
+    "pydantic-settings>=2.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.9",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+exclude = ["data*", "logs*", "tests*"]
