@@ -1,6 +1,7 @@
 import logging
 
 from app.core.config import Settings
+from app.market.binance_provider import BinanceMarketProvider
 
 
 class TraderAgent:
@@ -30,6 +31,25 @@ class TraderAgent:
             self._logger.warning(
                 "Live mode is configured, but real trading is not implemented"
             )
+
+        with BinanceMarketProvider(
+            base_url=self._settings.binance_market_base_url,
+        ) as market:
+            server_time = market.get_server_time()
+            ticker = market.get_ticker_price(
+                self._settings.default_symbol
+            )
+
+        self._logger.info(
+            "Binance server time: %s",
+            server_time.datetime_utc.isoformat(),
+        )
+
+        self._logger.info(
+            "Current %s price: %s",
+            ticker.symbol,
+            ticker.price,
+        )
 
         self._is_running = True
         self._logger.info("TraderAgent started successfully")

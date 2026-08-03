@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     )
 
     exchange_name: str = "binance"
+    binance_market_base_url: str = "https://data-api.binance.vision"
     default_symbol: str = "BTCUSDT"
     default_interval: str = "1m"
 
