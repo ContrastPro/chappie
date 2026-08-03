@@ -46,6 +46,7 @@ AI-компоненты могут быть добавлены позднее к
 - получение серверного времени и текущей цены;
 - получение и преобразование Binance OHLCV-свечей;
 - независимая проверка качества свечей и их последовательностей;
+- bounded in-memory Market Cache с атомарным batch upsert и defensive snapshots;
 - типизированные модели рыночных данных;
 - внедрение рыночного провайдера в `TraderAgent`;
 - базовое управление запуском и остановкой агента;
@@ -54,7 +55,7 @@ AI-компоненты могут быть добавлены позднее к
 Пока не реализованы:
 
 - постоянный цикл обработки рынка;
-- Market Cache и единый внутренний read path рыночных данных;
+- Polling Engine и долгоживущий ingestion loop;
 - торговые стратегии;
 - риск-менеджмент;
 - paper/live execution;
@@ -228,6 +229,28 @@ Market Cache не отвечает за:
 - особенности Binance или другого провайдера.
 
 Минимальный design proposal и открытые вопросы описаны в `MARKET_CACHE_DESIGN.md`.
+
+#### Polling Engine
+
+Polling Engine — application/infrastructure orchestration component первого market ingestion процесса. Он связывает инфраструктурный порт, независимую проверку данных и внутреннее хранилище:
+
+```text
+MarketProvider -> Candle Validation -> Market Cache
+```
+
+Polling Engine:
+
+- получает нормализованные свечи через `MarketProvider`;
+- передаёт их существующему validation-компоненту до изменения cache;
+- записывает только успешно проверенные данные в Market Cache;
+- управляет cadence, retries/backoff и кооперативной остановкой;
+- является единственным writer Market Cache в первой синхронной версии;
+- передаёт явное время наблюдения в validation и cache;
+- различает provider, validation и cache errors в логах, метриках и результате цикла.
+
+Polling Engine не содержит торговой логики, индикаторов, стратегии, risk или execution. Стратегии и другие внутренние потребители не вызывают его и не используют `MarketProvider` напрямую: они читают состояние только через Market Cache.
+
+`MarketProvider` создаётся и закрывается composition root. Polling Engine использует внедрённый provider, но не владеет его ресурсом и не закрывает его самостоятельно. Детальный lifecycle, state machine и retry policy описаны в `POLLING_ENGINE_DESIGN.md`.
 
 ### `strategies`
 
