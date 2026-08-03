@@ -51,9 +51,12 @@
 
 #### M1.7 Market Events
 
-- Определить типизированные события изменения рыночного состояния.
-- Публиковать события только после успешной валидации и обновления Market Cache.
-- Обеспечить детерминированный порядок событий и достаточную metadata для аудита.
+- Реализовать минимальные cache-события `CandleInserted`, `CandleUpdated`, `CandleClosed` и `CandleEvicted`.
+- Отделить диагностические `MarketGapDetected` и `MarketStreamFailed` от событий изменения cache.
+- Публиковать cache-события только после успешной валидации и атомарного обновления Market Cache.
+- Добавить синхронный in-process Event Dispatcher с aggregate delivery result.
+- Обеспечить детерминированный порядок, immutable payload и однократное `CandleClosed` в пределах lifecycle процесса.
+- Расширить cache mutation result подробными изменениями без удаления текущих счётчиков.
 - Не включать стратегии, торговые решения или execution.
 
 #### M1.8 Stage 1 completion
