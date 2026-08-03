@@ -1,14 +1,25 @@
 from typing import Protocol
 
-from app.market.models import ServerTime, TickerPrice
+from app.market.models import Candle, ServerTime, TickerPrice
 
 
 class MarketProvider(Protocol):
     def get_server_time(self) -> ServerTime:
-        """Возвращает серверное время источника рынка."""
+        """Return server time."""
 
-    def get_ticker_price(self, symbol: str) -> TickerPrice:
-        """Возвращает текущую цену торгового инструмента."""
+    def get_ticker_price(
+        self,
+        symbol: str,
+    ) -> TickerPrice:
+        """Return current ticker price."""
+
+    def get_candles(
+        self,
+        symbol: str,
+        interval: str,
+        limit: int,
+    ) -> list[Candle]:
+        """Return historical candles."""
 
     def close(self) -> None:
-        """Освобождает ресурсы провайдера."""
+        """Release resources."""

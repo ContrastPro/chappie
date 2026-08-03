@@ -4,7 +4,30 @@ from typing import Any, Self
 import httpx
 
 from app.market.exceptions import MarketProviderError
-from app.market.models import ServerTime, TickerPrice
+from app.market.models import Candle, ServerTime, TickerPrice
+
+BINANCE_SPOT_INTERVALS = frozenset(
+    {
+        "1s",
+        "1m",
+        "3m",
+        "5m",
+        "15m",
+        "30m",
+        "1h",
+        "2h",
+        "4h",
+        "6h",
+        "8h",
+        "12h",
+        "1d",
+        "3d",
+        "1w",
+        "1M",
+    }
+)
+MIN_CANDLE_LIMIT = 1
+MAX_CANDLE_LIMIT = 1000
 
 
 class BinanceMarketProvider:
@@ -24,9 +47,14 @@ class BinanceMarketProvider:
     def get_server_time(self) -> ServerTime:
         payload = self._get_json("/api/v3/time")
 
+        if not isinstance(payload, dict):
+            raise MarketProviderError(
+                "Binance returned an unexpected server time response format"
+            )
+
         server_time = payload.get("serverTime")
 
-        if not isinstance(server_time, int):
+        if not self._is_integer(server_time):
             raise MarketProviderError(
                 "Binance returned an invalid serverTime value"
             )
@@ -34,15 +62,17 @@ class BinanceMarketProvider:
         return ServerTime(timestamp_ms=server_time)
 
     def get_ticker_price(self, symbol: str) -> TickerPrice:
-        normalized_symbol = symbol.strip().upper()
-
-        if not normalized_symbol:
-            raise ValueError("Symbol must not be empty")
+        normalized_symbol = self._validate_symbol(symbol)
 
         payload = self._get_json(
             "/api/v3/ticker/price",
             params={"symbol": normalized_symbol},
         )
+
+        if not isinstance(payload, dict):
+            raise MarketProviderError(
+                "Binance returned an unexpected ticker response format"
+            )
 
         response_symbol = payload.get("symbol")
         raw_price = payload.get("price")
@@ -52,22 +82,39 @@ class BinanceMarketProvider:
                 "Binance returned an invalid symbol"
             )
 
-        if not isinstance(raw_price, str):
-            raise MarketProviderError(
-                "Binance returned an invalid price"
-            )
-
-        try:
-            price = Decimal(raw_price)
-        except InvalidOperation as error:
-            raise MarketProviderError(
-                "Binance returned a non-numeric price"
-            ) from error
-
         return TickerPrice(
             symbol=response_symbol,
-            price=price,
+            price=self._parse_decimal(raw_price, "price"),
         )
+
+    def get_candles(
+        self,
+        symbol: str,
+        interval: str,
+        limit: int,
+    ) -> list[Candle]:
+        normalized_symbol = self._validate_symbol(symbol)
+        normalized_interval = self._validate_interval(interval)
+        validated_limit = self._validate_limit(limit)
+
+        payload = self._get_json(
+            "/api/v3/klines",
+            params={
+                "symbol": normalized_symbol,
+                "interval": normalized_interval,
+                "limit": str(validated_limit),
+            },
+        )
+
+        if not isinstance(payload, list):
+            raise MarketProviderError(
+                "Binance returned an unexpected candles response format"
+            )
+
+        return [
+            self._parse_candle(raw_candle, index)
+            for index, raw_candle in enumerate(payload)
+        ]
 
     def close(self) -> None:
         self._client.close()
@@ -87,7 +134,7 @@ class BinanceMarketProvider:
         self,
         path: str,
         params: dict[str, str] | None = None,
-    ) -> dict[str, Any]:
+    ) -> Any:
         try:
             response = self._client.get(
                 path,
@@ -116,9 +163,104 @@ class BinanceMarketProvider:
                 "Binance returned invalid JSON"
             ) from error
 
-        if not isinstance(payload, dict):
-            raise MarketProviderError(
-                "Binance returned an unexpected response format"
+        return payload
+
+    @staticmethod
+    def _validate_symbol(symbol: str) -> str:
+        if not isinstance(symbol, str):
+            raise TypeError("Symbol must be a string")
+
+        normalized_symbol = symbol.strip().upper()
+
+        if not normalized_symbol:
+            raise ValueError("Symbol must not be empty")
+
+        if not normalized_symbol.isascii() or not normalized_symbol.isalnum():
+            raise ValueError("Symbol must contain only ASCII letters and digits")
+
+        return normalized_symbol
+
+    @staticmethod
+    def _validate_interval(interval: str) -> str:
+        if not isinstance(interval, str):
+            raise TypeError("Interval must be a string")
+
+        normalized_interval = interval.strip()
+
+        if normalized_interval not in BINANCE_SPOT_INTERVALS:
+            raise ValueError(f"Unsupported Binance Spot interval: {interval!r}")
+
+        return normalized_interval
+
+    @staticmethod
+    def _validate_limit(limit: int) -> int:
+        if not BinanceMarketProvider._is_integer(limit):
+            raise ValueError("Limit must be an integer")
+
+        if not MIN_CANDLE_LIMIT <= limit <= MAX_CANDLE_LIMIT:
+            raise ValueError(
+                f"Limit must be between {MIN_CANDLE_LIMIT} and {MAX_CANDLE_LIMIT}"
             )
 
-        return payload
+        return limit
+
+    @staticmethod
+    def _parse_candle(raw_candle: Any, index: int) -> Candle:
+        if not isinstance(raw_candle, list) or len(raw_candle) < 7:
+            raise MarketProviderError(
+                f"Binance returned an invalid candle at index {index}"
+            )
+
+        open_time_ms = raw_candle[0]
+        close_time_ms = raw_candle[6]
+
+        if not BinanceMarketProvider._is_integer(open_time_ms):
+            raise MarketProviderError(
+                f"Binance returned an invalid open time for candle at index {index}"
+            )
+
+        if not BinanceMarketProvider._is_integer(close_time_ms):
+            raise MarketProviderError(
+                f"Binance returned an invalid close time for candle at index {index}"
+            )
+
+        return Candle(
+            open_time_ms=open_time_ms,
+            close_time_ms=close_time_ms,
+            open=BinanceMarketProvider._parse_decimal(raw_candle[1], "open", index),
+            high=BinanceMarketProvider._parse_decimal(raw_candle[2], "high", index),
+            low=BinanceMarketProvider._parse_decimal(raw_candle[3], "low", index),
+            close=BinanceMarketProvider._parse_decimal(raw_candle[4], "close", index),
+            volume=BinanceMarketProvider._parse_decimal(raw_candle[5], "volume", index),
+        )
+
+    @staticmethod
+    def _parse_decimal(
+        value: Any,
+        field_name: str,
+        candle_index: int | None = None,
+    ) -> Decimal:
+        location = "" if candle_index is None else f" for candle at index {candle_index}"
+
+        if not isinstance(value, str):
+            raise MarketProviderError(
+                f"Binance returned an invalid {field_name}{location}"
+            )
+
+        try:
+            result = Decimal(value)
+        except InvalidOperation as error:
+            raise MarketProviderError(
+                f"Binance returned a non-numeric {field_name}{location}"
+            ) from error
+
+        if not result.is_finite():
+            raise MarketProviderError(
+                f"Binance returned a non-finite {field_name}{location}"
+            )
+
+        return result
+
+    @staticmethod
+    def _is_integer(value: Any) -> bool:
+        return isinstance(value, int) and not isinstance(value, bool)
