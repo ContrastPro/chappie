@@ -5,6 +5,15 @@ from decimal import Decimal
 import pytest
 
 from app.market.cache import InMemoryMarketCache, MarketStreamKey
+from app.market.events import (
+    CandleInserted,
+    EventDeliveryResult,
+    MarketEvent,
+    MarketEventDispatcher,
+    MarketEventProjector,
+    MarketGapDetected,
+    MarketStreamFailed,
+)
 from app.market.exceptions import (
     MarketProviderHTTPError,
     MarketProviderTimeoutError,
@@ -13,6 +22,7 @@ from app.market.exceptions import (
 from app.market.models import Candle, ServerTime, TickerPrice
 from app.market.polling import (
     PollCycleOutcome,
+    PollDeliveryOutcome,
     PollErrorCategory,
     PollingLifecycleState,
     PollingPolicy,
@@ -113,6 +123,50 @@ class ScriptedMarketProvider:
         self.close_calls += 1
 
 
+class SequentialIdFactory:
+    def __init__(self, prefix: str) -> None:
+        self.prefix = prefix
+        self.value = 0
+
+    def next_id(self) -> str:
+        self.value += 1
+        return f"{self.prefix}-{self.value}"
+
+
+class FailOnceIdFactory(SequentialIdFactory):
+    def __init__(self, fail_on: int) -> None:
+        super().__init__("event")
+        self.fail_on = fail_on
+
+    def next_id(self) -> str:
+        self.value += 1
+        if self.value == self.fail_on:
+            raise RuntimeError("id allocation failed")
+        return f"{self.prefix}-{self.value}"
+
+
+class OwnershipTrackingDispatcher(MarketEventDispatcher):
+    def __init__(self) -> None:
+        super().__init__()
+        self.close_calls = 0
+
+    def close(self) -> None:
+        self.close_calls += 1
+
+
+class FailingInfrastructureDispatcher(MarketEventDispatcher):
+    def __init__(self, fail_on_publish: int) -> None:
+        super().__init__()
+        self.fail_on_publish = fail_on_publish
+        self.publish_calls = 0
+
+    def publish(self, event: MarketEvent) -> EventDeliveryResult:
+        self.publish_calls += 1
+        if self.publish_calls == self.fail_on_publish:
+            raise RuntimeError("dispatcher infrastructure failed")
+        return super().publish(event)
+
+
 def make_engine(
     responses: list[list[Candle] | Exception],
     *,
@@ -121,6 +175,10 @@ def make_engine(
     sleeper: FakeSleeper | None = None,
     policy: PollingPolicy | None = None,
     on_provider_call: Callable[[int], None] | None = None,
+    dispatcher: MarketEventDispatcher | None = None,
+    projector: MarketEventProjector | None = None,
+    event_id_factory: SequentialIdFactory | None = None,
+    correlation_id_factory: SequentialIdFactory | None = None,
 ) -> tuple[
     SynchronousRestPollingEngine,
     ScriptedMarketProvider,
@@ -139,6 +197,10 @@ def make_engine(
         policy=policy,
         clock=fake_clock,
         sleeper=fake_sleeper,
+        dispatcher=dispatcher,
+        projector=projector,
+        event_id_factory=event_id_factory,
+        correlation_id_factory=correlation_id_factory,
     )
     return engine, provider, market_cache, fake_clock, fake_sleeper
 
@@ -707,6 +769,340 @@ def test_cycle_result_distinguishes_bootstrap_regular_and_recovery() -> None:
     assert (regular.bootstrap, regular.recovery) == (False, False)
     assert (recovery.bootstrap, recovery.recovery) == (False, True)
     assert len(provider.calls) == 4
+
+
+def test_successful_cycle_publishes_confirmed_cache_events() -> None:
+    dispatcher = MarketEventDispatcher()
+    received: list[MarketEvent] = []
+    dispatcher.subscribe(MarketEvent, received.append)
+    projector = MarketEventProjector(SequentialIdFactory("event"))
+    correlations = SequentialIdFactory("cycle")
+    candles = [make_candle(0), make_candle(1)]
+    engine, _, _, _, _ = make_engine(
+        [candles],
+        dispatcher=dispatcher,
+        projector=projector,
+        correlation_id_factory=correlations,
+    )
+
+    result = engine.run_once()
+
+    assert [type(event) for event in received] == [CandleInserted, CandleInserted]
+    assert result.published_event_count == 2
+    assert result.delivery_failure_count == 0
+    assert result.delivery_outcome is PollDeliveryOutcome.SUCCESS
+    assert result.correlation_cycle_id == "cycle-1"
+    assert {event.correlation_cycle_id for event in received} == {"cycle-1"}
+
+
+def test_handler_failure_degrades_delivery_without_failing_ingestion() -> None:
+    dispatcher = MarketEventDispatcher()
+
+    def fail(event: MarketEvent) -> None:
+        raise RuntimeError("consumer unavailable")
+
+    dispatcher.subscribe(CandleInserted, fail)
+    projector = MarketEventProjector(SequentialIdFactory("event"))
+    engine, provider, cache, _, sleeper = make_engine(
+        [[make_candle(0)]],
+        dispatcher=dispatcher,
+        projector=projector,
+    )
+
+    result = engine.run_once()
+
+    assert result.outcome is PollCycleOutcome.SUCCESS
+    assert result.delivery_outcome is PollDeliveryOutcome.DELIVERY_DEGRADED
+    assert result.delivery_failure_count == 1
+    assert engine.status.consecutive_failures == 0
+    assert engine.status.failed_cycles == 0
+    assert len(provider.calls) == 1
+    assert sleeper.waits == []
+    assert result.recovery is False
+    assert cache.get_latest_candle(KEY) == make_candle(0)
+
+
+def test_validation_failure_publishes_no_cache_change_event() -> None:
+    dispatcher = MarketEventDispatcher()
+    received: list[MarketEvent] = []
+    dispatcher.subscribe(MarketEvent, received.append)
+    projector = MarketEventProjector(SequentialIdFactory("event"))
+    invalid = make_candle(0, high="0")
+    engine, _, cache, _, _ = make_engine(
+        [[invalid]],
+        dispatcher=dispatcher,
+        projector=projector,
+        event_id_factory=SequentialIdFactory("diagnostic"),
+    )
+
+    result = engine.run_once()
+
+    assert result.outcome is PollCycleOutcome.FAILED
+    assert all(not isinstance(event, CandleInserted) for event in received)
+    assert [type(event) for event in received] == [MarketStreamFailed]
+    assert cache.get_snapshot(KEY) == ()
+
+
+def test_cache_failure_publishes_no_cache_change_event() -> None:
+    cached = make_candle(0)
+    conflicting = make_candle(0, close="106")
+    cache = InMemoryMarketCache()
+    seed_cache(cache, [cached], cached.close_time_ms + 1)
+    dispatcher = MarketEventDispatcher()
+    received: list[MarketEvent] = []
+    dispatcher.subscribe(MarketEvent, received.append)
+    projector = MarketEventProjector(SequentialIdFactory("event"))
+    engine, _, _, _, _ = make_engine(
+        [[conflicting]],
+        cache=cache,
+        dispatcher=dispatcher,
+        projector=projector,
+        event_id_factory=SequentialIdFactory("diagnostic"),
+    )
+
+    result = engine.run_once()
+
+    assert result.outcome is PollCycleOutcome.FAILED
+    assert result.error_category is PollErrorCategory.CACHE
+    assert [type(event) for event in received] == [MarketStreamFailed]
+    assert cache.get_snapshot(KEY) == (cached,)
+
+
+def test_gap_diagnostic_precedes_recovery_cache_events() -> None:
+    cached = make_candle(0)
+    cache = InMemoryMarketCache()
+    seed_cache(cache, [cached], OPEN_TIME_MS + 10 * INTERVAL_MS)
+    dispatcher = MarketEventDispatcher()
+    received: list[MarketEvent] = []
+    dispatcher.subscribe(MarketEvent, received.append)
+    projector = MarketEventProjector(SequentialIdFactory("event"))
+    engine, _, _, _, _ = make_engine(
+        [
+            [make_candle(2), make_candle(3)],
+            [make_candle(index) for index in range(4)],
+        ],
+        cache=cache,
+        dispatcher=dispatcher,
+        projector=projector,
+        event_id_factory=SequentialIdFactory("diagnostic"),
+        correlation_id_factory=SequentialIdFactory("cycle"),
+    )
+
+    result = engine.run_once()
+
+    assert result.outcome is PollCycleOutcome.SUCCESS
+    assert result.recovery is True
+    assert isinstance(received[0], MarketGapDetected)
+    assert received[0].expected_open_time_ms == make_candle(1).open_time_ms
+    assert received[0].received_open_time_ms == make_candle(2).open_time_ms
+    assert any(isinstance(event, CandleInserted) for event in received[1:])
+    assert {event.correlation_cycle_id for event in received} == {"cycle-1"}
+    assert result.published_event_count == len(received)
+
+
+def test_terminal_provider_failure_publishes_stream_failed() -> None:
+    dispatcher = MarketEventDispatcher()
+    received: list[MarketEvent] = []
+    dispatcher.subscribe(MarketEvent, received.append)
+    projector = MarketEventProjector(SequentialIdFactory("event"))
+    error = MarketProviderHTTPError(400)
+    engine, _, _, _, _ = make_engine(
+        [error],
+        dispatcher=dispatcher,
+        projector=projector,
+        event_id_factory=SequentialIdFactory("diagnostic"),
+    )
+
+    result = engine.run_once()
+
+    assert result.outcome is PollCycleOutcome.FAILED
+    assert result.fatal is True
+    assert len(received) == 1
+    assert isinstance(received[0], MarketStreamFailed)
+    assert received[0].terminal is True
+    assert result.published_event_count == 1
+
+    with pytest.raises(PollingEngineStateError):
+        engine.run_once()
+    assert len(received) == 1
+
+
+def test_terminal_diagnostic_handler_failure_preserves_ingestion_error() -> None:
+    dispatcher = MarketEventDispatcher()
+
+    def fail_diagnostic(event: MarketEvent) -> None:
+        raise RuntimeError("diagnostic consumer failed")
+
+    dispatcher.subscribe(MarketStreamFailed, fail_diagnostic)
+    projector = MarketEventProjector(SequentialIdFactory("event"))
+    engine, provider, _, _, sleeper = make_engine(
+        [MarketProviderHTTPError(400)],
+        dispatcher=dispatcher,
+        projector=projector,
+        event_id_factory=SequentialIdFactory("diagnostic"),
+    )
+
+    result = engine.run_once()
+
+    assert result.outcome is PollCycleOutcome.FAILED
+    assert result.error_category is PollErrorCategory.PROVIDER
+    assert result.delivery_failure_count == 1
+    assert result.delivery_outcome is PollDeliveryOutcome.FAILED
+    assert len(provider.calls) == 1
+    assert sleeper.waits == []
+
+
+def test_different_polling_cycles_receive_different_correlation_ids() -> None:
+    dispatcher = MarketEventDispatcher()
+    received: list[MarketEvent] = []
+    dispatcher.subscribe(MarketEvent, received.append)
+    projector = MarketEventProjector(SequentialIdFactory("event"))
+    engine, _, _, _, _ = make_engine(
+        [[make_candle(0)], [make_candle(0), make_candle(1)]],
+        dispatcher=dispatcher,
+        projector=projector,
+        correlation_id_factory=SequentialIdFactory("cycle"),
+    )
+
+    first = engine.run_once()
+    second = engine.run_once()
+
+    assert first.correlation_cycle_id == "cycle-1"
+    assert second.correlation_cycle_id == "cycle-2"
+    assert {event.correlation_cycle_id for event in received} == {
+        "cycle-1",
+        "cycle-2",
+    }
+
+
+def test_degraded_delivery_does_not_republish_successful_handler_event() -> None:
+    dispatcher = MarketEventDispatcher()
+    failing_calls: list[str] = []
+    successful_calls: list[str] = []
+
+    def failing(event: MarketEvent) -> None:
+        failing_calls.append(event.event_id)
+        raise RuntimeError("consumer unavailable")
+
+    dispatcher.subscribe(CandleInserted, failing)
+    dispatcher.subscribe(
+        CandleInserted,
+        lambda event: successful_calls.append(event.event_id),
+    )
+    projector = MarketEventProjector(SequentialIdFactory("event"))
+    candle = make_candle(0)
+    engine, provider, _, _, sleeper = make_engine(
+        [[candle], [candle]],
+        dispatcher=dispatcher,
+        projector=projector,
+    )
+
+    degraded = engine.run_once()
+    unchanged = engine.run_once()
+
+    assert degraded.delivery_outcome is PollDeliveryOutcome.DELIVERY_DEGRADED
+    assert unchanged.outcome is PollCycleOutcome.SUCCESS
+    assert failing_calls == ["event-1"]
+    assert successful_calls == ["event-1"]
+    assert len(provider.calls) == 2
+    assert sleeper.waits == []
+
+
+def test_diagnostic_handler_failure_does_not_mask_successful_recovery() -> None:
+    cached = make_candle(0)
+    cache = InMemoryMarketCache()
+    seed_cache(cache, [cached], OPEN_TIME_MS + 10 * INTERVAL_MS)
+    dispatcher = MarketEventDispatcher()
+    received: list[MarketEvent] = []
+    dispatcher.subscribe(MarketEvent, received.append)
+
+    def fail_gap(event: MarketEvent) -> None:
+        raise RuntimeError("diagnostic consumer failed")
+
+    dispatcher.subscribe(MarketGapDetected, fail_gap)
+    projector = MarketEventProjector(SequentialIdFactory("event"))
+    engine, provider, _, _, sleeper = make_engine(
+        [
+            [make_candle(2), make_candle(3)],
+            [make_candle(index) for index in range(4)],
+        ],
+        cache=cache,
+        dispatcher=dispatcher,
+        projector=projector,
+    )
+
+    result = engine.run_once()
+
+    assert result.outcome is PollCycleOutcome.SUCCESS
+    assert result.delivery_outcome is PollDeliveryOutcome.DELIVERY_DEGRADED
+    assert result.delivery_failure_count == 1
+    assert all(not isinstance(event, MarketStreamFailed) for event in received)
+    assert len(provider.calls) == 2
+    assert sleeper.waits == []
+
+
+def test_projector_exception_is_failed_post_commit_cycle() -> None:
+    dispatcher = MarketEventDispatcher()
+    received: list[MarketEvent] = []
+    dispatcher.subscribe(MarketEvent, received.append)
+    projector = MarketEventProjector(FailOnceIdFactory(fail_on=2))
+    candles = [make_candle(0), make_candle(1)]
+    engine, _, cache, _, _ = make_engine(
+        [candles],
+        dispatcher=dispatcher,
+        projector=projector,
+        event_id_factory=SequentialIdFactory("diagnostic"),
+    )
+
+    result = engine.run_once()
+
+    assert result.outcome is PollCycleOutcome.FAILED
+    assert result.error_category is PollErrorCategory.EVENT_PROJECTION
+    assert result.cache_committed is True
+    assert result.fatal is True
+    assert engine.status.lifecycle_state is PollingLifecycleState.FAILED
+    assert cache.get_snapshot(KEY) == tuple(candles)
+    assert [type(event) for event in received] == [MarketStreamFailed]
+
+
+def test_dispatcher_infrastructure_exception_is_explicit_post_commit_failure() -> None:
+    dispatcher = FailingInfrastructureDispatcher(fail_on_publish=2)
+    received: list[MarketEvent] = []
+    dispatcher.subscribe(MarketEvent, received.append)
+    projector = MarketEventProjector(SequentialIdFactory("event"))
+    candles = [make_candle(0), make_candle(1)]
+    engine, _, cache, _, _ = make_engine(
+        [candles],
+        dispatcher=dispatcher,
+        projector=projector,
+        event_id_factory=SequentialIdFactory("diagnostic"),
+    )
+
+    result = engine.run_once()
+
+    assert result.outcome is PollCycleOutcome.FAILED
+    assert result.error_category is PollErrorCategory.EVENT_DISPATCH
+    assert result.delivery_outcome is PollDeliveryOutcome.FAILED
+    assert result.cache_committed is True
+    assert result.published_event_count == 2
+    assert result.delivery_failure_count == 1
+    assert engine.status.lifecycle_state is PollingLifecycleState.FAILED
+    assert cache.get_snapshot(KEY) == tuple(candles)
+    assert [type(event) for event in received] == [CandleInserted, MarketStreamFailed]
+
+
+def test_engine_does_not_close_externally_owned_dispatcher() -> None:
+    dispatcher = OwnershipTrackingDispatcher()
+    projector = MarketEventProjector(SequentialIdFactory("event"))
+    engine, _, _, _, _ = make_engine(
+        [[make_candle(0)]],
+        dispatcher=dispatcher,
+        projector=projector,
+    )
+
+    engine.run_once()
+
+    assert dispatcher.close_calls == 0
 
 
 def test_production_sleeper_checks_stop_between_short_sleep_segments(

@@ -11,6 +11,21 @@ from app.market.cache import (
     InMemoryMarketCache,
     MarketStreamKey,
 )
+from app.market.events import (
+    CorrelationIdFactory,
+    EventIdFactory,
+    MarketEvent,
+    MarketEventDispatcher,
+    MarketEventProjector,
+    MarketEventSource,
+    MarketGapDetected,
+    MarketGapPhase,
+    MarketGapReason,
+    MarketStreamFailed,
+    MarketStreamFailureReason,
+    UUIDCorrelationIdFactory,
+    UUIDEventIdFactory,
+)
 from app.market.exceptions import (
     CandleSequenceValidationError,
     MarketCacheBatchError,
@@ -21,6 +36,7 @@ from app.market.exceptions import (
     PollingEngineConfigurationError,
     PollingEngineStateError,
 )
+from app.market.intervals import next_binance_spot_open_time_ms
 from app.market.models import Candle
 from app.market.provider import MarketProvider
 from app.market.validation import validate_candle_sequence
@@ -94,6 +110,14 @@ class PollErrorCategory(Enum):
     VALIDATION = "validation"
     CACHE = "cache"
     GAP_RECOVERY = "gap_recovery"
+    EVENT_PROJECTION = "event_projection"
+    EVENT_DISPATCH = "event_dispatch"
+
+
+class PollDeliveryOutcome(Enum):
+    SUCCESS = "success"
+    DELIVERY_DEGRADED = "delivery_degraded"
+    FAILED = "failed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +179,11 @@ class PollCycleResult:
     recovery: bool
     error_category: PollErrorCategory | None
     fatal: bool
+    correlation_cycle_id: str
+    published_event_count: int
+    delivery_failure_count: int
+    delivery_outcome: PollDeliveryOutcome
+    cache_committed: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,6 +207,13 @@ class _FetchResult:
     stopped: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class _EventPublicationResult:
+    published_count: int = 0
+    handler_failure_count: int = 0
+    infrastructure_error: Exception | None = None
+
+
 class SynchronousRestPollingEngine:
     """Blocking, single-writer ingestion engine that does not own its provider."""
 
@@ -191,7 +227,15 @@ class SynchronousRestPollingEngine:
         clock: Clock | None = None,
         sleeper: Sleeper | None = None,
         logger: logging.Logger | None = None,
+        dispatcher: MarketEventDispatcher | None = None,
+        projector: MarketEventProjector | None = None,
+        event_id_factory: EventIdFactory | None = None,
+        correlation_id_factory: CorrelationIdFactory | None = None,
     ) -> None:
+        if (dispatcher is None) != (projector is None):
+            raise PollingEngineConfigurationError(
+                "Dispatcher and projector must be configured together"
+            )
         self._provider = provider
         self._cache = cache
         self._stream_key = stream_key
@@ -199,6 +243,12 @@ class SynchronousRestPollingEngine:
         self._clock = clock or SystemClock()
         self._sleeper = sleeper or StopAwareSleeper()
         self._logger = logger or logging.getLogger(self.__class__.__name__)
+        self._dispatcher = dispatcher
+        self._projector = projector
+        self._event_id_factory = event_id_factory or UUIDEventIdFactory()
+        self._correlation_id_factory = (
+            correlation_id_factory or UUIDCorrelationIdFactory()
+        )
         self._status = PollingStatus(
             lifecycle_state=PollingLifecycleState.STOPPED,
             stop_requested=False,
@@ -229,10 +279,22 @@ class SynchronousRestPollingEngine:
                 f"Cannot poll while engine is {self._status.lifecycle_state.value}"
             )
         if self._status.stop_requested:
-            return self._stopped_result(bootstrap=self._is_bootstrap())
+            return self._stopped_result(
+                bootstrap=self._is_bootstrap(),
+                correlation_cycle_id=self._correlation_id_factory.next_id(),
+            )
 
-        result = self._execute_cycle(bootstrap=self._is_bootstrap())
+        correlation_cycle_id = self._correlation_id_factory.next_id()
+        result = self._execute_cycle(
+            bootstrap=self._is_bootstrap(),
+            correlation_cycle_id=correlation_cycle_id,
+        )
         self._record_result(result)
+        if (
+            result.outcome is PollCycleOutcome.FAILED
+            and self._status.lifecycle_state is PollingLifecycleState.FAILED
+        ):
+            result = self._attach_terminal_failure_event(result)
         return result
 
     def run_forever(self) -> None:
@@ -333,7 +395,12 @@ class SynchronousRestPollingEngine:
             next_deadline = None
             poll_immediately = True
 
-    def _execute_cycle(self, *, bootstrap: bool) -> PollCycleResult:
+    def _execute_cycle(
+        self,
+        *,
+        bootstrap: bool,
+        correlation_cycle_id: str,
+    ) -> PollCycleResult:
         limit = (
             min(self._cache.capacity, self._policy.max_bootstrap_limit)
             if bootstrap
@@ -341,26 +408,32 @@ class SynchronousRestPollingEngine:
         )
         fetch = self._fetch_candles(limit)
         if fetch.stopped:
-            return self._stopped_result(bootstrap=bootstrap, attempts=fetch.attempts)
+            return self._stopped_result(
+                bootstrap=bootstrap,
+                attempts=fetch.attempts,
+                correlation_cycle_id=correlation_cycle_id,
+            )
         if fetch.error is not None:
             return self._failed_result(
                 category=PollErrorCategory.PROVIDER,
                 attempts=fetch.attempts,
                 bootstrap=bootstrap,
                 fatal=not fetch.error.retryable,
+                correlation_cycle_id=correlation_cycle_id,
             )
         if not fetch.candles:
             return self._failed_result(
                 category=PollErrorCategory.EMPTY_RESPONSE,
                 attempts=fetch.attempts,
                 bootstrap=bootstrap,
+                correlation_cycle_id=correlation_cycle_id,
             )
 
         observed_at_ms = self._clock.now_ms()
         try:
             self._validate_batch(fetch.candles, observed_at_ms)
         except CandleSequenceValidationError:
-            return self._recover_gap(fetch, bootstrap)
+            return self._recover_gap(fetch, bootstrap, correlation_cycle_id)
         except (TypeError, ValueError):
             return self._failed_result(
                 category=PollErrorCategory.VALIDATION,
@@ -368,6 +441,7 @@ class SynchronousRestPollingEngine:
                 fetched=len(fetch.candles),
                 bootstrap=bootstrap,
                 fatal=True,
+                correlation_cycle_id=correlation_cycle_id,
             )
 
         try:
@@ -378,13 +452,14 @@ class SynchronousRestPollingEngine:
             )
         except MarketCacheBatchError as error:
             if self._has_cause(error, MarketCacheGapError):
-                return self._recover_gap(fetch, bootstrap)
+                return self._recover_gap(fetch, bootstrap, correlation_cycle_id)
             return self._failed_result(
                 category=PollErrorCategory.CACHE,
                 attempts=fetch.attempts,
                 fetched=len(fetch.candles),
                 bootstrap=bootstrap,
                 fatal=True,
+                correlation_cycle_id=correlation_cycle_id,
             )
         except MarketCacheError:
             return self._failed_result(
@@ -393,28 +468,57 @@ class SynchronousRestPollingEngine:
                 fetched=len(fetch.candles),
                 bootstrap=bootstrap,
                 fatal=True,
+                correlation_cycle_id=correlation_cycle_id,
             )
 
-        return self._successful_result(
+        result = self._successful_result(
             cache_result,
             fetched=len(fetch.candles),
             attempts=fetch.attempts,
             bootstrap=bootstrap,
             recovery=False,
+            correlation_cycle_id=correlation_cycle_id,
+        )
+        return self._attach_cache_events(
+            result,
+            cache_result,
+            observed_at_ms=observed_at_ms,
         )
 
     def _recover_gap(
         self,
         original_fetch: _FetchResult,
         bootstrap: bool,
+        correlation_cycle_id: str,
     ) -> PollCycleResult:
-        if bootstrap:
+        diagnostic = self._publish_gap_event(
+            correlation_cycle_id,
+            original_fetch,
+            phase=MarketGapPhase.REGULAR,
+            reason=MarketGapReason.INTERVAL_GAP,
+        )
+        if diagnostic.infrastructure_error is not None:
             return self._failed_result(
+                category=PollErrorCategory.EVENT_DISPATCH,
+                attempts=original_fetch.attempts,
+                fetched=len(original_fetch.candles),
+                bootstrap=bootstrap,
+                fatal=True,
+                correlation_cycle_id=correlation_cycle_id,
+            )
+        if bootstrap:
+            result = self._failed_result(
                 category=PollErrorCategory.GAP_RECOVERY,
                 attempts=original_fetch.attempts,
                 fetched=len(original_fetch.candles),
                 bootstrap=True,
                 recovery=True,
+                correlation_cycle_id=correlation_cycle_id,
+            )
+            return self._merge_delivery(
+                result,
+                diagnostic.published_count,
+                diagnostic.handler_failure_count,
             )
 
         self._logger.warning("Polling gap recovery started")
@@ -423,18 +527,30 @@ class SynchronousRestPollingEngine:
         )
         total_attempts = original_fetch.attempts + recovery_fetch.attempts
         if recovery_fetch.stopped:
-            return self._stopped_result(
+            result = self._stopped_result(
                 bootstrap=False,
                 attempts=total_attempts,
                 recovery=True,
+                correlation_cycle_id=correlation_cycle_id,
+            )
+            return self._merge_delivery(
+                result,
+                diagnostic.published_count,
+                diagnostic.handler_failure_count,
             )
         if recovery_fetch.error is not None or not recovery_fetch.candles:
-            return self._failed_result(
+            result = self._failed_result(
                 category=PollErrorCategory.GAP_RECOVERY,
                 attempts=total_attempts,
                 fetched=len(recovery_fetch.candles),
                 bootstrap=False,
                 recovery=True,
+                correlation_cycle_id=correlation_cycle_id,
+            )
+            return self._merge_delivery(
+                result,
+                diagnostic.published_count,
+                diagnostic.handler_failure_count,
             )
 
         observed_at_ms = self._clock.now_ms()
@@ -447,21 +563,46 @@ class SynchronousRestPollingEngine:
                 observed_at_ms,
             )
         except (TypeError, ValueError):
-            return self._failed_result(
+            recovery_diagnostic = self._publish_gap_event(
+                correlation_cycle_id,
+                recovery_fetch,
+                phase=MarketGapPhase.RECOVERY,
+                reason=MarketGapReason.RECOVERY_DISCONNECTED,
+            )
+            result = self._failed_result(
                 category=PollErrorCategory.GAP_RECOVERY,
                 attempts=total_attempts,
                 fetched=len(recovery_fetch.candles),
                 bootstrap=False,
                 recovery=True,
+                correlation_cycle_id=correlation_cycle_id,
+            )
+            return self._merge_delivery(
+                result,
+                diagnostic.published_count + recovery_diagnostic.published_count,
+                diagnostic.handler_failure_count
+                + recovery_diagnostic.handler_failure_count
+                + (recovery_diagnostic.infrastructure_error is not None),
             )
 
         self._logger.info("Polling gap recovery succeeded")
-        return self._successful_result(
+        result = self._successful_result(
             cache_result,
             fetched=len(recovery_fetch.candles),
             attempts=total_attempts,
             bootstrap=False,
             recovery=True,
+            correlation_cycle_id=correlation_cycle_id,
+        )
+        result = self._attach_cache_events(
+            result,
+            cache_result,
+            observed_at_ms=observed_at_ms,
+        )
+        return self._merge_delivery(
+            result,
+            diagnostic.published_count,
+            diagnostic.handler_failure_count,
         )
 
     def _fetch_candles(self, limit: int) -> _FetchResult:
@@ -534,6 +675,197 @@ class SynchronousRestPollingEngine:
                 last_error_category=result.error_category,
             )
 
+    def _attach_cache_events(
+        self,
+        result: PollCycleResult,
+        cache_result: BatchUpsertResult,
+        *,
+        observed_at_ms: int,
+    ) -> PollCycleResult:
+        if self._projector is None:
+            return result
+
+        try:
+            events = self._projector.project(
+                self._stream_key,
+                cache_result.changes,
+                occurred_at_ms=observed_at_ms,
+                correlation_cycle_id=result.correlation_cycle_id,
+                source=MarketEventSource.REST_POLLING,
+                bootstrap=result.bootstrap,
+                recovery=result.recovery,
+            )
+        except Exception:
+            self._logger.exception("Market event projection failed after cache commit")
+            return self._post_commit_event_failure(
+                result,
+                PollErrorCategory.EVENT_PROJECTION,
+            )
+
+        publication = self._publish_events(events)
+        if publication.infrastructure_error is not None:
+            self._logger.error(
+                "Market event dispatch failed after cache commit: %r",
+                publication.infrastructure_error,
+            )
+            failed = self._merge_delivery(
+                result,
+                publication.published_count,
+                publication.handler_failure_count + 1,
+            )
+            return self._post_commit_event_failure(
+                failed,
+                PollErrorCategory.EVENT_DISPATCH,
+            )
+        return self._merge_delivery(
+            result,
+            publication.published_count,
+            publication.handler_failure_count,
+        )
+
+    def _attach_terminal_failure_event(
+        self,
+        result: PollCycleResult,
+    ) -> PollCycleResult:
+        if self._dispatcher is None:
+            return result
+
+        category = result.error_category
+        reason_by_category = {
+            PollErrorCategory.PROVIDER: MarketStreamFailureReason.PROVIDER,
+            PollErrorCategory.EMPTY_RESPONSE: MarketStreamFailureReason.EMPTY_RESPONSE,
+            PollErrorCategory.VALIDATION: MarketStreamFailureReason.VALIDATION,
+            PollErrorCategory.CACHE: MarketStreamFailureReason.CACHE_INTEGRITY,
+            PollErrorCategory.GAP_RECOVERY: MarketStreamFailureReason.GAP_RECOVERY,
+            PollErrorCategory.EVENT_PROJECTION: MarketStreamFailureReason.DELIVERY,
+            PollErrorCategory.EVENT_DISPATCH: MarketStreamFailureReason.DELIVERY,
+        }
+        reason = reason_by_category.get(
+            category,
+            MarketStreamFailureReason.PROVIDER,
+        )
+        try:
+            event = MarketStreamFailed(
+                event_id=self._event_id_factory.next_id(),
+                occurred_at_ms=self._clock.now_ms(),
+                stream_key=self._stream_key,
+                correlation_cycle_id=result.correlation_cycle_id,
+                source=MarketEventSource.REST_POLLING,
+                error_category=category.value if category is not None else "unknown",
+                consecutive_failures=self._status.consecutive_failures,
+                terminal=True,
+                reason=reason,
+            )
+            publication = self._publish_events((event,))
+        except Exception:
+            self._logger.exception("Terminal diagnostic event creation failed")
+            return self._merge_delivery(result, 0, 1)
+        return self._merge_delivery(
+            result,
+            publication.published_count,
+            publication.handler_failure_count
+            + (publication.infrastructure_error is not None),
+        )
+
+    def _publish_gap_event(
+        self,
+        correlation_cycle_id: str,
+        fetch: _FetchResult,
+        *,
+        phase: MarketGapPhase,
+        reason: MarketGapReason,
+    ) -> _EventPublicationResult:
+        if self._dispatcher is None:
+            return _EventPublicationResult()
+
+        latest = self._cache.get_latest_candle(self._stream_key)
+        received_open_time_ms = (
+            fetch.candles[0].open_time_ms if fetch.candles else None
+        )
+        try:
+            event = MarketGapDetected(
+                event_id=self._event_id_factory.next_id(),
+                occurred_at_ms=self._clock.now_ms(),
+                stream_key=self._stream_key,
+                correlation_cycle_id=correlation_cycle_id,
+                source=MarketEventSource.REST_POLLING,
+                expected_open_time_ms=(
+                    next_binance_spot_open_time_ms(
+                        latest.open_time_ms,
+                        self._stream_key.interval,
+                    )
+                    if latest is not None
+                    else None
+                ),
+                received_open_time_ms=received_open_time_ms,
+                last_confirmed_open_time_ms=(
+                    latest.open_time_ms if latest is not None else None
+                ),
+                phase=phase,
+                reason=reason,
+            )
+        except Exception as error:  # noqa: BLE001 - reported as event infrastructure
+            return _EventPublicationResult(infrastructure_error=error)
+        return self._publish_events((event,))
+
+    def _publish_events(
+        self,
+        events: tuple[MarketEvent, ...],
+    ) -> _EventPublicationResult:
+        if self._dispatcher is None:
+            return _EventPublicationResult()
+
+        failures = 0
+        published = 0
+        for event in events:
+            try:
+                delivery = self._dispatcher.publish(event)
+            except Exception as error:  # noqa: BLE001 - infrastructure boundary
+                return _EventPublicationResult(
+                    published_count=published,
+                    handler_failure_count=failures,
+                    infrastructure_error=error,
+                )
+            failures += delivery.failure_count
+            published += 1
+        return _EventPublicationResult(
+            published_count=published,
+            handler_failure_count=failures,
+        )
+
+    @staticmethod
+    def _post_commit_event_failure(
+        result: PollCycleResult,
+        category: PollErrorCategory,
+    ) -> PollCycleResult:
+        return replace(
+            result,
+            outcome=PollCycleOutcome.FAILED,
+            error_category=category,
+            fatal=True,
+            delivery_outcome=PollDeliveryOutcome.FAILED,
+            cache_committed=True,
+        )
+
+    @staticmethod
+    def _merge_delivery(
+        result: PollCycleResult,
+        published_event_count: int,
+        delivery_failure_count: int,
+    ) -> PollCycleResult:
+        total_failures = result.delivery_failure_count + delivery_failure_count
+        delivery_outcome = result.delivery_outcome
+        if result.outcome is PollCycleOutcome.SUCCESS and total_failures:
+            delivery_outcome = PollDeliveryOutcome.DELIVERY_DEGRADED
+        return replace(
+            result,
+            published_event_count=(
+                result.published_event_count + published_event_count
+            ),
+            delivery_failure_count=total_failures,
+            delivery_outcome=delivery_outcome,
+        )
+
     @staticmethod
     def _failed_result(
         *,
@@ -543,6 +875,8 @@ class SynchronousRestPollingEngine:
         fetched: int = 0,
         recovery: bool = False,
         fatal: bool = False,
+        correlation_cycle_id: str,
+        cache_committed: bool = False,
     ) -> PollCycleResult:
         return PollCycleResult(
             outcome=PollCycleOutcome.FAILED,
@@ -556,6 +890,11 @@ class SynchronousRestPollingEngine:
             recovery=recovery,
             error_category=category,
             fatal=fatal,
+            correlation_cycle_id=correlation_cycle_id,
+            published_event_count=0,
+            delivery_failure_count=0,
+            delivery_outcome=PollDeliveryOutcome.FAILED,
+            cache_committed=cache_committed,
         )
 
     @staticmethod
@@ -564,6 +903,7 @@ class SynchronousRestPollingEngine:
         bootstrap: bool,
         attempts: int = 0,
         recovery: bool = False,
+        correlation_cycle_id: str,
     ) -> PollCycleResult:
         return PollCycleResult(
             outcome=PollCycleOutcome.STOPPED,
@@ -577,6 +917,11 @@ class SynchronousRestPollingEngine:
             recovery=recovery,
             error_category=None,
             fatal=False,
+            correlation_cycle_id=correlation_cycle_id,
+            published_event_count=0,
+            delivery_failure_count=0,
+            delivery_outcome=PollDeliveryOutcome.SUCCESS,
+            cache_committed=False,
         )
 
     @staticmethod
@@ -587,6 +932,7 @@ class SynchronousRestPollingEngine:
         attempts: int,
         bootstrap: bool,
         recovery: bool,
+        correlation_cycle_id: str,
     ) -> PollCycleResult:
         return PollCycleResult(
             outcome=PollCycleOutcome.SUCCESS,
@@ -600,6 +946,11 @@ class SynchronousRestPollingEngine:
             recovery=recovery,
             error_category=None,
             fatal=False,
+            correlation_cycle_id=correlation_cycle_id,
+            published_event_count=0,
+            delivery_failure_count=0,
+            delivery_outcome=PollDeliveryOutcome.SUCCESS,
+            cache_committed=True,
         )
 
     def _provider_retry_seconds(

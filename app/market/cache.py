@@ -1,5 +1,5 @@
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 from app.market.exceptions import (
@@ -14,7 +14,7 @@ from app.market.exceptions import (
     MarketCacheReadError,
     MarketStreamKeyError,
 )
-from app.market.models import Candle
+from app.market.models import Candle, CandleSnapshot
 from app.market.validation import validate_candle_sequence
 
 DEFAULT_CAPACITY_PER_STREAM = 1000
@@ -50,6 +50,16 @@ class CandleUpsertResult(Enum):
 class BatchUpsertResult:
     results: tuple[CandleUpsertResult, ...]
     evicted_count: int
+    changes: tuple["MarketCacheChange", ...] = field(default=(), compare=False)
+
+
+@dataclass(frozen=True, slots=True)
+class MarketCacheChange:
+    result: CandleUpsertResult
+    previous: CandleSnapshot | None
+    current: CandleSnapshot
+    evicted: tuple[CandleSnapshot, ...]
+    observed_at_ms: int
 
 
 class InMemoryMarketCache:
@@ -78,7 +88,12 @@ class InMemoryMarketCache:
     ) -> CandleUpsertResult:
         self._validate_timestamp(observed_at_ms, "observed_at_ms")
         self._validate_input_candles([candle], key, observed_at_ms)
-        result, _ = self._upsert_into(self._streams, key, candle, observed_at_ms)
+        result, _, _, _ = self._upsert_into(
+            self._streams,
+            key,
+            candle,
+            observed_at_ms,
+        )
         return result
 
     def upsert_candles(
@@ -110,18 +125,32 @@ class InMemoryMarketCache:
             for stream_key, stream in self._streams.items()
         }
         results: list[CandleUpsertResult] = []
+        changes: list[MarketCacheChange] = []
         evicted_count = 0
 
         try:
             for candle in batch:
-                result, was_evicted = self._upsert_into(
+                result, evicted, previous, current = self._upsert_into(
                     staged_streams,
                     key,
                     candle,
                     observed_at_ms,
                 )
                 results.append(result)
-                evicted_count += was_evicted
+                evicted_count += len(evicted)
+                changes.append(
+                    MarketCacheChange(
+                        result=result,
+                        previous=(
+                            None
+                            if previous is None
+                            else CandleSnapshot.from_candle(previous)
+                        ),
+                        current=CandleSnapshot.from_candle(current),
+                        evicted=tuple(CandleSnapshot.from_candle(item) for item in evicted),
+                        observed_at_ms=observed_at_ms,
+                    )
+                )
         except (TypeError, ValueError) as error:
             raise MarketCacheBatchError("Candle batch upsert failed") from error
 
@@ -129,6 +158,7 @@ class InMemoryMarketCache:
         return BatchUpsertResult(
             results=tuple(results),
             evicted_count=evicted_count,
+            changes=tuple(changes),
         )
 
     def get_snapshot(
@@ -171,25 +201,27 @@ class InMemoryMarketCache:
         key: MarketStreamKey,
         candle: Candle,
         observed_at_ms: int,
-    ) -> tuple[CandleUpsertResult, int]:
+    ) -> tuple[CandleUpsertResult, tuple[Candle, ...], Candle | None, Candle]:
         stream = streams.setdefault(key, [])
 
         if not stream:
-            stream.append(self._copy_candle(candle))
-            return CandleUpsertResult.INSERTED, 0
+            current = self._copy_candle(candle)
+            stream.append(current)
+            return CandleUpsertResult.INSERTED, (), None, current
 
         latest = stream[-1]
 
         if candle.open_time_ms == latest.open_time_ms:
             if candle == latest:
-                return CandleUpsertResult.UNCHANGED, 0
+                return CandleUpsertResult.UNCHANGED, (), latest, latest
             if observed_at_ms > latest.close_time_ms:
                 raise MarketCacheClosedCandleUpdateError(
                     "A closed candle cannot be updated"
                 )
             self._validate_open_candle_update(latest, candle)
-            stream[-1] = self._copy_candle(candle)
-            return CandleUpsertResult.UPDATED, 0
+            current = self._copy_candle(candle)
+            stream[-1] = current
+            return CandleUpsertResult.UPDATED, (), latest, current
 
         if candle.open_time_ms < latest.open_time_ms:
             if any(item.open_time_ms == candle.open_time_ms for item in stream[:-1]):
@@ -212,13 +244,13 @@ class InMemoryMarketCache:
                 "A candle must follow the expected stream interval without overlap"
             ) from error
 
+        previous = latest
         stream.append(self._copy_candle(candle))
-        was_evicted = 0
+        evicted: tuple[Candle, ...] = ()
         if len(stream) > self._capacity:
-            stream.pop(0)
-            was_evicted = 1
+            evicted = (stream.pop(0),)
 
-        return CandleUpsertResult.INSERTED, was_evicted
+        return CandleUpsertResult.INSERTED, evicted, previous, stream[-1]
 
     @staticmethod
     def _validate_input_candles(

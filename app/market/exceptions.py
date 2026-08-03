@@ -103,3 +103,27 @@ class PollingEngineConfigurationError(PollingEngineError):
 
 class PollingEngineStateError(PollingEngineError):
     """A polling operation is not valid in the current lifecycle state."""
+
+
+class MarketEventError(RuntimeError):
+    """Base error for market event creation and delivery."""
+
+
+class InvalidEventSubscriptionError(MarketEventError):
+    """An event subscription contains an invalid type or handler."""
+
+
+class RecursiveEventPublishError(MarketEventError):
+    """Recursive synchronous event publication is forbidden."""
+
+
+class MarketEventProjectionError(MarketEventError):
+    """Cache mutation details violate event projection invariants."""
+
+
+class DuplicateCandleClosureError(MarketEventProjectionError):
+    """A candle closure conflicts with the stream closure watermark."""
+
+
+class InvalidMarketEventError(MarketEventError):
+    """A market event contains invalid envelope or payload data."""

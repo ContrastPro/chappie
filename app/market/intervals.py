@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import Final
 
@@ -46,3 +47,18 @@ def fixed_binance_spot_interval_ms(interval: str) -> int:
         raise UnsupportedMarketIntervalError(
             f"Unsupported fixed-duration Binance Spot interval: {interval!r}"
         ) from error
+
+
+def next_binance_spot_open_time_ms(open_time_ms: int, interval: str) -> int:
+    """Return the next expected UTC open time for a Binance Spot interval."""
+
+    if not isinstance(open_time_ms, int) or isinstance(open_time_ms, bool):
+        raise TypeError("open_time_ms must be an integer")
+    if interval in BINANCE_SPOT_CALENDAR_INTERVALS:
+        open_time = datetime.fromtimestamp(open_time_ms / 1_000, tz=UTC)
+        if open_time.month == 12:
+            next_month = datetime(open_time.year + 1, 1, 1, tzinfo=UTC)
+        else:
+            next_month = datetime(open_time.year, open_time.month + 1, 1, tzinfo=UTC)
+        return int(next_month.timestamp() * 1_000)
+    return open_time_ms + fixed_binance_spot_interval_ms(interval)

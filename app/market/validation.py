@@ -1,5 +1,4 @@
 import time
-from datetime import UTC, datetime
 from decimal import Decimal
 
 from app.market.exceptions import (
@@ -9,6 +8,7 @@ from app.market.exceptions import (
 from app.market.intervals import (
     BINANCE_SPOT_CALENDAR_INTERVALS,
     fixed_binance_spot_interval_ms,
+    next_binance_spot_open_time_ms,
 )
 from app.market.models import Candle
 
@@ -120,17 +120,9 @@ def _has_expected_open_time(
         return candle.open_time_ms - previous.open_time_ms == interval_ms
 
     if interval == "1M":
-        return candle.open_time_ms == _next_utc_month_start_ms(previous.open_time_ms)
+        return candle.open_time_ms == next_binance_spot_open_time_ms(
+            previous.open_time_ms,
+            interval,
+        )
 
     return False
-
-
-def _next_utc_month_start_ms(open_time_ms: int) -> int:
-    open_time = datetime.fromtimestamp(open_time_ms / 1_000, tz=UTC)
-
-    if open_time.month == 12:
-        next_month = datetime(open_time.year + 1, 1, 1, tzinfo=UTC)
-    else:
-        next_month = datetime(open_time.year, open_time.month + 1, 1, tzinfo=UTC)
-
-    return int(next_month.timestamp() * 1_000)

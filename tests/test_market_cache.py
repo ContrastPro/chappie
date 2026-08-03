@@ -1,3 +1,4 @@
+from dataclasses import FrozenInstanceError
 from decimal import Decimal
 
 import pytest
@@ -19,7 +20,7 @@ from app.market.exceptions import (
     MarketCacheReadError,
     UnsupportedMarketIntervalError,
 )
-from app.market.models import Candle
+from app.market.models import Candle, CandleSnapshot
 
 OPEN_TIME_MS = 1_700_000_000_000
 INTERVAL_MS = 60_000
@@ -67,6 +68,36 @@ def test_create_empty_cache() -> None:
     assert cache.get_snapshot(KEY) == ()
     assert cache.get_latest_candle(KEY) is None
     assert cache.get_latest_closed_candle(KEY, OPEN_TIME_MS) is None
+
+
+def test_batch_result_exposes_immutable_committed_change_details() -> None:
+    cache = InMemoryMarketCache(capacity=1)
+    first = make_candle(0)
+    second = make_candle(1)
+
+    initial = cache.upsert_candles(KEY, [first], observed_during(first))
+    duplicate = cache.upsert_candles(KEY, [first], observed_after(first))
+    inserted = cache.upsert_candles(KEY, [second], observed_during(second))
+
+    assert initial.changes[0].previous is None
+    assert initial.changes[0].current == CandleSnapshot.from_candle(first)
+    assert duplicate.changes[0].result is CandleUpsertResult.UNCHANGED
+    assert duplicate.changes[0].previous == CandleSnapshot.from_candle(first)
+    assert duplicate.changes[0].current == CandleSnapshot.from_candle(first)
+    assert inserted.changes[0].previous == CandleSnapshot.from_candle(first)
+    assert inserted.changes[0].current == CandleSnapshot.from_candle(second)
+    assert inserted.changes[0].evicted == (CandleSnapshot.from_candle(first),)
+    assert inserted.evicted_count == 1
+
+    with pytest.raises(FrozenInstanceError):
+        inserted.changes[0].observed_at_ms = 0  # type: ignore[misc]
+
+    first.close = Decimal(1)
+    second.close = Decimal(2)
+    assert inserted.changes[0].previous.close == Decimal(105)  # type: ignore[union-attr]
+    assert inserted.changes[0].current.close == Decimal(105)
+    assert inserted.changes[0].evicted[0].close == Decimal(105)
+    assert cache.get_latest_candle(KEY).close == Decimal(105)  # type: ignore[union-attr]
 
 
 def test_insert_first_candle() -> None:
