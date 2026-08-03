@@ -3,6 +3,7 @@ import logging
 from app.agent.trader import TraderAgent
 from app.core.config import get_settings
 from app.core.logger import configure_logging
+from app.market.binance_provider import BinanceMarketProvider
 
 
 def main() -> None:
@@ -21,7 +22,14 @@ def main() -> None:
 
     logger.info("Application initialization started")
 
-    agent = TraderAgent(settings=settings)
+    market_provider = BinanceMarketProvider(
+        base_url=settings.binance_market_base_url,
+    )
+
+    agent = TraderAgent(
+        settings=settings,
+        market_provider=market_provider,
+    )
 
     try:
         agent.start()
@@ -31,6 +39,8 @@ def main() -> None:
     finally:
         if agent.is_running:
             agent.stop()
+
+        market_provider.close()
 
     logger.info("Application finished successfully")
 

@@ -1,12 +1,17 @@
 import logging
 
 from app.core.config import Settings
-from app.market.binance_provider import BinanceMarketProvider
+from app.market.provider import MarketProvider
 
 
 class TraderAgent:
-    def __init__(self, settings: Settings) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        market_provider: MarketProvider,
+    ) -> None:
         self._settings = settings
+        self._market_provider = market_provider
         self._logger = logging.getLogger(self.__class__.__name__)
         self._is_running = False
 
@@ -32,19 +37,15 @@ class TraderAgent:
                 "Live mode is configured, but real trading is not implemented"
             )
 
-        with BinanceMarketProvider(
-            base_url=self._settings.binance_market_base_url,
-        ) as market:
-            server_time = market.get_server_time()
-            ticker = market.get_ticker_price(
-                self._settings.default_symbol
-            )
-
-        self._logger.info(
-            "Binance server time: %s",
-            server_time.datetime_utc.isoformat(),
+        server_time = self._market_provider.get_server_time()
+        ticker = self._market_provider.get_ticker_price(
+            self._settings.default_symbol
         )
 
+        self._logger.info(
+            "Market server time: %s",
+            server_time.datetime_utc.isoformat(),
+        )
         self._logger.info(
             "Current %s price: %s",
             ticker.symbol,
