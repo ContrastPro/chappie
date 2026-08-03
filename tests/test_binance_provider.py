@@ -5,7 +5,7 @@ import httpx
 import pytest
 
 from app.market.binance_provider import BinanceMarketProvider
-from app.market.exceptions import MarketProviderError
+from app.market.exceptions import MarketProviderError, MarketProviderHTTPError
 from app.market.models import Candle
 
 
@@ -183,3 +183,43 @@ def test_existing_dict_endpoint_rejects_list_payload() -> None:
             provider.get_ticker_price("BTCUSDT")
     finally:
         provider.close()
+
+
+def test_http_error_exposes_typed_retry_metadata() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            429,
+            headers={"Retry-After": "120"},
+            request=request,
+        )
+
+    provider = BinanceMarketProvider(base_url="https://test.binance.local")
+    provider._client.close()
+    provider._client = httpx.Client(
+        base_url="https://test.binance.local",
+        transport=httpx.MockTransport(handler),
+    )
+
+    try:
+        with pytest.raises(MarketProviderHTTPError) as error_info:
+            provider.get_candles("BTCUSDT", "1m", 2)
+    finally:
+        provider.close()
+
+    assert error_info.value.status_code == 429
+    assert error_info.value.retry_after_seconds == 120
+    assert error_info.value.retryable is True
+
+
+def test_fatal_http_error_is_typed_as_not_retryable() -> None:
+    provider = make_provider({}, status_code=400)
+
+    try:
+        with pytest.raises(MarketProviderHTTPError) as error_info:
+            provider.get_candles("BTCUSDT", "1m", 2)
+    finally:
+        provider.close()
+
+    assert error_info.value.status_code == 400
+    assert error_info.value.retry_after_seconds is None
+    assert error_info.value.retryable is False

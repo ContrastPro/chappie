@@ -1,6 +1,41 @@
 class MarketProviderError(RuntimeError):
     """Ошибка при получении или обработке рыночных данных."""
 
+    retryable = False
+
+
+class MarketProviderTimeoutError(MarketProviderError):
+    """A market provider request exceeded its timeout."""
+
+    retryable = True
+
+
+class MarketProviderConnectionError(MarketProviderError):
+    """A market provider could not be reached."""
+
+    retryable = True
+
+
+class MarketProviderHTTPError(MarketProviderError):
+    """A market provider returned a non-success HTTP status."""
+
+    def __init__(
+        self,
+        status_code: int,
+        retry_after_seconds: int | None = None,
+    ) -> None:
+        super().__init__(f"Market provider returned HTTP {status_code}")
+        self.status_code = status_code
+        self.retry_after_seconds = retry_after_seconds
+
+    @property
+    def retryable(self) -> bool:
+        return self.status_code in {408, 429} or 500 <= self.status_code <= 599
+
+
+class MarketProviderResponseError(MarketProviderError):
+    """A market provider returned an invalid or unexpected response."""
+
 
 class MarketDataValidationError(ValueError):
     """Base error for invalid normalized market data."""
@@ -56,3 +91,15 @@ class MarketCacheInvalidOpenCandleUpdateError(MarketCacheError):
 
 class MarketCacheBatchError(MarketCacheError):
     """A candle batch is invalid and was rejected atomically."""
+
+
+class PollingEngineError(RuntimeError):
+    """Base error for polling-engine lifecycle and configuration failures."""
+
+
+class PollingEngineConfigurationError(PollingEngineError):
+    """The polling engine policy or dependencies are invalid."""
+
+
+class PollingEngineStateError(PollingEngineError):
+    """A polling operation is not valid in the current lifecycle state."""

@@ -3,7 +3,12 @@ from typing import Any, Self
 
 import httpx
 
-from app.market.exceptions import MarketProviderError
+from app.market.exceptions import (
+    MarketProviderConnectionError,
+    MarketProviderHTTPError,
+    MarketProviderResponseError,
+    MarketProviderTimeoutError,
+)
 from app.market.intervals import BINANCE_SPOT_INTERVALS
 from app.market.models import Candle, ServerTime, TickerPrice
 
@@ -29,14 +34,14 @@ class BinanceMarketProvider:
         payload = self._get_json("/api/v3/time")
 
         if not isinstance(payload, dict):
-            raise MarketProviderError(
+            raise MarketProviderResponseError(
                 "Binance returned an unexpected server time response format"
             )
 
         server_time = payload.get("serverTime")
 
         if not self._is_integer(server_time):
-            raise MarketProviderError(
+            raise MarketProviderResponseError(
                 "Binance returned an invalid serverTime value"
             )
 
@@ -51,7 +56,7 @@ class BinanceMarketProvider:
         )
 
         if not isinstance(payload, dict):
-            raise MarketProviderError(
+            raise MarketProviderResponseError(
                 "Binance returned an unexpected ticker response format"
             )
 
@@ -59,7 +64,7 @@ class BinanceMarketProvider:
         raw_price = payload.get("price")
 
         if not isinstance(response_symbol, str):
-            raise MarketProviderError(
+            raise MarketProviderResponseError(
                 "Binance returned an invalid symbol"
             )
 
@@ -88,7 +93,7 @@ class BinanceMarketProvider:
         )
 
         if not isinstance(payload, list):
-            raise MarketProviderError(
+            raise MarketProviderResponseError(
                 "Binance returned an unexpected candles response format"
             )
 
@@ -123,24 +128,25 @@ class BinanceMarketProvider:
             )
             response.raise_for_status()
         except httpx.TimeoutException as error:
-            raise MarketProviderError(
+            raise MarketProviderTimeoutError(
                 f"Binance request timed out: {path}"
             ) from error
         except httpx.HTTPStatusError as error:
-            raise MarketProviderError(
-                "Binance returned HTTP "
-                f"{error.response.status_code}: "
-                f"{error.response.text}"
+            raise MarketProviderHTTPError(
+                status_code=error.response.status_code,
+                retry_after_seconds=self._parse_retry_after(
+                    error.response.headers.get("Retry-After")
+                ),
             ) from error
         except httpx.RequestError as error:
-            raise MarketProviderError(
+            raise MarketProviderConnectionError(
                 f"Could not connect to Binance: {error}"
             ) from error
 
         try:
             payload = response.json()
         except ValueError as error:
-            raise MarketProviderError(
+            raise MarketProviderResponseError(
                 "Binance returned invalid JSON"
             ) from error
 
@@ -188,7 +194,7 @@ class BinanceMarketProvider:
     @staticmethod
     def _parse_candle(raw_candle: Any, index: int) -> Candle:
         if not isinstance(raw_candle, list) or len(raw_candle) < 7:
-            raise MarketProviderError(
+            raise MarketProviderResponseError(
                 f"Binance returned an invalid candle at index {index}"
             )
 
@@ -196,12 +202,12 @@ class BinanceMarketProvider:
         close_time_ms = raw_candle[6]
 
         if not BinanceMarketProvider._is_integer(open_time_ms):
-            raise MarketProviderError(
+            raise MarketProviderResponseError(
                 f"Binance returned an invalid open time for candle at index {index}"
             )
 
         if not BinanceMarketProvider._is_integer(close_time_ms):
-            raise MarketProviderError(
+            raise MarketProviderResponseError(
                 f"Binance returned an invalid close time for candle at index {index}"
             )
 
@@ -224,19 +230,19 @@ class BinanceMarketProvider:
         location = "" if candle_index is None else f" for candle at index {candle_index}"
 
         if not isinstance(value, str):
-            raise MarketProviderError(
+            raise MarketProviderResponseError(
                 f"Binance returned an invalid {field_name}{location}"
             )
 
         try:
             result = Decimal(value)
         except InvalidOperation as error:
-            raise MarketProviderError(
+            raise MarketProviderResponseError(
                 f"Binance returned a non-numeric {field_name}{location}"
             ) from error
 
         if not result.is_finite():
-            raise MarketProviderError(
+            raise MarketProviderResponseError(
                 f"Binance returned a non-finite {field_name}{location}"
             )
 
@@ -245,3 +251,15 @@ class BinanceMarketProvider:
     @staticmethod
     def _is_integer(value: Any) -> bool:
         return isinstance(value, int) and not isinstance(value, bool)
+
+    @staticmethod
+    def _parse_retry_after(value: str | None) -> int | None:
+        if value is None:
+            return None
+
+        try:
+            seconds = int(value)
+        except ValueError:
+            return None
+
+        return seconds if seconds >= 0 else None
