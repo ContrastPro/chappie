@@ -26,8 +26,11 @@ class _ConsoleFilter(logging.Filter):
     """Keep operational INFO output while retaining every warning and error."""
 
     _verbose_info_loggers = ("MarketEvents", "httpx", "httpcore")
+    _file_only_loggers = ("ShadowDecisionTraceback",)
 
     def filter(self, record: logging.LogRecord) -> bool:
+        if record.name.startswith(self._file_only_loggers):
+            return False
         if record.levelno >= logging.WARNING:
             return True
         return not record.name.startswith(self._verbose_info_loggers)

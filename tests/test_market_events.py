@@ -423,3 +423,68 @@ def test_factory_failure_rolls_back_projector_state_and_returns_no_events() -> N
         bootstrap=True,
     )
     assert [type(event) for event in events] == [CandleInserted, CandleInserted]
+
+
+def test_final_update_projects_updated_closed_then_next_inserted() -> None:
+    cache = InMemoryMarketCache(capacity=2)
+    original = make_candle(0)
+    finalized = make_candle(0, high="112", low="89", close="108", volume="12")
+    next_open = make_candle(1, close="101", volume="1")
+    projector = MarketEventProjector(SequentialIdFactory())
+    bootstrap = cache.upsert_candles(KEY, [original], original.close_time_ms)
+    project(
+        projector,
+        KEY,
+        bootstrap.changes,
+        observed_at_ms=original.close_time_ms,
+        bootstrap=True,
+    )
+
+    committed = cache.upsert_candles(KEY, [finalized, next_open], next_open.open_time_ms)
+    events = project(
+        projector,
+        KEY,
+        committed.changes,
+        observed_at_ms=next_open.open_time_ms,
+    )
+
+    assert [type(event) for event in events] == [
+        CandleUpdated,
+        CandleClosed,
+        CandleInserted,
+    ]
+    assert events[0].current == events[1].candle  # type: ignore[union-attr]
+    assert events[1].candle.close == Decimal(108)  # type: ignore[union-attr]
+    assert [event.event_id for event in events] == ["event-2", "event-3", "event-4"]
+
+
+def test_exact_duplicate_crossing_boundary_projects_closure_only_once() -> None:
+    cache = InMemoryMarketCache()
+    candle = make_candle(0)
+    projector = MarketEventProjector(SequentialIdFactory())
+    bootstrap = cache.upsert_candles(KEY, [candle], candle.close_time_ms)
+    project(
+        projector,
+        KEY,
+        bootstrap.changes,
+        observed_at_ms=candle.close_time_ms,
+        bootstrap=True,
+    )
+
+    confirmed = cache.upsert_candles(KEY, [candle], candle.close_time_ms + 1)
+    first = project(
+        projector,
+        KEY,
+        confirmed.changes,
+        observed_at_ms=candle.close_time_ms + 1,
+    )
+    repeated = cache.upsert_candles(KEY, [candle], candle.close_time_ms + 1)
+    second = project(
+        projector,
+        KEY,
+        repeated.changes,
+        observed_at_ms=candle.close_time_ms + 1,
+    )
+
+    assert [type(event) for event in first] == [CandleClosed]
+    assert second == ()

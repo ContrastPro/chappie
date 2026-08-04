@@ -3,9 +3,9 @@
 Chappie Trader is the financial subsystem of the future Chappie platform. The current
 runtime application obtains Binance Spot OHLCV data for `BTCUSDT`, validates it,
 stores bounded normalized state in memory and publishes synchronous typed market
-events. The isolated Stage 2 domain layer also contains the deterministic EMA
-baseline, Intent Planner and Trading Decision Pipeline; they are not yet wired into
-the runtime application.
+events. The Stage 2 domain layer contains the deterministic EMA baseline, Intent
+Planner and Trading Decision Pipeline. An optional shadow application layer can
+evaluate that pipeline on confirmed `CandleClosed` events without placing orders.
 
 The current version does not contain order execution or live trading. It does not
 promise or guarantee income.
@@ -39,6 +39,28 @@ Important defaults:
 - polling cadence: `10` seconds;
 - regular request limit: `2` candles.
 - clock-skew warning threshold: `5` seconds; Binance server time remains authoritative.
+
+Clock-skew warning означает, что локальные часы Windows отличаются от Binance
+server time. Market validation, cache lifecycle, events и trading snapshots используют
+авторитетное exchange time, поэтому warning сам по себе не является runtime failure
+и не блокирует ingestion. Локальные часы рекомендуется синхронизировать вручную в
+настройках Windows; внешний NTP dependency приложению не требуется.
+
+## Shadow decisions
+
+Shadow mode is disabled by default. Enable it with
+`SHADOW_DECISIONS_ENABLED=true`. Its main settings are `EMA_FAST_WINDOW`,
+`EMA_SLOW_WINDOW`, `LONG_TARGET_EXPOSURE`, `SHADOW_HISTORY_LIMIT`,
+`SHADOW_DEDUP_CAPACITY` and `SNAPSHOT_STALE_AFTER_MS`.
+
+Every result, including `HOLD`, is written as a compact `ShadowDecisions` entry to
+the normal application logs. Shadow mode performs analysis only: it has no Risk
+Manager, execution adapter, portfolio mutation, paper order or live order path.
+Its output is observational and does not promise or guarantee profit.
+
+Market Cache атомарно reconciles финальную версию свечи, которая была сохранена
+открытой, и публикует `CandleUpdated` перед однократным `CandleClosed`. Уже
+подтверждённые закрытые свечи остаются immutable.
 
 ## Finite smoke-run
 

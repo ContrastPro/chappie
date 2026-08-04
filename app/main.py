@@ -57,6 +57,17 @@ def main(run_id_factory: RunIdFactory | None = None) -> int:
             settings.smoke_run_cycles,
             run_id,
         )
+        logger.info(
+            "Shadow decisions enabled=%s strategy=ema_crossover/1.0.0 "
+            "ema_fast=%s ema_slow=%s planner=long_only_target_exposure/1.0.0 "
+            "long_target_exposure=%s history_limit=%s dedup_capacity=%s",
+            settings.shadow_decisions_enabled,
+            settings.ema_fast_window,
+            settings.ema_slow_window,
+            settings.long_target_exposure,
+            settings.shadow_history_limit,
+            settings.shadow_dedup_capacity,
+        )
         try:
             application = build_application(settings)
         except Exception:

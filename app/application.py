@@ -26,6 +26,22 @@ from app.market.polling import (
     SystemClock,
 )
 from app.market.provider import MarketProvider
+from app.shadow import (
+    LoggingShadowDecisionObserver,
+    ShadowTradingDecisionEngine,
+    UUIDShadowRunIdFactory,
+    UUIDSnapshotIdFactory,
+)
+from app.strategies.ema_crossover import EmaCrossoverConfig, EmaCrossoverStrategy
+from app.trading import (
+    LongOnlyIntentPlanner,
+    LongOnlyIntentPlannerConfig,
+    MarketSnapshotFactory,
+    TradingDecisionPipeline,
+    UUIDIntentIdFactory,
+    UUIDPipelineRunIdFactory,
+    UUIDSignalIdFactory,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +60,19 @@ class StageOneStatusReport:
     delivery_failure_count: int
     last_exchange_time_ms: int | None
     last_clock_skew_ms: int | None
+    shadow_enabled: bool = False
+    shadow_lifecycle: str | None = None
+    shadow_handled_events: int = 0
+    shadow_successful_decisions: int = 0
+    shadow_hold_decisions: int = 0
+    shadow_intent_decisions: int = 0
+    shadow_declined_decisions: int = 0
+    shadow_failed_decisions: int = 0
+    shadow_observation_failures: int = 0
+    shadow_ignored_duplicates: int = 0
+    shadow_last_event_id: str | None = None
+    shadow_last_signal_direction: str | None = None
+    shadow_last_error_category: str | None = None
 
 
 @dataclass(slots=True)
@@ -57,6 +86,7 @@ class ChappieTraderApplication:
     agent: TraderAgent
     clock: Clock
     logging_subscriptions: tuple[SubscriptionToken, ...]
+    shadow_engine: ShadowTradingDecisionEngine | None = None
     _provider_closed: bool = False
 
     def close(self) -> None:
@@ -65,7 +95,11 @@ class ChappieTraderApplication:
         if self._provider_closed:
             return
         self._provider_closed = True
-        self.provider.close()
+        try:
+            if self.shadow_engine is not None:
+                self.shadow_engine.stop()
+        finally:
+            self.provider.close()
 
     def status_report(self) -> StageOneStatusReport:
         status = self.engine.status
@@ -79,6 +113,7 @@ class ChappieTraderApplication:
             stream_key,
             market_as_of_ms,
         )
+        shadow = self.shadow_engine.status if self.shadow_engine is not None else None
         return StageOneStatusReport(
             lifecycle_state=status.lifecycle_state,
             completed_cycles=status.completed_cycles,
@@ -98,6 +133,27 @@ class ChappieTraderApplication:
             delivery_failure_count=status.delivery_failure_count,
             last_exchange_time_ms=status.last_exchange_time_ms,
             last_clock_skew_ms=status.last_clock_skew_ms,
+            shadow_enabled=self.shadow_engine is not None,
+            shadow_lifecycle=shadow.lifecycle.value if shadow else None,
+            shadow_handled_events=shadow.handled_events if shadow else 0,
+            shadow_successful_decisions=shadow.successful_decisions if shadow else 0,
+            shadow_hold_decisions=shadow.hold_decisions if shadow else 0,
+            shadow_intent_decisions=shadow.intent_decisions if shadow else 0,
+            shadow_declined_decisions=shadow.declined_decisions if shadow else 0,
+            shadow_failed_decisions=shadow.failed_decisions if shadow else 0,
+            shadow_observation_failures=shadow.observation_failures if shadow else 0,
+            shadow_ignored_duplicates=shadow.ignored_duplicates if shadow else 0,
+            shadow_last_event_id=shadow.last_event_id if shadow else None,
+            shadow_last_signal_direction=(
+                shadow.last_signal_direction.value
+                if shadow and shadow.last_signal_direction is not None
+                else None
+            ),
+            shadow_last_error_category=(
+                shadow.last_error_category.value
+                if shadow and shadow.last_error_category is not None
+                else None
+            ),
         )
 
 
@@ -111,6 +167,7 @@ def build_application(
     diagnostic_event_id_factory: EventIdFactory | None = None,
     correlation_id_factory: CorrelationIdFactory | None = None,
     event_logger: logging.Logger | None = None,
+    shadow_logger: logging.Logger | None = None,
 ) -> ChappieTraderApplication:
     """Create and wire the complete Stage 1 market-data application."""
 
@@ -150,6 +207,28 @@ def build_application(
         dispatcher,
         event_logger or logging.getLogger("MarketEvents"),
     )
+    shadow_engine = None
+    if settings.shadow_decisions_enabled:
+        strategy = EmaCrossoverStrategy(
+            EmaCrossoverConfig(settings.ema_fast_window, settings.ema_slow_window),
+            UUIDSignalIdFactory(),
+        )
+        planner = LongOnlyIntentPlanner(
+            LongOnlyIntentPlannerConfig(settings.long_target_exposure),
+            UUIDIntentIdFactory(),
+        )
+        pipeline = TradingDecisionPipeline(strategy, planner, UUIDPipelineRunIdFactory())
+        shadow_engine = ShadowTradingDecisionEngine(
+            market_cache,
+            MarketSnapshotFactory(settings.snapshot_stale_after_ms),
+            pipeline,
+            UUIDSnapshotIdFactory(),
+            UUIDShadowRunIdFactory(),
+            LoggingShadowDecisionObserver(shadow_logger),
+            settings.shadow_history_limit,
+            settings.shadow_dedup_capacity,
+        )
+        shadow_engine.start(dispatcher)
     return ChappieTraderApplication(
         settings=settings,
         provider=market_provider,
@@ -160,6 +239,7 @@ def build_application(
         agent=agent,
         clock=production_clock,
         logging_subscriptions=subscriptions,
+        shadow_engine=shadow_engine,
     )
 
 
@@ -187,6 +267,24 @@ def log_stage_one_status(
         report.delivery_failure_count,
         report.last_exchange_time_ms,
         report.last_clock_skew_ms,
+    )
+    logger.info(
+        "Shadow status enabled=%s lifecycle=%s handled=%s successful=%s hold=%s "
+        "intent=%s declined=%s failed=%s observation_failures=%s duplicates=%s "
+        "last_event_id=%s last_direction=%s last_error=%s",
+        report.shadow_enabled,
+        report.shadow_lifecycle,
+        report.shadow_handled_events,
+        report.shadow_successful_decisions,
+        report.shadow_hold_decisions,
+        report.shadow_intent_decisions,
+        report.shadow_declined_decisions,
+        report.shadow_failed_decisions,
+        report.shadow_observation_failures,
+        report.shadow_ignored_duplicates,
+        report.shadow_last_event_id,
+        report.shadow_last_signal_direction,
+        report.shadow_last_error_category,
     )
 
 

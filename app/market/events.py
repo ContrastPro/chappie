@@ -105,10 +105,13 @@ class MarketEvent:
 class CandleInserted(MarketEvent):
     candle: CandleSnapshot
     reason: CandleInsertedReason
+    bootstrap: bool = False
 
     def __post_init__(self) -> None:
         MarketEvent.__post_init__(self)
         _validate_candle_event(self.candle, self.reason, CandleInsertedReason)
+        if not isinstance(self.bootstrap, bool):
+            raise InvalidMarketEventError("bootstrap must be a boolean")
 
 
 @dataclass(frozen=True, slots=True)
@@ -396,13 +399,17 @@ class MarketEventProjector:
             )
             previous = change.previous or self._latest.get(stream_key)
 
-            if not bootstrap and previous is not None:
+            if (
+                not bootstrap
+                and previous is not None
+                and change.result is CandleUpsertResult.INSERTED
+            ):
                 close_reason = (
                     CandleClosedReason.RESUME_RECONCILIATION
                     if resumed
                     else (
                         CandleClosedReason.NEXT_CANDLE_OBSERVED
-                        if change.result is CandleUpsertResult.INSERTED or future_insert
+                        if change.result is CandleUpsertResult.INSERTED
                         else CandleClosedReason.TIME_CONFIRMED
                     )
                 )
@@ -433,6 +440,7 @@ class MarketEventProjector:
                             if recovery
                             else CandleInsertedReason.NEW_CANDLE
                         ),
+                        bootstrap=bootstrap,
                     )
                 )
             elif change.result is CandleUpsertResult.UPDATED:
@@ -453,6 +461,27 @@ class MarketEventProjector:
                         reason=CandleUpdatedReason.OPEN_CANDLE_REFRESH,
                     )
                 )
+
+            if not bootstrap and change.closure_confirmed:
+                closed = self._project_closure(
+                    stream_key,
+                    change.current,
+                    change.observed_at_ms,
+                    occurred_at_ms,
+                    correlation_cycle_id,
+                    source,
+                    (
+                        CandleClosedReason.RESUME_RECONCILIATION
+                        if resumed
+                        else (
+                            CandleClosedReason.NEXT_CANDLE_OBSERVED
+                            if future_insert
+                            else CandleClosedReason.TIME_CONFIRMED
+                        )
+                    ),
+                )
+                if closed is not None:
+                    events.append(closed)
 
             for evicted in change.evicted:
                 events.append(

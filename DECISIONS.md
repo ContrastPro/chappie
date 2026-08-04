@@ -199,3 +199,30 @@
 - **Решение:** Первый deterministic Spot long-only planner преобразует BUY в `ENTER_LONG` с configurable target exposure, SELL — в `EXIT_LONG` с exposure `0`, а HOLD не создаёт intent. Default long target равен `Decimal("1")`.
 - **Причины:** Простая объяснимая policy, соответствие long-only Spot и отделение направления стратегии от будущих sizing/risk calculations.
 - **Последствия:** Planner не знает текущую позицию и может повторно описать ту же target exposure. Quantity, position-aware suppression и risk approval появляются позже; OrderIntent не является приказом на немедленную сделку.
+
+## ADR-023: Trading decisions first run in shadow mode
+
+- **Статус:** принято
+- **Дата:** 2026-08-04
+- **Контекст:** Trading Decision Pipeline реализован и проверен offline, но ещё не наблюдался в долгоживущем runtime. Подключение execution до эксплуатационной проверки нарушило бы принцип «безопасность важнее прибыльности» и обязательный risk gate.
+- **Решение:** Первое runtime-подключение торговых решений выполняется только в shadow mode. Подтверждённый `CandleClosed` запускает application-level Shadow Trading Decision Engine, который читает Market Cache, строит snapshot, вызывает Trading Decision Pipeline и делает результат наблюдаемым. Результат не передаётся в risk, portfolio или execution. Bootstrap history не replay-ится; первое решение возникает после нового `CandleClosed`. Подключение требует feature flag, выключенный по умолчанию до отдельного smoke-review.
+- **Причины:** Безопасная проверка реального event-driven пути, auditability, измерение ошибок и latency без воздействия на капитал или market ingestion.
+- **Последствия:** `OrderIntent` в shadow mode является только наблюдаемым результатом. Shadow failures изолируются от Polling Engine и других event handlers, cache не откатывается. Paper/live orders, risk и portfolio остаются запрещены; включение shadow mode не меняет trading mode.
+
+## ADR-024: Shadow decisions use observer ports
+
+- **Статус:** принято
+- **Дата:** 2026-08-04
+- **Контекст:** Shadow result должен быть наблюдаемым сейчас и пригодным для будущего audit persistence, но прямая запись engine в файл или database связала бы application orchestration с инфраструктурой.
+- **Решение:** Shadow Engine формирует immutable `ShadowDecisionRecord` и передаёт его через `ShadowDecisionObserver` port. Первая реализация — safe structured logging observer. JSONL, database, metrics и UI observers добавляются отдельными адаптерами позднее. Engine не владеет lifecycle observer.
+- **Причины:** Разделение вычисления и наблюдения, заменяемость адаптеров, тестируемость без файловой системы и стабильная audit boundary.
+- **Последствия:** Observer failure не откатывает вычисленное решение, не запускает pipeline повторно и не ломает market ingestion; record сохраняет semantic decision status и отдельный observation status. Durable storage и delivery guarantees отсутствуют до отдельного persistence решения.
+
+## ADR-025: Market Cache tracks confirmed candle closure
+
+- **Статус:** принято
+- **Дата:** 2026-08-04
+- **Контекст:** Свеча может быть сохранена незакрытой при bootstrap, а после границы закрытия provider может вернуть её финальную OHLCV-версию. Определение права update только по новому `observed_at_ms` ошибочно объявляло ранее открытую свечу immutable до фиксации её финального состояния.
+- **Решение:** Market Cache хранит внутренний immutable entry с `Candle`, `closure_confirmed` и последним явным временем наблюдения. Свеча, сохранённая открытой, может получить монотонный финальный update после close boundary; данные и переход `OPEN -> CLOSED_CONFIRMED` коммитятся атомарно. Exact duplicate также может подтвердить закрытие без изменения данных. После подтверждения свеча immutable, кроме exact duplicate. `MarketCacheChange` явно сообщает data change и closure transition Event Projector-у.
+- **Причины:** Детерминированная lifecycle-модель, корректный Binance REST reconciliation, атомарность и запрет изменения действительно подтверждённой истории.
+- **Последствия:** Update permission больше не выводится только из текущего времени. Event Projector публикует финальный `CandleUpdated` перед `CandleClosed`; public snapshots остаются обычными defensive `Candle` и не раскрывают lifecycle metadata. Persistence и distributed exactly-once guarantees не добавляются.

@@ -355,3 +355,100 @@ def test_unsupported_interval_is_rejected() -> None:
 def test_invalid_capacity_is_rejected(capacity: object) -> None:
     with pytest.raises(MarketCacheConfigurationError):
         InMemoryMarketCache(capacity=capacity)  # type: ignore[arg-type]
+
+
+def test_runtime_open_tail_accepts_final_update_and_next_open_at_capacity() -> None:
+    """Regression for the real bootstrap-to-regular Binance transition."""
+
+    cache = InMemoryMarketCache(capacity=1000)
+    bootstrap = [make_candle(index) for index in range(1000)]
+    stored_open = bootstrap[-1]
+    cache.upsert_candles(KEY, bootstrap, observed_during(stored_open))
+    finalized = make_candle(
+        999,
+        high="112",
+        low="89",
+        close="108",
+        volume="12",
+    )
+    next_open = make_candle(1000, close="101", volume="1")
+    observed_at_ms = next_open.open_time_ms
+
+    result = cache.upsert_candles(KEY, [finalized, next_open], observed_at_ms)
+
+    assert result.results == (
+        CandleUpsertResult.UPDATED,
+        CandleUpsertResult.INSERTED,
+    )
+    assert result.evicted_count == 1
+    assert len(cache.get_snapshot(KEY)) == 1000
+    assert cache.get_snapshot(KEY)[-2:] == (finalized, next_open)
+
+
+def test_exact_duplicate_crossing_close_boundary_confirms_once() -> None:
+    cache = InMemoryMarketCache()
+    item = make_candle()
+    cache.upsert_candles(KEY, [item], observed_during(item))
+
+    confirmed = cache.upsert_candles(KEY, [item], observed_after(item))
+    repeated = cache.upsert_candles(KEY, [item], observed_after(item))
+
+    assert confirmed.results == repeated.results == (CandleUpsertResult.UNCHANGED,)
+    assert confirmed.changes[0].closure_confirmed
+    assert confirmed.changes[0].current_closed_confirmed
+    assert not repeated.changes[0].closure_confirmed
+    assert repeated.changes[0].current_closed_confirmed
+
+
+def test_final_open_update_confirms_then_protects_committed_version() -> None:
+    cache = InMemoryMarketCache()
+    original = make_candle()
+    finalized = make_candle(high="111", low="89", close="108", volume="11")
+    conflict = make_candle(high="112", low="88", close="109", volume="12")
+    cache.upsert_candles(KEY, [original], observed_during(original))
+
+    result = cache.upsert_candles(KEY, [finalized], observed_after(original))
+    duplicate = cache.upsert_candles(KEY, [finalized], observed_after(original))
+
+    assert result.results == (CandleUpsertResult.UPDATED,)
+    assert result.changes[0].data_changed
+    assert result.changes[0].closure_confirmed
+    assert duplicate.results == (CandleUpsertResult.UNCHANGED,)
+    with pytest.raises(MarketCacheBatchError) as captured:
+        cache.upsert_candles(KEY, [conflict], observed_after(original))
+    cause = captured.value.__cause__
+    assert isinstance(cause, MarketCacheClosedCandleUpdateError)
+    assert cause.reason_code == "confirmed_closed_candle_conflict"
+    assert cause.differing_fields == ("high", "low", "close", "volume")
+    assert cache.get_latest_candle(KEY) == finalized
+
+
+def test_invalid_next_candle_rolls_back_data_and_closure_confirmation() -> None:
+    cache = InMemoryMarketCache()
+    original = make_candle()
+    finalized = make_candle(high="111", close="108", volume="11")
+    invalid_next = make_candle(2)
+    cache.upsert_candles(KEY, [original], observed_during(original))
+
+    with pytest.raises(MarketCacheBatchError):
+        cache.upsert_candles(
+            KEY,
+            [finalized, invalid_next],
+            observed_after(original),
+        )
+
+    assert cache.get_latest_candle(KEY) == original
+    accepted = cache.upsert_candles(KEY, [finalized], observed_after(original))
+    assert accepted.changes[0].closure_confirmed
+
+
+def test_candle_inserted_after_close_is_immediately_protected() -> None:
+    cache = InMemoryMarketCache()
+    closed = make_candle()
+    conflict = make_candle(high="111", close="108", volume="11")
+    inserted = cache.upsert_candles(KEY, [closed], observed_after(closed))
+
+    assert inserted.changes[0].current_closed_confirmed
+    with pytest.raises(MarketCacheBatchError) as captured:
+        cache.upsert_candles(KEY, [conflict], observed_after(closed))
+    assert isinstance(captured.value.__cause__, MarketCacheClosedCandleUpdateError)

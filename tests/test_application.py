@@ -2,11 +2,14 @@ import logging
 from collections.abc import Callable
 from decimal import Decimal
 
+import pytest
+
 from app.application import build_application, run_application
 from app.core.config import Settings
 from app.market.exceptions import MarketProviderHTTPError
 from app.market.models import Candle, ServerTime, TickerPrice
 from app.market.polling import PollingLifecycleState
+from app.shadow.exceptions import ShadowEngineStateError
 
 OPEN_TIME_MS = 1_700_000_000_000
 
@@ -72,6 +75,7 @@ def make_settings(**overrides: object) -> Settings:
         "smoke_run_cycles": 1,
         "polling_bootstrap_limit": 10,
         "market_cache_capacity": 10,
+        "shadow_history_limit": 10,
         **overrides,
     }
     return Settings(_env_file=None, **values)
@@ -85,6 +89,7 @@ def test_composition_runs_finite_smoke_and_closes_provider_once() -> None:
         clock=FixedClock(),
         sleeper=NoWaitSleeper(),
     )
+    assert application.shadow_engine is None
 
     exit_code = run_application(application, logging.getLogger("test"))
     report = application.status_report()
@@ -103,6 +108,52 @@ def test_composition_runs_finite_smoke_and_closes_provider_once() -> None:
     assert report.delivery_failure_count == 0
     assert report.last_exchange_time_ms == OPEN_TIME_MS + 120_000
     assert report.last_clock_skew_ms == 0
+
+
+def test_shadow_composition_is_feature_gated_and_stops_before_provider_close() -> None:
+    provider = ApplicationProvider([make_candle()])
+    settings = make_settings(
+        shadow_decisions_enabled=True,
+        shadow_history_limit=10,
+    )
+    application = build_application(
+        settings,
+        provider=provider,
+        clock=FixedClock(),
+        sleeper=NoWaitSleeper(),
+    )
+    assert application.shadow_engine is not None
+    assert application.shadow_engine.status.subscribed
+    assert application.status_report().shadow_enabled
+    application.close()
+    assert not application.shadow_engine.status.subscribed
+    assert provider.close_calls == 1
+
+
+def test_shadow_unsubscribe_failure_keeps_state_explicit_and_still_closes_provider(
+    monkeypatch,
+) -> None:
+    provider = ApplicationProvider([make_candle()])
+    application = build_application(
+        make_settings(shadow_decisions_enabled=True),
+        provider=provider,
+        clock=FixedClock(),
+        sleeper=NoWaitSleeper(),
+    )
+
+    def fail_unsubscribe(token):
+        del token
+        raise RuntimeError("dispatcher unavailable")
+
+    monkeypatch.setattr(application.dispatcher, "unsubscribe", fail_unsubscribe)
+    with pytest.raises(ShadowEngineStateError, match="unsubscribe"):
+        application.close()
+    assert provider.close_calls == 1
+    assert application.shadow_engine is not None
+    assert application.shadow_engine.status.subscribed
+    assert application.shadow_engine.status.lifecycle.value == "running"
+    application.close()
+    assert provider.close_calls == 1
 
 
 def test_fatal_provider_error_returns_nonzero_and_closes_provider() -> None:

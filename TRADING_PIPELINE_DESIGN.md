@@ -2,7 +2,7 @@
 
 ## 1. Статус и область
 
-- Статус: M2.4 implemented; final review pending.
+- Статус: M2.4 implemented and approved.
 - Дата: 2026-08-04.
 - Основание: ADR-019, ADR-020 и `TRADING_DOMAIN.md`.
 

@@ -156,6 +156,36 @@ class MarketCacheGapError(MarketCacheError):
 class MarketCacheClosedCandleUpdateError(MarketCacheError):
     """An update attempted to change an already closed candle."""
 
+    reason_code = "confirmed_closed_candle_conflict"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        stream_key: object | None = None,
+        stored_candle: object | None = None,
+        received_candle: object | None = None,
+        observed_at_ms: int | None = None,
+        differing_fields: tuple[str, ...] = (),
+    ) -> None:
+        super().__init__(message)
+        self.stream_key = stream_key
+        self.stored_candle = stored_candle
+        self.received_candle = received_candle
+        self.observed_at_ms = observed_at_ms
+        self.stored_lifecycle = "closed_confirmed"
+        self.received_lifecycle = (
+            "closed"
+            if (
+                received_candle is not None
+                and observed_at_ms is not None
+                and observed_at_ms > received_candle.close_time_ms
+            )
+            else "open"
+        )
+        self.differing_fields = differing_fields
+        self.previously_confirmed_closed = True
+
 
 class MarketCacheInvalidOpenCandleUpdateError(MarketCacheError):
     """An open-candle update violates monotonic update rules."""

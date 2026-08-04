@@ -19,7 +19,8 @@ def register_market_event_logging(
     """Register observability-only handlers for every Stage 1 market event."""
 
     def log_candle_event(event: CandleInserted | CandleClosed | CandleEvicted) -> None:
-        logger.info(
+        log = logger.debug if isinstance(event, CandleInserted) and event.bootstrap else logger.info
+        log(
             "%s symbol=%s interval=%s open_time_ms=%s close=%s "
             "event_id=%s correlation_cycle_id=%s reason=%s",
             type(event).__name__,

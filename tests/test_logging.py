@@ -92,6 +92,24 @@ def test_console_filters_verbose_events_but_keeps_warnings(
     assert "HTTP Request" in current
 
 
+def test_shadow_traceback_is_file_only(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    _, run_file = configure_in(tmp_path)
+    try:
+        raise RuntimeError("shadow pipeline exploded")
+    except RuntimeError:
+        logging.getLogger("ShadowDecisionTraceback").exception("shadow traceback")
+    logging.getLogger("ShadowDecisionEngine").error("shadow decision failed safely")
+    flush_handlers()
+
+    console = capsys.readouterr().err
+    current = run_file.read_text(encoding="utf-8")
+    assert "shadow pipeline exploded" not in console
+    assert "Traceback" not in console
+    assert "shadow decision failed safely" in console
+    assert "Traceback" in current
+    assert "RuntimeError: shadow pipeline exploded" in current
+
+
 def test_main_writes_complete_header_footer_and_flushes_normal_run(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

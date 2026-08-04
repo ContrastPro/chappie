@@ -39,6 +39,17 @@ class MarketCacheChange:
     current: CandleSnapshot
     evicted: tuple[CandleSnapshot, ...]
     observed_at_ms: int
+    previous_closed_confirmed: bool = False
+    current_closed_confirmed: bool = False
+    data_changed: bool = False
+    closure_confirmed: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _CacheEntry:
+    candle: Candle
+    closure_confirmed: bool
+    last_observed_at_ms: int
 
 
 class InMemoryMarketCache:
@@ -53,7 +64,7 @@ class InMemoryMarketCache:
             raise MarketCacheConfigurationError("Market cache capacity must be positive")
 
         self._capacity = capacity
-        self._streams: dict[MarketStreamKey, list[Candle]] = {}
+        self._streams: dict[MarketStreamKey, list[_CacheEntry]] = {}
 
     @property
     def capacity(self) -> int:
@@ -67,7 +78,7 @@ class InMemoryMarketCache:
     ) -> CandleUpsertResult:
         self._validate_timestamp(observed_at_ms, "observed_at_ms")
         self._validate_input_candles([candle], key, observed_at_ms)
-        result, _, _, _ = self._upsert_into(
+        result, _, _, _, _, _ = self._upsert_into(
             self._streams,
             key,
             candle,
@@ -100,7 +111,7 @@ class InMemoryMarketCache:
             raise MarketCacheBatchError("Candle batch validation failed") from error
 
         staged_streams = {
-            stream_key: [self._copy_candle(item) for item in stream]
+            stream_key: [self._copy_entry(item) for item in stream]
             for stream_key, stream in self._streams.items()
         }
         results: list[CandleUpsertResult] = []
@@ -109,11 +120,13 @@ class InMemoryMarketCache:
 
         try:
             for candle in batch:
-                result, evicted, previous, current = self._upsert_into(
-                    staged_streams,
-                    key,
-                    candle,
-                    observed_at_ms,
+                result, evicted, previous, current, previous_closed, current_closed = (
+                    self._upsert_into(
+                        staged_streams,
+                        key,
+                        candle,
+                        observed_at_ms,
+                    )
                 )
                 results.append(result)
                 evicted_count += len(evicted)
@@ -121,11 +134,17 @@ class InMemoryMarketCache:
                     MarketCacheChange(
                         result=result,
                         previous=(
-                            None if previous is None else CandleSnapshot.from_candle(previous)
+                            None
+                            if previous is None
+                            else CandleSnapshot.from_candle(previous.candle)
                         ),
-                        current=CandleSnapshot.from_candle(current),
-                        evicted=tuple(CandleSnapshot.from_candle(item) for item in evicted),
+                        current=CandleSnapshot.from_candle(current.candle),
+                        evicted=tuple(CandleSnapshot.from_candle(item.candle) for item in evicted),
                         observed_at_ms=observed_at_ms,
+                        previous_closed_confirmed=previous_closed,
+                        current_closed_confirmed=current_closed,
+                        data_changed=(previous is None or previous.candle != current.candle),
+                        closure_confirmed=(not previous_closed and current_closed),
                     )
                 )
         except (TypeError, ValueError) as error:
@@ -150,13 +169,13 @@ class InMemoryMarketCache:
 
         stream = self._streams.get(key, [])
         selected = stream if limit is None else stream[-limit:]
-        return tuple(self._copy_candle(candle) for candle in selected)
+        return tuple(self._copy_candle(entry.candle) for entry in selected)
 
     def get_latest_candle(self, key: MarketStreamKey) -> Candle | None:
         stream = self._streams.get(key)
         if not stream:
             return None
-        return self._copy_candle(stream[-1])
+        return self._copy_candle(stream[-1].candle)
 
     def get_latest_closed_candle(
         self,
@@ -166,40 +185,89 @@ class InMemoryMarketCache:
         self._validate_timestamp(as_of_ms, "as_of_ms")
         stream = self._streams.get(key, [])
 
-        for candle in reversed(stream):
-            if as_of_ms > candle.close_time_ms:
-                return self._copy_candle(candle)
+        for entry in reversed(stream):
+            if as_of_ms > entry.candle.close_time_ms:
+                return self._copy_candle(entry.candle)
 
         return None
 
     def _upsert_into(
         self,
-        streams: dict[MarketStreamKey, list[Candle]],
+        streams: dict[MarketStreamKey, list[_CacheEntry]],
         key: MarketStreamKey,
         candle: Candle,
         observed_at_ms: int,
-    ) -> tuple[CandleUpsertResult, tuple[Candle, ...], Candle | None, Candle]:
+    ) -> tuple[
+        CandleUpsertResult,
+        tuple[_CacheEntry, ...],
+        _CacheEntry | None,
+        _CacheEntry,
+        bool,
+        bool,
+    ]:
         stream = streams.setdefault(key, [])
 
         if not stream:
-            current = self._copy_candle(candle)
+            current = self._new_entry(candle, observed_at_ms)
             stream.append(current)
-            return CandleUpsertResult.INSERTED, (), None, current
+            return (
+                CandleUpsertResult.INSERTED,
+                (),
+                None,
+                current,
+                False,
+                current.closure_confirmed,
+            )
 
         latest = stream[-1]
+        latest_candle = latest.candle
 
-        if candle.open_time_ms == latest.open_time_ms:
-            if candle == latest:
-                return CandleUpsertResult.UNCHANGED, (), latest, latest
-            if observed_at_ms > latest.close_time_ms:
-                raise MarketCacheClosedCandleUpdateError("A closed candle cannot be updated")
-            self._validate_open_candle_update(latest, candle)
-            current = self._copy_candle(candle)
+        if candle.open_time_ms == latest_candle.open_time_ms:
+            should_confirm = observed_at_ms > latest_candle.close_time_ms
+            if candle == latest_candle:
+                if should_confirm and not latest.closure_confirmed:
+                    current = _CacheEntry(
+                        candle=self._copy_candle(latest_candle),
+                        closure_confirmed=True,
+                        last_observed_at_ms=observed_at_ms,
+                    )
+                    stream[-1] = current
+                    return CandleUpsertResult.UNCHANGED, (), latest, current, False, True
+                return (
+                    CandleUpsertResult.UNCHANGED,
+                    (),
+                    latest,
+                    latest,
+                    latest.closure_confirmed,
+                    latest.closure_confirmed,
+                )
+            if latest.closure_confirmed:
+                raise MarketCacheClosedCandleUpdateError(
+                    "A confirmed closed candle cannot be updated",
+                    stream_key=key,
+                    stored_candle=CandleSnapshot.from_candle(latest_candle),
+                    received_candle=CandleSnapshot.from_candle(candle),
+                    observed_at_ms=observed_at_ms,
+                    differing_fields=self._differing_candle_fields(latest_candle, candle),
+                )
+            self._validate_open_candle_update(latest_candle, candle)
+            current = _CacheEntry(
+                candle=self._copy_candle(candle),
+                closure_confirmed=should_confirm,
+                last_observed_at_ms=observed_at_ms,
+            )
             stream[-1] = current
-            return CandleUpsertResult.UPDATED, (), latest, current
+            return (
+                CandleUpsertResult.UPDATED,
+                (),
+                latest,
+                current,
+                False,
+                current.closure_confirmed,
+            )
 
-        if candle.open_time_ms < latest.open_time_ms:
-            if any(item.open_time_ms == candle.open_time_ms for item in stream[:-1]):
+        if candle.open_time_ms < latest_candle.open_time_ms:
+            if any(item.candle.open_time_ms == candle.open_time_ms for item in stream[:-1]):
                 raise MarketCacheDuplicateConflictError(
                     "A conflicting duplicate candle cannot replace cached history"
                 )
@@ -209,7 +277,7 @@ class InMemoryMarketCache:
 
         try:
             validate_candle_sequence(
-                [latest, candle],
+                [latest_candle, candle],
                 key.interval,
                 allow_incomplete_last=True,
                 current_time_ms=observed_at_ms,
@@ -221,12 +289,20 @@ class InMemoryMarketCache:
             ) from error
 
         previous = latest
-        stream.append(self._copy_candle(candle))
-        evicted: tuple[Candle, ...] = ()
+        current = self._new_entry(candle, observed_at_ms)
+        stream.append(current)
+        evicted: tuple[_CacheEntry, ...] = ()
         if len(stream) > self._capacity:
             evicted = (stream.pop(0),)
 
-        return CandleUpsertResult.INSERTED, evicted, previous, stream[-1]
+        return (
+            CandleUpsertResult.INSERTED,
+            evicted,
+            previous,
+            stream[-1],
+            previous.closure_confirmed,
+            current.closure_confirmed,
+        )
 
     @staticmethod
     def _validate_input_candles(
@@ -277,3 +353,32 @@ class InMemoryMarketCache:
     @staticmethod
     def _copy_candle(candle: Candle) -> Candle:
         return candle.model_copy(deep=True)
+
+    @classmethod
+    def _new_entry(cls, candle: Candle, observed_at_ms: int) -> _CacheEntry:
+        return _CacheEntry(
+            candle=cls._copy_candle(candle),
+            closure_confirmed=observed_at_ms > candle.close_time_ms,
+            last_observed_at_ms=observed_at_ms,
+        )
+
+    @classmethod
+    def _copy_entry(cls, entry: _CacheEntry) -> _CacheEntry:
+        return _CacheEntry(
+            candle=cls._copy_candle(entry.candle),
+            closure_confirmed=entry.closure_confirmed,
+            last_observed_at_ms=entry.last_observed_at_ms,
+        )
+
+    @staticmethod
+    def _differing_candle_fields(previous: Candle, current: Candle) -> tuple[str, ...]:
+        fields = (
+            "open_time_ms",
+            "close_time_ms",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+        )
+        return tuple(name for name in fields if getattr(previous, name) != getattr(current, name))

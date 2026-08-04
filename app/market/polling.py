@@ -397,11 +397,18 @@ class SynchronousRestPollingEngine:
                 result.correlation_cycle_id,
             )
             if result.bootstrap and result.outcome is PollCycleOutcome.SUCCESS:
+                snapshot = self._cache.get_snapshot(self._stream_key)
                 self._logger.info(
-                    "Bootstrap events published: inserted=%s updated=%s closed=0 evicted=%s",
+                    "Bootstrap summary: inserted=%s updated=%s closed=0 evicted=%s "
+                    "first_open_time_ms=%s last_open_time_ms=%s cache_size=%s "
+                    "correlation_cycle_id=%s",
                     result.inserted,
                     result.updated,
                     result.evicted,
+                    snapshot[0].open_time_ms if snapshot else None,
+                    snapshot[-1].open_time_ms if snapshot else None,
+                    len(snapshot),
+                    result.correlation_cycle_id,
                 )
 
             if (
@@ -633,6 +640,7 @@ class SynchronousRestPollingEngine:
                     correlation_cycle_id,
                     boundary_error,
                 )
+            self._log_cache_integrity(error, bootstrap=bootstrap, recovery=False)
             return self._failed_result(
                 category=PollErrorCategory.CACHE,
                 attempts=fetch.attempts,
@@ -641,7 +649,8 @@ class SynchronousRestPollingEngine:
                 fatal=True,
                 correlation_cycle_id=correlation_cycle_id,
             )
-        except MarketCacheError:
+        except MarketCacheError as error:
+            self._log_cache_integrity(error, bootstrap=bootstrap, recovery=False)
             return self._failed_result(
                 category=PollErrorCategory.CACHE,
                 attempts=fetch.attempts,
@@ -785,6 +794,46 @@ class SynchronousRestPollingEngine:
                 self._stream_key,
                 recovery_batch,
                 observed_at_ms,
+            )
+        except MarketCacheBatchError as error:
+            if self._has_cause(error, MarketCacheGapError):
+                recovery_gap = self._cache_boundary_gap(recovery_fetch.candles)
+            else:
+                self._log_cache_integrity(error, bootstrap=False, recovery=True)
+                result = self._failed_result(
+                    category=PollErrorCategory.CACHE,
+                    attempts=total_attempts,
+                    fetched=len(recovery_fetch.candles),
+                    bootstrap=False,
+                    recovery=True,
+                    fatal=True,
+                    correlation_cycle_id=correlation_cycle_id,
+                )
+                return self._merge_delivery(
+                    result,
+                    diagnostic.published_count,
+                    diagnostic.handler_failure_count,
+                )
+            recovery_diagnostic = self._publish_gap_event(
+                correlation_cycle_id,
+                phase=MarketGapPhase.RECOVERY,
+                reason=MarketGapReason.RECOVERY_DISCONNECTED,
+                gap_error=recovery_gap,
+            )
+            result = self._failed_result(
+                category=PollErrorCategory.GAP_RECOVERY,
+                attempts=total_attempts,
+                fetched=len(recovery_fetch.candles),
+                bootstrap=False,
+                recovery=True,
+                correlation_cycle_id=correlation_cycle_id,
+            )
+            return self._merge_delivery(
+                result,
+                diagnostic.published_count + recovery_diagnostic.published_count,
+                diagnostic.handler_failure_count
+                + recovery_diagnostic.handler_failure_count
+                + (recovery_diagnostic.infrastructure_error is not None),
             )
         except (TypeError, ValueError) as error:
             recovery_gap = (
@@ -1339,6 +1388,38 @@ class SynchronousRestPollingEngine:
                 return True
             current = current.__cause__
         return False
+
+    def _log_cache_integrity(
+        self,
+        error: MarketCacheError,
+        *,
+        bootstrap: bool,
+        recovery: bool,
+    ) -> None:
+        cause: BaseException = error
+        while cause.__cause__ is not None:
+            cause = cause.__cause__
+        stored = getattr(cause, "stored_candle", None)
+        received = getattr(cause, "received_candle", None)
+        phase = "recovery" if recovery else ("bootstrap" if bootstrap else "regular")
+        self._logger.error(
+            "Market cache integrity failure exception=%s reason_code=%s symbol=%s "
+            "interval=%s open_time_ms=%s close_time_ms=%s observed_at_ms=%s "
+            "stored_lifecycle=%s received_lifecycle=%s differing_fields=%s "
+            "previously_confirmed_closed=%s phase=%s",
+            cause.__class__.__name__,
+            getattr(cause, "reason_code", "cache_integrity"),
+            self._stream_key.symbol,
+            self._stream_key.interval,
+            getattr(received, "open_time_ms", getattr(stored, "open_time_ms", None)),
+            getattr(received, "close_time_ms", getattr(stored, "close_time_ms", None)),
+            getattr(cause, "observed_at_ms", self._cycle_exchange_time_ms),
+            getattr(cause, "stored_lifecycle", "unknown"),
+            getattr(cause, "received_lifecycle", "unknown"),
+            getattr(cause, "differing_fields", ()),
+            getattr(cause, "previously_confirmed_closed", False),
+            phase,
+        )
 
     @staticmethod
     def _is_fatal_result(result: PollCycleResult) -> bool:

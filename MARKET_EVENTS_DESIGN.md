@@ -121,6 +121,8 @@ Snapshot создаётся defensive conversion после cache commit. Оди
 
 Exact duplicate не создаёт `Inserted` или `Updated`, но успешная idempotent reconciliation может создать ранее не объявленный `CandleClosed`.
 
+Если финальная версия ранее открытой свечи изменилась, cache явно сообщает одновременные data update и closure confirmation. Projector создаёт `CandleUpdated(final)` и затем `CandleClosed(final)`. При exact duplicate через boundary создаётся только `CandleClosed`. Если batch также вставляет следующую свечу, порядок: `Updated`, `Closed`, `Inserted`, затем `Evicted`.
+
 ## 7. Точная семантика CandleClosed
 
 ### Основное правило

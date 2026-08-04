@@ -156,6 +156,11 @@ MarketProvider
       v
  Market Events
       |
+      +------> CandleClosed -> Shadow Trading Decision Engine
+      |                       -> Snapshot Factory
+      |                       -> Trading Decision Pipeline
+      |                       -> Shadow Decision Observer
+      |
       +------> Indicators
       +------> Strategies
       +------> Analytics
@@ -214,6 +219,11 @@ MarketProvider
 - Market Cache ограниченно хранит уже нормализованные и проверенные данные и предоставляет единый read interface внутренним потребителям.
 
 #### Market Cache
+
+Market Cache хранит public candle data во внутреннем lifecycle entry. Переход
+`OPEN -> CLOSED_CONFIRMED` коммитится атомарно с возможным финальным OHLCV update;
+после подтверждения отличающиеся версии запрещены. Lifecycle metadata не выходит
+через public snapshots, но additive mutation details передаются Event Projector.
 
 Market Cache является единственным внутренним источником рыночных данных для индикаторов, стратегий, risk, analytics и будущих AI-модулей. Backtest, paper, testnet и live используют одинаковый интерфейс чтения; различается только ingestion source.
 
@@ -277,6 +287,43 @@ Polling Engine после успешного cache commit передаёт по�
 
 Минимальный event model, точная семантика `CandleClosed` и delivery policy описаны в `MARKET_EVENTS_DESIGN.md`.
 
+#### Shadow Trading Decision Engine
+
+M2.6 реализует этот компонент отдельным пакетом `app.shadow`; подключение в
+composition root условно и по умолчанию выключено.
+
+Первое runtime-подключение торгового pipeline выполняется только в shadow mode и
+требует feature flag. После подтверждённого cache commit целевой поток имеет вид:
+
+```text
+CandleClosed
+    -> ShadowTradingDecisionEngine
+    -> MarketCacheReader
+    -> MarketSnapshotFactory
+    -> TradingDecisionPipeline
+    -> ShadowDecisionRecord
+    -> ShadowDecisionObserver
+```
+
+Shadow Engine является application service. Он владеет только собственной
+подпиской на `CandleClosed` и bounded in-memory dedup state. Он читает defensive
+snapshot Market Cache через структурный read port, использует event market time и
+correlation для создания `MarketSnapshot`, вызывает один Trading Decision Pipeline
+и передаёт immutable record observer-у.
+
+Engine не изменяет Market Cache, не находится внутри Polling Engine, dispatcher,
+Strategy или Intent Planner и не выполняет risk, portfolio mutation, execution,
+paper/live orders, private Binance API или persistence. Его ожидаемые и неожиданные
+`Exception` изолируются от market ingestion; `BaseException` не поглощается.
+Composition root создаёт и связывает engine, cache reader, pipeline, factories,
+dispatcher и observer, но engine не закрывает эти зависимости.
+
+Первая версия использует synchronous in-process delivery, один thread, один engine
+на Strategy/Pipeline и logging observer. Bootstrap history не replay-ится: первое
+shadow decision появляется только после нового `CandleClosed`. Детальный lifecycle,
+consistency checks, dedup и error policy описаны в
+`SHADOW_DECISION_ENGINE_DESIGN.md`.
+
 ### `strategies`
 
 Преобразует рыночный контекст в типизированный сигнал или намерение. Не отправляет ордера и не меняет портфель напрямую.
@@ -330,13 +377,14 @@ Polling Engine после успешного cache commit передаёт по�
 5. Проверенные данные атомарно помещаются в Market Cache.
 6. После успешного commit Market Event Projector создаёт события подтверждённых изменений.
 7. Event Dispatcher синхронно доставляет события подписанным внутренним модулям.
-8. Indicators, Strategy, Analytics, Risk и AI читают рыночные данные только из Market Cache.
+8. В shadow mode `CandleClosed` вызывает Shadow Trading Decision Engine, который читает Market Cache и строит `MarketSnapshot` с временем и correlation события.
 9. Strategy формирует только immutable `Signal` из `MarketSnapshot`.
 10. Application-level `TradingDecisionPipeline` проверяет Signal и координирует отдельный deterministic Intent Planner, который формирует `OrderIntent` или типизированно не создаёт его.
-11. Risk Manager создаёт обязательный `RiskDecision` относительно лимитов и портфеля.
-12. Execution отправляет или симулирует только разрешённый ордер.
-13. Полученные fills обновляют портфель.
-14. Каждое решение и изменение состояния записывается для аудита и аналитики.
+11. Shadow Engine формирует immutable record и передаёт его observer-у; на этом shadow flow заканчивается без risk и execution.
+12. В будущих исполняемых режимах Risk Manager создаёт обязательный `RiskDecision` относительно лимитов и портфеля.
+13. Execution отправляет или симулирует только разрешённый ордер.
+14. Полученные fills обновляют портфель.
+15. Каждое решение и изменение состояния записывается для аудита и аналитики.
 
 Ни одна стратегия, включая AI-стратегию, не должна напрямую обращаться к live execution.
 

@@ -250,7 +250,10 @@ def test_successful_bootstrap() -> None:
 def test_successful_bootstrap_run_logs_one_event_summary(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    engine, _, _, _, _ = make_engine([[make_candle(0), make_candle(1)]])
+    engine, _, _, _, _ = make_engine(
+        [[make_candle(0), make_candle(1)]],
+        correlation_id_factory=SequentialIdFactory("cycle"),
+    )
 
     with caplog.at_level(logging.INFO, logger="SynchronousRestPollingEngine"):
         engine.run_cycles(1)
@@ -258,9 +261,14 @@ def test_successful_bootstrap_run_logs_one_event_summary(
     summaries = [
         record.getMessage()
         for record in caplog.records
-        if record.getMessage().startswith("Bootstrap events published:")
+        if record.getMessage().startswith("Bootstrap summary:")
     ]
-    assert summaries == ["Bootstrap events published: inserted=2 updated=0 closed=0 evicted=0"]
+    assert len(summaries) == 1
+    assert "inserted=2 updated=0 closed=0 evicted=0" in summaries[0]
+    assert f"first_open_time_ms={OPEN_TIME_MS}" in summaries[0]
+    assert f"last_open_time_ms={OPEN_TIME_MS + INTERVAL_MS}" in summaries[0]
+    assert "cache_size=2" in summaries[0]
+    assert "correlation_cycle_id=cycle-1" in summaries[0]
 
 
 def test_single_first_candle_in_empty_cache_is_not_a_gap() -> None:
@@ -1072,7 +1080,8 @@ def test_recovery_cannot_replace_conflicting_closed_candle() -> None:
 
     result = engine.run_once()
 
-    assert result.error_category is PollErrorCategory.GAP_RECOVERY
+    assert result.error_category is PollErrorCategory.CACHE
+    assert result.fatal is True
     assert result.recovery is True
     assert len(provider.calls) == 2
     assert cache.get_snapshot(KEY) == (cached,)
@@ -1201,7 +1210,9 @@ def test_validation_failure_publishes_no_cache_change_event() -> None:
     assert cache.get_snapshot(KEY) == ()
 
 
-def test_cache_failure_publishes_no_cache_change_event() -> None:
+def test_cache_failure_publishes_no_cache_change_event(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     cached = make_candle(0)
     conflicting = make_candle(0, close="106")
     cache = InMemoryMarketCache()
@@ -1218,12 +1229,25 @@ def test_cache_failure_publishes_no_cache_change_event() -> None:
         event_id_factory=SequentialIdFactory("diagnostic"),
     )
 
-    result = engine.run_once()
+    with caplog.at_level(logging.ERROR, logger="SynchronousRestPollingEngine"):
+        result = engine.run_once()
 
     assert result.outcome is PollCycleOutcome.FAILED
     assert result.error_category is PollErrorCategory.CACHE
     assert [type(event) for event in received] == [MarketStreamFailed]
     assert cache.get_snapshot(KEY) == (cached,)
+    diagnostic = next(
+        message for message in caplog.messages if message.startswith("Market cache integrity")
+    )
+    assert "exception=MarketCacheClosedCandleUpdateError" in diagnostic
+    assert "reason_code=confirmed_closed_candle_conflict" in diagnostic
+    assert "symbol=BTCUSDT interval=1m" in diagnostic
+    assert f"open_time_ms={cached.open_time_ms}" in diagnostic
+    assert f"close_time_ms={cached.close_time_ms}" in diagnostic
+    assert "stored_lifecycle=closed_confirmed" in diagnostic
+    assert "received_lifecycle=closed" in diagnostic
+    assert "differing_fields=('close',)" in diagnostic
+    assert "previously_confirmed_closed=True phase=regular" in diagnostic
 
 
 def test_gap_diagnostic_precedes_recovery_cache_events() -> None:

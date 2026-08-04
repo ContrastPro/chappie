@@ -96,7 +96,18 @@ Market Cache не знает, поступили данные от Binance, repl
 - закрытая свеча immutable и конфликт отклоняется;
 - изменить свечу, которая не является последней, нельзя.
 
-Определение незакрытости использует переданный `observed_at_ms`, а не скрытое системное время.
+Определение незакрытости использует переданный `observed_at_ms`, а не скрытое системное время. Внутренний entry отдельно хранит подтверждённость закрытия: наступление wall/exchange time само по себе не делает ранее открытую версию immutable до успешного cache commit.
+
+Переходы первой реализации:
+
+- insert при `observed_at_ms <= close_time_ms` сохраняет `OPEN`;
+- insert после boundary сразу сохраняет `CLOSED_CONFIRMED`;
+- `OPEN` допускает monotonic refresh и один финальный update;
+- exact duplicate `OPEN` после boundary атомарно подтверждает закрытие;
+- финальный update после boundary атомарно меняет данные и подтверждает закрытие;
+- `CLOSED_CONFIRMED` принимает только exact duplicate.
+
+Lifecycle metadata не входит в public `Candle` snapshot. `MarketCacheChange` содержит additive flags `previous_closed_confirmed`, `current_closed_confirmed`, `data_changed` и `closure_confirmed`.
 
 ### Out-of-order
 

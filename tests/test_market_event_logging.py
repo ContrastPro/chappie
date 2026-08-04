@@ -114,3 +114,41 @@ def test_logging_handlers_cover_cache_and_diagnostic_events(
     assert "event-6" in messages
     assert "cycle-1" in messages
     assert "provider" in messages
+
+
+def test_bootstrap_insert_is_debug_while_regular_insert_remains_info(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    dispatcher = MarketEventDispatcher()
+    logger = logging.getLogger("test.market.bootstrap.logging")
+    register_market_event_logging(dispatcher, logger)
+    candle = CandleSnapshot(
+        open_time_ms=1_700_000_000_000,
+        close_time_ms=1_700_000_059_999,
+        open=Decimal(100),
+        high=Decimal(110),
+        low=Decimal(90),
+        close=Decimal(105),
+        volume=Decimal(10),
+    )
+    bootstrap = CandleInserted(
+        **envelope("bootstrap-event"),
+        candle=candle,
+        reason=CandleInsertedReason.NEW_CANDLE,
+        bootstrap=True,
+    )
+    regular = CandleInserted(
+        **envelope("regular-event"),
+        candle=candle,
+        reason=CandleInsertedReason.NEW_CANDLE,
+    )
+
+    with caplog.at_level(logging.DEBUG, logger=logger.name):
+        dispatcher.publish(bootstrap)
+        dispatcher.publish(regular)
+
+    levels = {record.getMessage(): record.levelno for record in caplog.records}
+    bootstrap_message = next(message for message in levels if "bootstrap-event" in message)
+    regular_message = next(message for message in levels if "regular-event" in message)
+    assert levels[bootstrap_message] == logging.DEBUG
+    assert levels[regular_message] == logging.INFO

@@ -1,8 +1,9 @@
+from decimal import Decimal
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -33,6 +34,14 @@ class Settings(BaseSettings):
     market_clock_skew_warning_seconds: float = Field(default=5.0, ge=0)
     smoke_run_cycles: int | None = Field(default=None, gt=0)
 
+    shadow_decisions_enabled: bool = False
+    shadow_history_limit: int = Field(default=1000, gt=0)
+    shadow_dedup_capacity: int = Field(default=10000, gt=0)
+    snapshot_stale_after_ms: int = Field(default=120000, gt=0)
+    ema_fast_window: int = Field(default=12, ge=2)
+    ema_slow_window: int = Field(default=26, gt=2)
+    long_target_exposure: Decimal = Decimal(1)
+
     binance_api_key: str | None = None
     binance_secret_key: str | None = None
 
@@ -47,7 +56,22 @@ class Settings(BaseSettings):
     def validate_market_data_configuration(self) -> "Settings":
         if self.polling_bootstrap_limit > self.market_cache_capacity:
             raise ValueError("polling_bootstrap_limit must not exceed market_cache_capacity")
+        if self.shadow_history_limit > self.market_cache_capacity:
+            raise ValueError("shadow_history_limit must not exceed market_cache_capacity")
+        if self.ema_slow_window <= self.ema_fast_window:
+            raise ValueError("ema_slow_window must be greater than ema_fast_window")
+        if not self.long_target_exposure.is_finite() or not (
+            Decimal(0) < self.long_target_exposure <= Decimal(1)
+        ):
+            raise ValueError("long_target_exposure must be finite and in (0, 1]")
         return self
+
+    @field_validator("long_target_exposure", mode="before")
+    @classmethod
+    def reject_float_exposure(cls, value: object) -> object:
+        if isinstance(value, float):
+            raise TypeError("long_target_exposure must not be a float")
+        return value
 
 
 @lru_cache

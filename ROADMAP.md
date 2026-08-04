@@ -114,6 +114,34 @@
 - Добавлены cross-model invariants, типизированные ошибки boundary и внедряемые фабрики идентификаторов.
 - Добавлены unit- и integration-тесты, включая совместную работу с EMA baseline strategy.
 
+#### M2.5 Shadow Trading Decision Engine — design
+
+Статус: **completed**.
+
+- Спроектировать application service, запускающий shadow evaluation по подтверждённому `CandleClosed`.
+- Зафиксировать cache read port, event/cache consistency, immutable shadow record и observer boundary.
+- Определить lifecycle подписки, bounded in-memory dedup, failure isolation, status и безопасное logging.
+- Подготовить feature-flagged runtime wiring proposal без risk, execution, portfolio и persistence.
+- Подготовить детерминированный test plan и минимальную implementation scope M2.6.
+
+M2.5 не подключает trading pipeline к runtime и не завершает Stage 2. Реализация и
+shadow smoke-run выполняются отдельными этапами после review design-документа.
+
+#### M2.6 Shadow Trading Decision Engine — implementation
+
+Статус: **completed**.
+
+Bootstrap-to-regular cache lifecycle исправлен и покрыт offline regression tests.
+Реальный Binance shadow smoke-run 2026-08-04 успешно подтвердил получение
+`CandleClosed` в runtime и формирование восьми успешных объяснимых HOLD decisions
+без failures, execution или ордеров.
+
+- Реализовать синхронный application service, запускаемый только `CandleClosed`.
+- Подключить bounded in-memory dedup, immutable decision record и logging observer.
+- Подключать shadow flow composition root-ом только при feature flag; не добавлять
+  risk, execution, portfolio mutation или orders.
+- Сохранить изоляцию shadow failures от market ingestion.
+
 ### Критерии готовности
 
 - Стратегия не зависит от Binance, HTTP или базы данных.
