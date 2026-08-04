@@ -32,7 +32,7 @@
 
 Завершённая основа Stage 1 включает контракт `MarketProvider`, Binance Spot адаптер для `BTCUSDT`, получение Binance OHLCV, нормализованные модели и независимую проверку качества свечей. Оставшаяся работа разделена на следующие milestones.
 
-#### M1.5 Market Cache
+#### M1.5 Market Cache — completed
 
 - Утвердить минимальный контракт Market Cache и ключ потока `symbol + interval`.
 - Реализовать bounded in-memory хранение нормализованных проверенных свечей.
@@ -41,7 +41,7 @@
 - Добавить типизированные ошибки и unit-тесты контракта.
 - Не включать сеть, polling, persistence или торговую логику.
 
-#### M1.6 Polling Engine
+#### M1.6 Polling Engine — completed
 
 - Реализовать первый синхронный REST polling loop для `BTCUSDT`.
 - Ограничить использование `MarketProvider` ingestion-слоем.
@@ -49,7 +49,7 @@
 - Добавить timeout policy, retry/backoff, rate-limit handling и graceful shutdown.
 - `asyncio` и WebSocket не вводить без отдельного ADR.
 
-#### M1.7 Market Events
+#### M1.7 Market Events — completed
 
 - Реализовать минимальные cache-события `CandleInserted`, `CandleUpdated`, `CandleClosed` и `CandleEvicted`.
 - Отделить диагностические `MarketGapDetected` и `MarketStreamFailed` от событий изменения cache.
@@ -59,7 +59,7 @@
 - Расширить cache mutation result подробными изменениями без удаления текущих счётчиков.
 - Не включать стратегии, торговые решения или execution.
 
-#### M1.8 Stage 1 completion
+#### M1.8 Stage 1 completion — completed
 
 - Завершить contract, unit и integration tests market pipeline.
 - Проверить обработку ошибочных payload, пропусков, повторов, rate limits и временных сбоев.

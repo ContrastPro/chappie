@@ -4,6 +4,30 @@ from decimal import Decimal
 
 from pydantic import BaseModel
 
+from app.market.exceptions import MarketStreamKeyError
+
+
+@dataclass(frozen=True, slots=True)
+class MarketStreamKey:
+    symbol: str
+    interval: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.symbol, str) or not self.symbol:
+            raise MarketStreamKeyError("Market stream symbol must be a non-empty string")
+        if self.symbol != self.symbol.strip().upper():
+            raise MarketStreamKeyError("Market stream symbol must be normalized")
+        if not self.symbol.isascii() or not self.symbol.isalnum():
+            raise MarketStreamKeyError(
+                "Market stream symbol must contain only ASCII letters and digits"
+            )
+        if not isinstance(self.interval, str) or not self.interval:
+            raise MarketStreamKeyError(
+                "Market stream interval must be a non-empty string"
+            )
+        if self.interval != self.interval.strip():
+            raise MarketStreamKeyError("Market stream interval must be normalized")
+
 
 class ServerTime(BaseModel):
     timestamp_ms: int

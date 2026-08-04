@@ -49,6 +49,78 @@ class CandleSequenceValidationError(MarketDataValidationError):
     """A candle collection violates ordering or continuity invariants."""
 
 
+class CandleSequenceGapError(CandleSequenceValidationError):
+    """Two adjacent candles do not match the configured stream interval."""
+
+    def __init__(
+        self,
+        *,
+        stream_key: object,
+        previous_index: int,
+        current_index: int,
+        previous_open_time_ms: int,
+        previous_close_time_ms: int,
+        expected_open_time_ms: int,
+        received_open_time_ms: int,
+        interval: str,
+    ) -> None:
+        self.stream_key = stream_key
+        self.previous_index = previous_index
+        self.current_index = current_index
+        self.previous_open_time_ms = previous_open_time_ms
+        self.previous_close_time_ms = previous_close_time_ms
+        self.expected_open_time_ms = expected_open_time_ms
+        self.received_open_time_ms = received_open_time_ms
+        self.interval = interval
+        self.actual_difference_ms = received_open_time_ms - previous_open_time_ms
+        super().__init__(
+            "Unexpected candle interval: "
+            f"previous_index={previous_index} current_index={current_index} "
+            f"previous_open_time_ms={previous_open_time_ms} "
+            f"expected_open_time_ms={expected_open_time_ms} "
+            f"received_open_time_ms={received_open_time_ms} "
+            f"actual_difference_ms={self.actual_difference_ms} interval={interval}"
+        )
+
+
+class IncompleteCandleSequenceError(CandleSequenceValidationError):
+    """A candle batch contains more incomplete candles than policy permits."""
+
+    def __init__(
+        self,
+        *,
+        invalid_index: int,
+        invalid_open_time_ms: int,
+        invalid_close_time_ms: int,
+        latest_open_time_ms: int,
+        latest_close_time_ms: int,
+        incomplete_candle_count: int,
+        observed_at_ms: int,
+        only_last_allowed: bool,
+    ) -> None:
+        self.invalid_index = invalid_index
+        self.invalid_open_time_ms = invalid_open_time_ms
+        self.invalid_close_time_ms = invalid_close_time_ms
+        self.latest_open_time_ms = latest_open_time_ms
+        self.latest_close_time_ms = latest_close_time_ms
+        self.incomplete_candle_count = incomplete_candle_count
+        self.observed_at_ms = observed_at_ms
+        message = (
+            "Only the last candle may be incomplete"
+            if only_last_allowed
+            else "The last candle is incomplete"
+        )
+        super().__init__(
+            f"{message}; invalid candle at index {invalid_index}; "
+            f"observed_at_ms={observed_at_ms} "
+            f"open_time_ms={invalid_open_time_ms} "
+            f"close_time_ms={invalid_close_time_ms} "
+            f"latest_open_time_ms={latest_open_time_ms} "
+            f"latest_close_time_ms={latest_close_time_ms} "
+            f"incomplete_candle_count={incomplete_candle_count}"
+        )
+
+
 class UnsupportedMarketIntervalError(MarketDataValidationError):
     """A market interval has no supported explicit duration."""
 

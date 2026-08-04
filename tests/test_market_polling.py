@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Callable
 from dataclasses import FrozenInstanceError
 from decimal import Decimal
@@ -6,17 +7,20 @@ import pytest
 
 from app.market.cache import InMemoryMarketCache, MarketStreamKey
 from app.market.events import (
+    CandleClosed,
     CandleInserted,
     EventDeliveryResult,
     MarketEvent,
     MarketEventDispatcher,
     MarketEventProjector,
     MarketGapDetected,
+    MarketGapPhase,
     MarketStreamFailed,
 )
 from app.market.exceptions import (
     MarketProviderHTTPError,
     MarketProviderTimeoutError,
+    PollingEngineConfigurationError,
     PollingEngineStateError,
 )
 from app.market.models import Candle, ServerTime, TickerPrice
@@ -96,19 +100,33 @@ class ScriptedMarketProvider:
         self,
         responses: list[list[Candle] | Exception],
         on_call: Callable[[int], None] | None = None,
+        server_time_ms: int = OPEN_TIME_MS,
+        server_time_responses: list[ServerTime | Exception] | None = None,
     ) -> None:
         self.responses = list(responses)
         self.on_call = on_call
         self.calls: list[tuple[str, str, int]] = []
         self.close_calls = 0
+        self.server_time_ms = server_time_ms
+        self.server_time_responses = list(server_time_responses or [])
+        self.server_time_calls = 0
+        self.request_order: list[str] = []
 
     def get_server_time(self) -> ServerTime:
-        return ServerTime(timestamp_ms=OPEN_TIME_MS)
+        self.server_time_calls += 1
+        self.request_order.append("server_time")
+        if self.server_time_responses:
+            response = self.server_time_responses.pop(0)
+            if isinstance(response, Exception):
+                raise response
+            return response
+        return ServerTime(timestamp_ms=self.server_time_ms)
 
     def get_ticker_price(self, symbol: str) -> TickerPrice:
         return TickerPrice(symbol=symbol, price=Decimal(100))
 
     def get_candles(self, symbol: str, interval: str, limit: int) -> list[Candle]:
+        self.request_order.append("candles")
         self.calls.append((symbol, interval, limit))
         if self.on_call is not None:
             self.on_call(len(self.calls))
@@ -179,6 +197,7 @@ def make_engine(
     projector: MarketEventProjector | None = None,
     event_id_factory: SequentialIdFactory | None = None,
     correlation_id_factory: SequentialIdFactory | None = None,
+    server_time_responses: list[ServerTime | Exception] | None = None,
 ) -> tuple[
     SynchronousRestPollingEngine,
     ScriptedMarketProvider,
@@ -189,7 +208,12 @@ def make_engine(
     market_cache = cache or InMemoryMarketCache()
     fake_clock = clock or FakeClock(OPEN_TIME_MS + 20 * INTERVAL_MS)
     fake_sleeper = sleeper or FakeSleeper(fake_clock)
-    provider = ScriptedMarketProvider(responses, on_provider_call)
+    provider = ScriptedMarketProvider(
+        responses,
+        on_provider_call,
+        server_time_ms=fake_clock.wall_time_ms,
+        server_time_responses=server_time_responses,
+    )
     engine = SynchronousRestPollingEngine(
         provider,
         market_cache,
@@ -223,6 +247,146 @@ def test_successful_bootstrap() -> None:
     assert cache.get_snapshot(KEY) == tuple(candles)
 
 
+def test_successful_bootstrap_run_logs_one_event_summary(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    engine, _, _, _, _ = make_engine([[make_candle(0), make_candle(1)]])
+
+    with caplog.at_level(logging.INFO, logger="SynchronousRestPollingEngine"):
+        engine.run_cycles(1)
+
+    summaries = [
+        record.getMessage()
+        for record in caplog.records
+        if record.getMessage().startswith("Bootstrap events published:")
+    ]
+    assert summaries == [
+        "Bootstrap events published: inserted=2 updated=0 closed=0 evicted=0"
+    ]
+
+
+def test_single_first_candle_in_empty_cache_is_not_a_gap() -> None:
+    candle = make_candle(0)
+    engine, provider, cache, _, _ = make_engine([[candle]])
+
+    result = engine.run_once()
+
+    assert result.outcome is PollCycleOutcome.SUCCESS
+    assert result.inserted == 1
+    assert result.recovery is False
+    assert len(provider.calls) == 1
+    assert cache.get_snapshot(KEY) == (candle,)
+
+
+def test_one_thousand_consecutive_candles_pass_bootstrap() -> None:
+    candles = [make_candle(index) for index in range(1000)]
+    clock = FakeClock(candles[-1].close_time_ms + 1)
+    engine, provider, cache, _, _ = make_engine([candles], clock=clock)
+
+    result = engine.run_once()
+
+    assert result.outcome is PollCycleOutcome.SUCCESS
+    assert result.inserted == 1000
+    assert result.recovery is False
+    assert len(provider.calls) == 1
+    assert len(cache.get_snapshot(KEY)) == 1000
+
+
+def test_bootstrap_uses_exchange_time_when_local_clock_is_one_hour_behind() -> None:
+    candles = [make_candle(index) for index in range(1000)]
+    exchange_time_ms = candles[-1].close_time_ms + 1
+    local_clock = FakeClock(exchange_time_ms - 60 * INTERVAL_MS)
+    engine, provider, cache, _, _ = make_engine(
+        [candles],
+        clock=local_clock,
+        server_time_responses=[ServerTime(timestamp_ms=exchange_time_ms)],
+    )
+
+    result = engine.run_once()
+
+    assert result.outcome is PollCycleOutcome.SUCCESS
+    assert result.exchange_time_ms == exchange_time_ms
+    assert result.clock_skew_ms == -60 * INTERVAL_MS
+    assert len(cache.get_snapshot(KEY)) == 1000
+    assert provider.request_order[:2] == ["server_time", "candles"]
+
+
+def test_local_clock_ahead_does_not_close_last_open_candle() -> None:
+    first = make_candle(0)
+    last = make_candle(1)
+    exchange_time_ms = last.close_time_ms
+    local_clock = FakeClock(exchange_time_ms + 60 * INTERVAL_MS)
+    engine, _, cache, _, _ = make_engine(
+        [[first, last]],
+        clock=local_clock,
+        server_time_responses=[ServerTime(timestamp_ms=exchange_time_ms)],
+    )
+
+    result = engine.run_once()
+
+    assert result.outcome is PollCycleOutcome.SUCCESS
+    assert result.clock_skew_ms == 60 * INTERVAL_MS
+    assert cache.get_latest_closed_candle(KEY, exchange_time_ms) == first
+    assert cache.get_latest_closed_candle(KEY, local_clock.wall_time_ms) == last
+
+
+def test_two_incomplete_candles_are_rejected_by_exchange_time(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    candles = [make_candle(0), make_candle(1), make_candle(2)]
+    exchange_time_ms = candles[1].open_time_ms
+    local_clock = FakeClock(candles[-1].close_time_ms + 60 * INTERVAL_MS)
+    engine, provider, cache, _, _ = make_engine(
+        [candles],
+        clock=local_clock,
+        server_time_responses=[ServerTime(timestamp_ms=exchange_time_ms)],
+    )
+
+    with caplog.at_level(logging.ERROR):
+        result = engine.run_once()
+
+    assert result.error_category is PollErrorCategory.BOOTSTRAP_VALIDATION
+    assert result.fatal is True
+    assert len(provider.calls) == 1
+    assert cache.get_snapshot(KEY) == ()
+    assert "invalid_index=1" in caplog.text
+    assert "incomplete_candle_count=2" in caplog.text
+    assert f"observed_at_ms={exchange_time_ms}" in caplog.text
+
+
+def test_internal_bootstrap_gap_is_fatal_validation_without_recovery() -> None:
+    candles = [make_candle(0), make_candle(2)]
+    dispatcher = MarketEventDispatcher()
+    received: list[MarketEvent] = []
+    dispatcher.subscribe(MarketEvent, received.append)
+    projector = MarketEventProjector(SequentialIdFactory("event"))
+    engine, provider, cache, _, _ = make_engine(
+        [candles],
+        dispatcher=dispatcher,
+        projector=projector,
+        event_id_factory=SequentialIdFactory("diagnostic"),
+    )
+
+    result = engine.run_once()
+
+    assert result.outcome is PollCycleOutcome.FAILED
+    assert result.error_category is PollErrorCategory.BOOTSTRAP_VALIDATION
+    assert result.fatal is True
+    assert result.bootstrap is True
+    assert result.recovery is False
+    assert len(provider.calls) == 1
+    assert cache.get_snapshot(KEY) == ()
+    gap = next(event for event in received if isinstance(event, MarketGapDetected))
+    assert gap.phase is MarketGapPhase.BOOTSTRAP
+    assert gap.previous_index == 0
+    assert gap.current_index == 1
+    assert gap.previous_open_time_ms == candles[0].open_time_ms
+    assert gap.previous_close_time_ms == candles[0].close_time_ms
+    assert gap.expected_open_time_ms == make_candle(1).open_time_ms
+    assert gap.received_open_time_ms == candles[1].open_time_ms
+    assert gap.actual_difference_ms == 2 * INTERVAL_MS
+
+
 def test_bootstrap_limit_does_not_exceed_provider_maximum() -> None:
     cache = InMemoryMarketCache(capacity=2000)
     engine, provider, _, _, _ = make_engine([[make_candle(0)]], cache=cache)
@@ -246,6 +410,27 @@ def test_successful_regular_cycle_requests_two_candles() -> None:
     assert result.unchanged == 1
     assert result.inserted == 1
     assert provider.calls[0][2] == 2
+
+
+def test_regular_limit_above_two_ignores_history_before_cached_latest() -> None:
+    first = make_candle(0)
+    latest = make_candle(1)
+    next_candle = make_candle(2)
+    cache = InMemoryMarketCache()
+    seed_cache(cache, [first, latest], OPEN_TIME_MS + 10 * INTERVAL_MS)
+    engine, provider, _, _, _ = make_engine(
+        [[first, latest, next_candle]],
+        cache=cache,
+        policy=PollingPolicy(regular_limit=3),
+    )
+
+    result = engine.run_once()
+
+    assert result.outcome is PollCycleOutcome.SUCCESS
+    assert result.unchanged == 1
+    assert result.inserted == 1
+    assert provider.calls[0][2] == 3
+    assert cache.get_snapshot(KEY) == (first, latest, next_candle)
 
 
 def test_regular_cycle_updates_open_candle() -> None:
@@ -351,6 +536,51 @@ def test_provider_attempts_exhausted() -> None:
     assert cache.get_snapshot(KEY) == ()
 
 
+def test_server_time_timeout_is_provider_failure_without_wall_clock_fallback() -> None:
+    timeout = MarketProviderTimeoutError("server time timeout")
+    engine, provider, cache, _, sleeper = make_engine(
+        [[make_candle(0)]],
+        server_time_responses=[timeout, timeout, timeout],
+    )
+
+    result = engine.run_once()
+
+    assert result.outcome is PollCycleOutcome.FAILED
+    assert result.error_category is PollErrorCategory.PROVIDER
+    assert result.exchange_time_ms is None
+    assert result.clock_skew_ms is None
+    assert provider.server_time_calls == 3
+    assert provider.calls == []
+    assert provider.request_order == ["server_time"] * 3
+    assert sleeper.waits == [1.0, 2.0]
+    assert cache.get_snapshot(KEY) == ()
+
+
+@pytest.mark.parametrize(
+    ("skew_ms", "expects_warning"),
+    [(6_000, True), (4_999, False)],
+)
+def test_clock_skew_warning_threshold(
+    skew_ms: int,
+    expects_warning: bool,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    exchange_time_ms = OPEN_TIME_MS + 20 * INTERVAL_MS
+    clock = FakeClock(exchange_time_ms + skew_ms)
+    engine, _, _, _, _ = make_engine(
+        [[make_candle(0)]],
+        clock=clock,
+        policy=PollingPolicy(clock_skew_warning_seconds=5),
+        server_time_responses=[ServerTime(timestamp_ms=exchange_time_ms)],
+    )
+
+    with caplog.at_level(logging.WARNING):
+        result = engine.run_once()
+
+    assert result.outcome is PollCycleOutcome.SUCCESS
+    assert ("Market clock skew exceeds threshold" in caplog.text) is expects_warning
+
+
 def test_retry_after_is_capped_at_thirty_seconds() -> None:
     engine, _, _, _, sleeper = make_engine(
         [MarketProviderHTTPError(429, retry_after_seconds=120), [make_candle(0)]]
@@ -418,6 +648,75 @@ def test_run_forever_uses_cycle_backoff_before_failure_threshold() -> None:
     assert engine.status.completed_cycles == 3
 
 
+def test_run_cycles_stops_after_exact_successful_cycle_count() -> None:
+    responses = [
+        [make_candle(0)],
+        [make_candle(0), make_candle(1)],
+        [make_candle(1), make_candle(2)],
+    ]
+    engine, provider, _, _, sleeper = make_engine(responses)
+
+    engine.run_cycles(3)
+
+    assert engine.status.lifecycle_state is PollingLifecycleState.STOPPED
+    assert engine.status.completed_cycles == 3
+    assert engine.status.successful_cycles == 3
+    assert [call[2] for call in provider.calls] == [1000, 2, 2]
+    assert sleeper.waits == [10.0, 10.0]
+
+
+@pytest.mark.parametrize("count", [0, -1, True, 1.5])
+def test_run_cycles_rejects_invalid_count(count: object) -> None:
+    engine, _, _, _, _ = make_engine([[make_candle(0)]])
+
+    with pytest.raises(PollingEngineConfigurationError):
+        engine.run_cycles(count)  # type: ignore[arg-type]
+
+
+def test_keyboard_interrupt_during_provider_request_finishes_stopped() -> None:
+    def interrupt(call_number: int) -> None:
+        raise KeyboardInterrupt
+
+    engine, provider, _, _, _ = make_engine(
+        [[make_candle(0)]],
+        on_provider_call=interrupt,
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        engine.run_forever()
+
+    assert len(provider.calls) == 1
+    assert engine.status.lifecycle_state is PollingLifecycleState.STOPPED
+
+
+@pytest.mark.parametrize("phase", ["cadence", "provider_retry", "backoff"])
+def test_keyboard_interrupt_during_wait_finishes_stopped(phase: str) -> None:
+    clock = FakeClock(OPEN_TIME_MS + 20 * INTERVAL_MS)
+    sleeper = FakeSleeper(clock)
+
+    def interrupt(seconds: float, wait_number: int) -> None:
+        raise KeyboardInterrupt
+
+    sleeper.on_wait = interrupt
+    if phase == "cadence":
+        responses: list[list[Candle] | Exception] = [[make_candle(0)]]
+    elif phase == "provider_retry":
+        responses = [MarketProviderTimeoutError("temporary timeout")]
+    else:
+        responses = [[]]
+    engine, _, _, _, _ = make_engine(
+        responses,
+        clock=clock,
+        sleeper=sleeper,
+    )
+
+    with pytest.raises(KeyboardInterrupt):
+        engine.run_forever()
+
+    assert len(sleeper.waits) == 1
+    assert engine.status.lifecycle_state is PollingLifecycleState.STOPPED
+
+
 def test_gap_recovery_succeeds_atomically() -> None:
     cached = make_candle(0)
     cache = InMemoryMarketCache()
@@ -439,6 +738,69 @@ def test_gap_recovery_succeeds_atomically() -> None:
         ("BTCUSDT", "1m", 1000),
     ]
     assert cache.get_snapshot(KEY) == tuple(recovery)
+
+
+def test_cache_to_batch_gap_runs_one_recovery_with_exact_diagnostic() -> None:
+    cached = make_candle(0)
+    cache = InMemoryMarketCache()
+    seed_cache(cache, [cached], OPEN_TIME_MS + 10 * INTERVAL_MS)
+    regular_with_gap = [make_candle(2), make_candle(3)]
+    recovery = [make_candle(index) for index in range(4)]
+    dispatcher = MarketEventDispatcher()
+    received: list[MarketEvent] = []
+    dispatcher.subscribe(MarketEvent, received.append)
+    projector = MarketEventProjector(SequentialIdFactory("event"))
+    engine, provider, _, _, _ = make_engine(
+        [regular_with_gap, recovery],
+        cache=cache,
+        dispatcher=dispatcher,
+        projector=projector,
+        event_id_factory=SequentialIdFactory("diagnostic"),
+    )
+
+    result = engine.run_once()
+
+    assert result.outcome is PollCycleOutcome.SUCCESS
+    assert result.recovery is True
+    assert len(provider.calls) == 2
+    assert provider.server_time_calls == 1
+    assert provider.request_order == ["server_time", "candles", "candles"]
+    gaps = [event for event in received if isinstance(event, MarketGapDetected)]
+    assert len(gaps) == 1
+    assert gaps[0].previous_index == -1
+    assert gaps[0].current_index == 0
+    assert gaps[0].previous_open_time_ms == cached.open_time_ms
+    assert gaps[0].previous_close_time_ms == cached.close_time_ms
+    assert gaps[0].expected_open_time_ms == make_candle(1).open_time_ms
+    assert gaps[0].received_open_time_ms == make_candle(2).open_time_ms
+
+
+def test_candle_closed_is_determined_by_exchange_time() -> None:
+    candle = make_candle(0)
+    cache = InMemoryMarketCache()
+    seed_cache(cache, [candle], candle.close_time_ms)
+    dispatcher = MarketEventDispatcher()
+    received: list[MarketEvent] = []
+    dispatcher.subscribe(MarketEvent, received.append)
+    projector = MarketEventProjector(SequentialIdFactory("event"))
+    local_clock = FakeClock(candle.open_time_ms)
+    exchange_time_ms = candle.close_time_ms + 1
+    engine, _, _, _, _ = make_engine(
+        [[candle]],
+        cache=cache,
+        clock=local_clock,
+        dispatcher=dispatcher,
+        projector=projector,
+        server_time_responses=[ServerTime(timestamp_ms=exchange_time_ms)],
+    )
+
+    result = engine.run_once()
+
+    closed = [event for event in received if isinstance(event, CandleClosed)]
+    assert result.outcome is PollCycleOutcome.SUCCESS
+    assert len(closed) == 1
+    assert closed[0].occurred_at_ms == exchange_time_ms
+    assert closed[0].candle.open_time_ms == candle.open_time_ms
 
 
 def test_gap_recovery_failure_leaves_cache_unchanged() -> None:

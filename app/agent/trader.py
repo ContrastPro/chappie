@@ -1,17 +1,28 @@
 import logging
+from typing import Protocol
 
 from app.core.config import Settings
-from app.market.provider import MarketProvider
+
+
+class PollingEngine(Protocol):
+    def run_forever(self) -> None:
+        """Run until stopped or failed."""
+
+    def run_cycles(self, count: int) -> None:
+        """Run a finite diagnostic session."""
+
+    def request_stop(self) -> None:
+        """Request graceful termination."""
 
 
 class TraderAgent:
     def __init__(
         self,
         settings: Settings,
-        market_provider: MarketProvider,
+        polling_engine: PollingEngine,
     ) -> None:
         self._settings = settings
-        self._market_provider = market_provider
+        self._polling_engine = polling_engine
         self._logger = logging.getLogger(self.__class__.__name__)
         self._is_running = False
 
@@ -32,34 +43,23 @@ class TraderAgent:
         self._logger.info("Default symbol: %s", self._settings.default_symbol)
         self._logger.info("Default interval: %s", self._settings.default_interval)
 
-        if self._settings.trading_mode == "live":
-            self._logger.warning(
-                "Live mode is configured, but real trading is not implemented"
-            )
-
-        server_time = self._market_provider.get_server_time()
-        ticker = self._market_provider.get_ticker_price(
-            self._settings.default_symbol
-        )
-
-        self._logger.info(
-            "Market server time: %s",
-            server_time.datetime_utc.isoformat(),
-        )
-        self._logger.info(
-            "Current %s price: %s",
-            ticker.symbol,
-            ticker.price,
-        )
-
         self._is_running = True
-        self._logger.info("TraderAgent started successfully")
+        smoke_run_cycles = self._settings.smoke_run_cycles
+        if smoke_run_cycles is None:
+            self._logger.info("TraderAgent started in continuous polling mode")
+            self._polling_engine.run_forever()
+        else:
+            self._logger.info(
+                "TraderAgent started in smoke-run mode: cycles=%s",
+                smoke_run_cycles,
+            )
+            self._polling_engine.run_cycles(smoke_run_cycles)
+        self._is_running = False
+        self._logger.info("TraderAgent polling finished")
 
     def stop(self) -> None:
-        if not self._is_running:
-            self._logger.warning("TraderAgent is already stopped")
-            return
-
-        self._logger.info("Stopping TraderAgent")
+        if self._is_running:
+            self._logger.info("Stopping TraderAgent")
+        self._polling_engine.request_stop()
         self._is_running = False
-        self._logger.info("TraderAgent stopped successfully")
+        self._logger.info("TraderAgent stop requested")

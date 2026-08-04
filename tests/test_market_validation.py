@@ -3,16 +3,24 @@ from decimal import Decimal
 
 import pytest
 
+from app.market.cache import MarketStreamKey
 from app.market.exceptions import (
+    CandleSequenceGapError,
     CandleSequenceValidationError,
     CandleValidationError,
+    IncompleteCandleSequenceError,
     UnsupportedMarketIntervalError,
 )
 from app.market.models import Candle
-from app.market.validation import validate_candle, validate_candle_sequence
+from app.market.validation import (
+    diagnose_candle_sequence,
+    validate_candle,
+    validate_candle_sequence,
+)
 
 OPEN_TIME_MS = 1_700_000_000_000
 INTERVAL_MS = 60_000
+KEY = MarketStreamKey("BTCUSDT", "1m")
 
 
 def make_candle(
@@ -75,6 +83,83 @@ def validate_closed_sequence(candles: list[Candle]) -> None:
 
 def test_valid_candle_sequence() -> None:
     validate_closed_sequence(make_sequence())
+
+
+def test_one_thousand_consecutive_one_minute_candles_are_valid() -> None:
+    candles = make_sequence(1000)
+    observed_at_ms = candles[-1].close_time_ms + 1
+
+    diagnostic = diagnose_candle_sequence(
+        candles,
+        "1m",
+        allow_incomplete_last=True,
+        current_time_ms=observed_at_ms,
+        stream_key=KEY,
+    )
+
+    assert diagnostic is None
+
+
+def test_next_open_equal_previous_open_plus_interval_is_valid() -> None:
+    previous = make_candle()
+    current = make_candle(open_time_ms=previous.open_time_ms + INTERVAL_MS)
+
+    validate_closed_sequence([previous, current])
+
+
+def test_next_open_equal_previous_close_plus_one_is_valid() -> None:
+    previous = make_candle()
+    current = make_candle(open_time_ms=previous.close_time_ms + 1)
+
+    validate_closed_sequence([previous, current])
+
+
+def test_internal_gap_reports_exact_pair_details() -> None:
+    candles = make_sequence()
+    candles[2] = make_candle(
+        open_time_ms=candles[1].open_time_ms + 2 * INTERVAL_MS
+    )
+
+    diagnostic = diagnose_candle_sequence(
+        candles,
+        "1m",
+        allow_incomplete_last=True,
+        current_time_ms=candles[-1].close_time_ms + 1,
+        stream_key=KEY,
+    )
+
+    assert isinstance(diagnostic, CandleSequenceGapError)
+    assert diagnostic.stream_key == KEY
+    assert diagnostic.previous_index == 1
+    assert diagnostic.current_index == 2
+    assert diagnostic.previous_open_time_ms == candles[1].open_time_ms
+    assert diagnostic.previous_close_time_ms == candles[1].close_time_ms
+    assert diagnostic.expected_open_time_ms == candles[1].open_time_ms + INTERVAL_MS
+    assert diagnostic.received_open_time_ms == candles[2].open_time_ms
+    assert diagnostic.interval == "1m"
+    assert diagnostic.actual_difference_ms == 2 * INTERVAL_MS
+
+
+def test_incomplete_bootstrap_diagnostic_reports_index_949_and_count() -> None:
+    candles = make_sequence(1000)
+    observed_at_ms = candles[949].open_time_ms
+
+    diagnostic = diagnose_candle_sequence(
+        candles,
+        "1m",
+        allow_incomplete_last=True,
+        current_time_ms=observed_at_ms,
+        stream_key=KEY,
+    )
+
+    assert isinstance(diagnostic, IncompleteCandleSequenceError)
+    assert diagnostic.observed_at_ms == observed_at_ms
+    assert diagnostic.invalid_index == 949
+    assert diagnostic.invalid_open_time_ms == candles[949].open_time_ms
+    assert diagnostic.invalid_close_time_ms == candles[949].close_time_ms
+    assert diagnostic.latest_open_time_ms == candles[-1].open_time_ms
+    assert diagnostic.latest_close_time_ms == candles[-1].close_time_ms
+    assert diagnostic.incomplete_candle_count == 51
 
 
 def test_empty_sequence_is_rejected() -> None:

@@ -12,32 +12,11 @@ from app.market.exceptions import (
     MarketCacheInvalidOpenCandleUpdateError,
     MarketCacheOutOfOrderError,
     MarketCacheReadError,
-    MarketStreamKeyError,
 )
-from app.market.models import Candle, CandleSnapshot
+from app.market.models import Candle, CandleSnapshot, MarketStreamKey
 from app.market.validation import validate_candle_sequence
 
 DEFAULT_CAPACITY_PER_STREAM = 1000
-
-
-@dataclass(frozen=True, slots=True)
-class MarketStreamKey:
-    symbol: str
-    interval: str
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.symbol, str) or not self.symbol:
-            raise MarketStreamKeyError("Market stream symbol must be a non-empty string")
-        if self.symbol != self.symbol.strip().upper():
-            raise MarketStreamKeyError("Market stream symbol must be normalized")
-        if not self.symbol.isascii() or not self.symbol.isalnum():
-            raise MarketStreamKeyError(
-                "Market stream symbol must contain only ASCII letters and digits"
-            )
-        if not isinstance(self.interval, str) or not self.interval:
-            raise MarketStreamKeyError("Market stream interval must be a non-empty string")
-        if self.interval != self.interval.strip():
-            raise MarketStreamKeyError("Market stream interval must be normalized")
 
 
 class CandleUpsertResult(Enum):
@@ -238,6 +217,7 @@ class InMemoryMarketCache:
                 key.interval,
                 allow_incomplete_last=True,
                 current_time_ms=observed_at_ms,
+                stream_key=key,
             )
         except CandleSequenceValidationError as error:
             raise MarketCacheGapError(
@@ -263,6 +243,7 @@ class InMemoryMarketCache:
             key.interval,
             allow_incomplete_last=True,
             current_time_ms=observed_at_ms,
+            stream_key=key,
         )
 
     @staticmethod

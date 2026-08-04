@@ -66,6 +66,7 @@ class MarketGapReason(Enum):
 
 
 class MarketGapPhase(Enum):
+    BOOTSTRAP = "bootstrap"
     REGULAR = "regular"
     RECOVERY = "recovery"
 
@@ -158,6 +159,11 @@ class MarketGapDetected(MarketEvent):
     last_confirmed_open_time_ms: int | None
     phase: MarketGapPhase
     reason: MarketGapReason
+    previous_index: int | None = None
+    current_index: int | None = None
+    previous_open_time_ms: int | None = None
+    previous_close_time_ms: int | None = None
+    actual_difference_ms: int | None = None
 
     def __post_init__(self) -> None:
         MarketEvent.__post_init__(self)
@@ -165,6 +171,11 @@ class MarketGapDetected(MarketEvent):
             "expected_open_time_ms",
             "received_open_time_ms",
             "last_confirmed_open_time_ms",
+            "previous_index",
+            "current_index",
+            "previous_open_time_ms",
+            "previous_close_time_ms",
+            "actual_difference_ms",
         ):
             value = getattr(self, field_name)
             if value is not None and (
