@@ -121,9 +121,7 @@ class InMemoryMarketCache:
                     MarketCacheChange(
                         result=result,
                         previous=(
-                            None
-                            if previous is None
-                            else CandleSnapshot.from_candle(previous)
+                            None if previous is None else CandleSnapshot.from_candle(previous)
                         ),
                         current=CandleSnapshot.from_candle(current),
                         evicted=tuple(CandleSnapshot.from_candle(item) for item in evicted),
@@ -194,9 +192,7 @@ class InMemoryMarketCache:
             if candle == latest:
                 return CandleUpsertResult.UNCHANGED, (), latest, latest
             if observed_at_ms > latest.close_time_ms:
-                raise MarketCacheClosedCandleUpdateError(
-                    "A closed candle cannot be updated"
-                )
+                raise MarketCacheClosedCandleUpdateError("A closed candle cannot be updated")
             self._validate_open_candle_update(latest, candle)
             current = self._copy_candle(candle)
             stream[-1] = current

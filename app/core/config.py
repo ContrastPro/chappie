@@ -46,9 +46,7 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def validate_market_data_configuration(self) -> "Settings":
         if self.polling_bootstrap_limit > self.market_cache_capacity:
-            raise ValueError(
-                "polling_bootstrap_limit must not exceed market_cache_capacity"
-            )
+            raise ValueError("polling_bootstrap_limit must not exceed market_cache_capacity")
         return self
 
 

@@ -41,9 +41,7 @@ class BinanceMarketProvider:
         server_time = payload.get("serverTime")
 
         if not self._is_integer(server_time):
-            raise MarketProviderResponseError(
-                "Binance returned an invalid serverTime value"
-            )
+            raise MarketProviderResponseError("Binance returned an invalid serverTime value")
 
         return ServerTime(timestamp_ms=server_time)
 
@@ -64,9 +62,7 @@ class BinanceMarketProvider:
         raw_price = payload.get("price")
 
         if not isinstance(response_symbol, str):
-            raise MarketProviderResponseError(
-                "Binance returned an invalid symbol"
-            )
+            raise MarketProviderResponseError("Binance returned an invalid symbol")
 
         return TickerPrice(
             symbol=response_symbol,
@@ -97,10 +93,7 @@ class BinanceMarketProvider:
                 "Binance returned an unexpected candles response format"
             )
 
-        return [
-            self._parse_candle(raw_candle, index)
-            for index, raw_candle in enumerate(payload)
-        ]
+        return [self._parse_candle(raw_candle, index) for index, raw_candle in enumerate(payload)]
 
     def close(self) -> None:
         self._client.close()
@@ -128,9 +121,7 @@ class BinanceMarketProvider:
             )
             response.raise_for_status()
         except httpx.TimeoutException as error:
-            raise MarketProviderTimeoutError(
-                f"Binance request timed out: {path}"
-            ) from error
+            raise MarketProviderTimeoutError(f"Binance request timed out: {path}") from error
         except httpx.HTTPStatusError as error:
             raise MarketProviderHTTPError(
                 status_code=error.response.status_code,
@@ -139,16 +130,12 @@ class BinanceMarketProvider:
                 ),
             ) from error
         except httpx.RequestError as error:
-            raise MarketProviderConnectionError(
-                f"Could not connect to Binance: {error}"
-            ) from error
+            raise MarketProviderConnectionError(f"Could not connect to Binance: {error}") from error
 
         try:
             payload = response.json()
         except ValueError as error:
-            raise MarketProviderResponseError(
-                "Binance returned invalid JSON"
-            ) from error
+            raise MarketProviderResponseError("Binance returned invalid JSON") from error
 
         return payload
 
@@ -185,9 +172,7 @@ class BinanceMarketProvider:
             raise ValueError("Limit must be an integer")
 
         if not MIN_CANDLE_LIMIT <= limit <= MAX_CANDLE_LIMIT:
-            raise ValueError(
-                f"Limit must be between {MIN_CANDLE_LIMIT} and {MAX_CANDLE_LIMIT}"
-            )
+            raise ValueError(f"Limit must be between {MIN_CANDLE_LIMIT} and {MAX_CANDLE_LIMIT}")
 
         return limit
 
@@ -230,9 +215,7 @@ class BinanceMarketProvider:
         location = "" if candle_index is None else f" for candle at index {candle_index}"
 
         if not isinstance(value, str):
-            raise MarketProviderResponseError(
-                f"Binance returned an invalid {field_name}{location}"
-            )
+            raise MarketProviderResponseError(f"Binance returned an invalid {field_name}{location}")
 
         try:
             result = Decimal(value)

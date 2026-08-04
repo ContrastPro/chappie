@@ -96,7 +96,8 @@
 - Реализована простая детерминированная EMA crossover strategy без дополнительных фильтров как прозрачный baseline benchmark.
 - Параметры стратегии типизированы и валидируются.
 - Сигналы содержат время, причину, версию стратегии и входные параметры.
-- `TraderAgent` преобразован в координатор постоянного pipeline.
+- Trading pipeline реализован как изолированный application-компонент и пока не
+  подключён к `TraderAgent` или runtime composition.
 - Добавлены unit-тесты сигналов и граничных случаев стратегии.
 
 #### M2.3 Trading Decision Pipeline — design
@@ -106,7 +107,7 @@
 - Утвердить первый Spot long-only target-exposure planner без portfolio, risk и execution.
 - Подготовить deterministic testing strategy и минимальный implementation plan M2.4.
 
-#### M2.4 Intent Planner and Trading Decision Pipeline — implementation complete, final review pending
+#### M2.4 Intent Planner and Trading Decision Pipeline — completed
 
 - Реализованы типизированный Spot long-only `IntentPlanner` и синхронный stateless `TradingDecisionPipeline`.
 - Зафиксирован детерминированный поток `MarketSnapshot -> Strategy -> Signal -> IntentPlanResult -> OrderIntent | None`.

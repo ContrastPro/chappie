@@ -153,6 +153,7 @@ def test_snapshot_close_boundary_matches_market_semantics() -> None:
     assert after_boundary.latest_open_candle is None
     assert after_boundary.closed_candles == (CandleSnapshot.from_candle(source),)
 
+
 def test_snapshot_rejects_inconsistent_latest_closed_candle() -> None:
     closed = CandleSnapshot.from_candle(candle(0))
     with pytest.raises(InvalidMarketSnapshotError, match="must match"):
@@ -246,7 +247,9 @@ def test_signal_freezes_parameters_and_metadata() -> None:
         signal.metadata["new"] = 1  # type: ignore[index]
 
 
-@pytest.mark.parametrize("field", ["signal_id", "snapshot_id", "reason_code", "strategy_name", "strategy_version"])
+@pytest.mark.parametrize(
+    "field", ["signal_id", "snapshot_id", "reason_code", "strategy_name", "strategy_version"]
+)
 def test_signal_rejects_empty_identity_fields(field: str) -> None:
     with pytest.raises(InvalidSignalError):
         make_signal(**{field: ""})

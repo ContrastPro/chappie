@@ -46,8 +46,7 @@ def test_logging_creates_directories_and_writes_utf8_run_log(tmp_path: Path) -> 
     assert "Безопасный запуск" in run_file.read_text(encoding="utf-8")
     assert f"run_id={RUN_ID}" in run_file.read_text(encoding="utf-8")
     assert all(
-        f"run_id={RUN_ID}" in line
-        for line in run_file.read_text(encoding="utf-8").splitlines()
+        f"run_id={RUN_ID}" in line for line in run_file.read_text(encoding="utf-8").splitlines()
     )
 
 
@@ -104,10 +103,13 @@ def test_main_writes_complete_header_footer_and_flushes_normal_run(
         smoke_run_cycles=3,
     )
     application = SimpleNamespace(
-        engine=SimpleNamespace(status=SimpleNamespace(lifecycle_state=SimpleNamespace(value="stopped")))
+        engine=SimpleNamespace(
+            status=SimpleNamespace(lifecycle_state=SimpleNamespace(value="stopped"))
+        )
     )
     monkeypatch.setattr(main_module, "get_settings", lambda: settings)
     monkeypatch.setattr(main_module, "build_application", lambda value: application)
+
     def complete_run(app: object, logger: logging.Logger) -> int:
         del app
         logger.info("Stage 1 status lifecycle=stopped completed=3")

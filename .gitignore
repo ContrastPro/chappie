@@ -10,6 +10,10 @@ data/
 .vscode/
 
 .pytest_cache/
+.pytest-tmp-*/
+.coverage
+.coverage.*
+.coverage-html/
 .mypy_cache/
 .ruff_cache/
 

@@ -54,9 +54,7 @@ class LongOnlyIntentPlannerConfig:
                 "long_target_exposure must be greater than 0 and at most 1"
             )
         if not isinstance(self.planner_name, str) or not self.planner_name.strip():
-            raise InvalidIntentPlannerConfigurationError(
-                "planner_name must be a non-empty string"
-            )
+            raise InvalidIntentPlannerConfigurationError("planner_name must be a non-empty string")
         if not isinstance(self.planner_version, str) or not self.planner_version.strip():
             raise InvalidIntentPlannerConfigurationError(
                 "planner_version must be a non-empty string"
@@ -85,9 +83,7 @@ class IntentPlanResult:
         ):
             value = getattr(self, field_name)
             if not isinstance(value, str) or not value.strip():
-                raise IntentPlannerInvariantError(
-                    f"{field_name} must be a non-empty string"
-                )
+                raise IntentPlannerInvariantError(f"{field_name} must be a non-empty string")
         if self.correlation_id is not None and (
             not isinstance(self.correlation_id, str) or not self.correlation_id.strip()
         ):
@@ -98,23 +94,15 @@ class IntentPlanResult:
             if not isinstance(self.intent, OrderIntent):
                 raise IntentPlannerInvariantError("CREATED requires an OrderIntent")
             if self.signal_id != self.intent.source_signal_id:
-                raise IntentPlannerInvariantError(
-                    "signal_id must match intent.source_signal_id"
-                )
+                raise IntentPlannerInvariantError("signal_id must match intent.source_signal_id")
             if self.correlation_id != self.intent.correlation_id:
-                raise IntentPlannerInvariantError(
-                    "correlation_id must match intent.correlation_id"
-                )
+                raise IntentPlannerInvariantError("correlation_id must match intent.correlation_id")
         elif self.intent is not None:
-            raise IntentPlannerInvariantError(
-                "Only CREATED may contain an OrderIntent"
-            )
+            raise IntentPlannerInvariantError("Only CREATED may contain an OrderIntent")
         try:
             object.__setattr__(self, "metadata", freeze_mapping(self.metadata))
         except (TypeError, ValueError) as error:
-            raise IntentPlannerInvariantError(
-                "metadata must contain immutable values"
-            ) from error
+            raise IntentPlannerInvariantError("metadata must contain immutable values") from error
 
 
 @runtime_checkable
@@ -148,9 +136,7 @@ class LongOnlyIntentPlanner:
             )
         self._config = config
         self._intent_id_factory = intent_id_factory
-        self._configuration = freeze_mapping(
-            {"long_target_exposure": config.long_target_exposure}
-        )
+        self._configuration = freeze_mapping({"long_target_exposure": config.long_target_exposure})
 
     @property
     def name(self) -> str:
@@ -170,17 +156,13 @@ class LongOnlyIntentPlanner:
         for field_name in ("signal_id", "strategy_name", "strategy_version"):
             value = getattr(signal, field_name)
             if not isinstance(value, str) or not value.strip():
-                raise IntentPlannerInvariantError(
-                    f"Signal {field_name} must be a non-empty string"
-                )
+                raise IntentPlannerInvariantError(f"Signal {field_name} must be a non-empty string")
         if (
             not isinstance(signal.effective_at_ms, int)
             or isinstance(signal.effective_at_ms, bool)
             or signal.effective_at_ms < 0
         ):
-            raise IntentPlannerInvariantError(
-                "Signal effective_at_ms must be non-negative"
-            )
+            raise IntentPlannerInvariantError("Signal effective_at_ms must be non-negative")
         if not isinstance(signal.direction, SignalDirection):
             raise IntentPlannerInvariantError("Unsupported Signal direction")
         if signal.direction is SignalDirection.HOLD:
@@ -199,8 +181,7 @@ class LongOnlyIntentPlanner:
             exposure = self._config.long_target_exposure
             reason_code = "bullish_signal_long_target"
             reason = (
-                "Bullish signal mapped to long target exposure "
-                f"{self._config.long_target_exposure}"
+                f"Bullish signal mapped to long target exposure {self._config.long_target_exposure}"
             )
         elif signal.direction is SignalDirection.SELL:
             action = OrderIntentAction.EXIT_LONG

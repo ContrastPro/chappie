@@ -1,8 +1,14 @@
 # Chappie Trader
 
-Chappie Trader is the financial subsystem of the future Chappie platform. The current Stage 1 application obtains Binance Spot OHLCV data for `BTCUSDT`, validates it, stores bounded normalized state in memory and publishes synchronous typed market events.
+Chappie Trader is the financial subsystem of the future Chappie platform. The current
+runtime application obtains Binance Spot OHLCV data for `BTCUSDT`, validates it,
+stores bounded normalized state in memory and publishes synchronous typed market
+events. The isolated Stage 2 domain layer also contains the deterministic EMA
+baseline, Intent Planner and Trading Decision Pipeline; they are not yet wired into
+the runtime application.
 
-The current version does not contain strategies, order execution or live trading. It does not promise or guarantee income.
+The current version does not contain order execution or live trading. It does not
+promise or guarantee income.
 
 ## Installation
 

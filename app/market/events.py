@@ -91,14 +91,10 @@ class MarketEvent:
     def __post_init__(self) -> None:
         if not self.event_id:
             raise InvalidMarketEventError("event_id must not be empty")
-        if not isinstance(self.occurred_at_ms, int) or isinstance(
-            self.occurred_at_ms, bool
-        ):
+        if not isinstance(self.occurred_at_ms, int) or isinstance(self.occurred_at_ms, bool):
             raise InvalidMarketEventError("occurred_at_ms must be an integer")
         if not self.correlation_cycle_id:
-            raise InvalidMarketEventError(
-                "correlation_cycle_id must not be empty"
-            )
+            raise InvalidMarketEventError("correlation_cycle_id must not be empty")
         if not isinstance(self.stream_key, MarketStreamKey):
             raise InvalidMarketEventError("stream_key must be a MarketStreamKey")
         if not isinstance(self.source, MarketEventSource):
@@ -127,9 +123,7 @@ class CandleUpdated(MarketEvent):
         if not isinstance(self.current, CandleSnapshot):
             raise InvalidMarketEventError("current must be a CandleSnapshot")
         if self.previous.open_time_ms != self.current.open_time_ms:
-            raise InvalidMarketEventError(
-                "CandleUpdated snapshots must identify the same candle"
-            )
+            raise InvalidMarketEventError("CandleUpdated snapshots must identify the same candle")
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,12 +172,8 @@ class MarketGapDetected(MarketEvent):
             "actual_difference_ms",
         ):
             value = getattr(self, field_name)
-            if value is not None and (
-                not isinstance(value, int) or isinstance(value, bool)
-            ):
-                raise InvalidMarketEventError(
-                    f"{field_name} must be an integer or None"
-                )
+            if value is not None and (not isinstance(value, int) or isinstance(value, bool)):
+                raise InvalidMarketEventError(f"{field_name} must be an integer or None")
         if not isinstance(self.phase, MarketGapPhase):
             raise InvalidMarketEventError("phase must be a MarketGapPhase")
         if not isinstance(self.reason, MarketGapReason):
@@ -206,15 +196,11 @@ class MarketStreamFailed(MarketEvent):
             or isinstance(self.consecutive_failures, bool)
             or self.consecutive_failures <= 0
         ):
-            raise InvalidMarketEventError(
-                "consecutive_failures must be a positive integer"
-            )
+            raise InvalidMarketEventError("consecutive_failures must be a positive integer")
         if not isinstance(self.terminal, bool):
             raise InvalidMarketEventError("terminal must be a boolean")
         if not isinstance(self.reason, MarketStreamFailureReason):
-            raise InvalidMarketEventError(
-                "reason must be a MarketStreamFailureReason"
-            )
+            raise InvalidMarketEventError("reason must be a MarketStreamFailureReason")
 
 
 def _validate_candle_event(
@@ -279,9 +265,7 @@ class MarketEventDispatcher:
         handler: MarketEventHandler,
     ) -> SubscriptionToken:
         if not isinstance(event_type, type) or not issubclass(event_type, MarketEvent):
-            raise InvalidEventSubscriptionError(
-                "event_type must be a MarketEvent class"
-            )
+            raise InvalidEventSubscriptionError("event_type must be a MarketEvent class")
         if not callable(handler):
             raise InvalidEventSubscriptionError("handler must be callable")
 
@@ -521,9 +505,7 @@ class MarketEventProjector:
         if observed_at_ms <= candle.close_time_ms:
             return None
         if watermark is not None and candle.open_time_ms < watermark:
-            raise DuplicateCandleClosureError(
-                "Candle closure is older than the stream watermark"
-            )
+            raise DuplicateCandleClosureError("Candle closure is older than the stream watermark")
 
         self._closure_watermarks[stream_key] = candle.open_time_ms
         return CandleClosed(

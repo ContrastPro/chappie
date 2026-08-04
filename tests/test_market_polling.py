@@ -260,9 +260,7 @@ def test_successful_bootstrap_run_logs_one_event_summary(
         for record in caplog.records
         if record.getMessage().startswith("Bootstrap events published:")
     ]
-    assert summaries == [
-        "Bootstrap events published: inserted=2 updated=0 closed=0 evicted=0"
-    ]
+    assert summaries == ["Bootstrap events published: inserted=2 updated=0 closed=0 evicted=0"]
 
 
 def test_single_first_candle_in_empty_cache_is_not_a_gap() -> None:
@@ -929,9 +927,7 @@ def test_retryable_provider_failure_uses_attempts_then_cycle_backoff() -> None:
 
 
 def test_stop_during_provider_retry_prevents_additional_requests() -> None:
-    engine, provider, _, _, sleeper = make_engine(
-        [MarketProviderTimeoutError("timeout")]
-    )
+    engine, provider, _, _, sleeper = make_engine([MarketProviderTimeoutError("timeout")])
     sleeper.on_wait = lambda _seconds, _number: engine.request_stop()
 
     engine.run_forever()

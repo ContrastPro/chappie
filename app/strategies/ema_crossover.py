@@ -38,13 +38,9 @@ class EmaCrossoverConfig:
             or isinstance(self.slow_window, bool)
             or self.slow_window <= self.fast_window
         ):
-            raise InvalidStrategyConfigurationError(
-                "slow_window must be greater than fast_window"
-            )
+            raise InvalidStrategyConfigurationError("slow_window must be greater than fast_window")
         if not self.strategy_name.strip() or not self.strategy_version.strip():
-            raise InvalidStrategyConfigurationError(
-                "strategy name and version must not be empty"
-            )
+            raise InvalidStrategyConfigurationError("strategy name and version must not be empty")
 
 
 def calculate_ema(values: Sequence[Decimal], window: int) -> tuple[Decimal, ...]:

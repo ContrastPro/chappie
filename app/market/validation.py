@@ -32,19 +32,13 @@ def validate_candle(candle: Candle) -> None:
         raise CandleValidationError("Candle volume must not be negative")
 
     if candle.low > min(candle.open, candle.close, candle.high):
-        raise CandleValidationError(
-            "Candle low must not be above open, close, or high"
-        )
+        raise CandleValidationError("Candle low must not be above open, close, or high")
 
     if candle.high < max(candle.open, candle.close, candle.low):
-        raise CandleValidationError(
-            "Candle high must not be below open, close, or low"
-        )
+        raise CandleValidationError("Candle high must not be below open, close, or low")
 
     if candle.open_time_ms >= candle.close_time_ms:
-        raise CandleValidationError(
-            "Candle open_time_ms must be less than close_time_ms"
-        )
+        raise CandleValidationError("Candle open_time_ms must be less than close_time_ms")
 
 
 def validate_candle_sequence(
@@ -61,11 +55,7 @@ def validate_candle_sequence(
         raise CandleSequenceValidationError("Candle sequence must not be empty")
 
     next_binance_spot_open_time_ms(candles[0].open_time_ms, interval)
-    reference_time_ms = (
-        time.time_ns() // 1_000_000
-        if current_time_ms is None
-        else current_time_ms
-    )
+    reference_time_ms = time.time_ns() // 1_000_000 if current_time_ms is None else current_time_ms
 
     if not isinstance(reference_time_ms, int) or isinstance(reference_time_ms, bool):
         raise TypeError("current_time_ms must be an integer")
@@ -77,9 +67,7 @@ def validate_candle_sequence(
         previous = candles[index - 1]
 
         if candle.open_time_ms == previous.open_time_ms:
-            raise CandleSequenceValidationError(
-                f"Duplicate candle open_time_ms at index {index}"
-            )
+            raise CandleSequenceValidationError(f"Duplicate candle open_time_ms at index {index}")
 
         if candle.open_time_ms < previous.open_time_ms:
             raise CandleSequenceValidationError(
@@ -93,9 +81,7 @@ def validate_candle_sequence(
         if candle.open_time_ms != expected_open_time_ms:
             raise CandleSequenceGapError(
                 stream_key=(
-                    stream_key
-                    if stream_key is not None
-                    else MarketStreamKey("UNKNOWN", interval)
+                    stream_key if stream_key is not None else MarketStreamKey("UNKNOWN", interval)
                 ),
                 previous_index=index - 1,
                 current_index=index,
@@ -107,14 +93,10 @@ def validate_candle_sequence(
             )
 
         if candle.open_time_ms <= previous.close_time_ms:
-            raise CandleSequenceValidationError(
-                f"Candle time ranges overlap at index {index}"
-            )
+            raise CandleSequenceValidationError(f"Candle time ranges overlap at index {index}")
 
     incomplete_indices = [
-        index
-        for index, candle in enumerate(candles)
-        if candle.close_time_ms >= reference_time_ms
+        index for index, candle in enumerate(candles) if candle.close_time_ms >= reference_time_ms
     ]
     invalid_index: int | None = None
     only_last_allowed = allow_incomplete_last

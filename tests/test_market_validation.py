@@ -35,11 +35,7 @@ def make_candle(
 ) -> Candle:
     return Candle(
         open_time_ms=open_time_ms,
-        close_time_ms=(
-            open_time_ms + INTERVAL_MS - 1
-            if close_time_ms is None
-            else close_time_ms
-        ),
+        close_time_ms=(open_time_ms + INTERVAL_MS - 1 if close_time_ms is None else close_time_ms),
         open=Decimal(open_price),
         high=Decimal(high),
         low=Decimal(low),
@@ -49,10 +45,7 @@ def make_candle(
 
 
 def make_sequence(size: int = 3) -> list[Candle]:
-    return [
-        make_candle(open_time_ms=OPEN_TIME_MS + index * INTERVAL_MS)
-        for index in range(size)
-    ]
+    return [make_candle(open_time_ms=OPEN_TIME_MS + index * INTERVAL_MS) for index in range(size)]
 
 
 def utc_timestamp_ms(year: int, month: int, day: int = 1) -> int:
@@ -66,8 +59,7 @@ def make_monthly_sequence(year: int, month: int, next_year: int, next_month: int
         make_candle(open_time_ms=first_open, close_time_ms=second_open - 1),
         make_candle(
             open_time_ms=second_open,
-            close_time_ms=utc_timestamp_ms(next_year + (next_month == 12), next_month % 12 + 1)
-            - 1,
+            close_time_ms=utc_timestamp_ms(next_year + (next_month == 12), next_month % 12 + 1) - 1,
         ),
     ]
 
@@ -116,9 +108,7 @@ def test_next_open_equal_previous_close_plus_one_is_valid() -> None:
 
 def test_internal_gap_reports_exact_pair_details() -> None:
     candles = make_sequence()
-    candles[2] = make_candle(
-        open_time_ms=candles[1].open_time_ms + 2 * INTERVAL_MS
-    )
+    candles[2] = make_candle(open_time_ms=candles[1].open_time_ms + 2 * INTERVAL_MS)
 
     diagnostic = diagnose_candle_sequence(
         candles,

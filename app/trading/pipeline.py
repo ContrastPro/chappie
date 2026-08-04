@@ -75,9 +75,7 @@ class DecisionPipelineResult:
         ):
             value = getattr(self, field_name)
             if not isinstance(value, str) or not value.strip():
-                raise PipelineInvariantError(
-                    f"{field_name} must be a non-empty string"
-                )
+                raise PipelineInvariantError(f"{field_name} must be a non-empty string")
         if (
             not isinstance(self.evaluated_at_ms, int)
             or isinstance(self.evaluated_at_ms, bool)
@@ -102,9 +100,7 @@ class DecisionPipelineResult:
             self.strategy_name != self.signal.strategy_name
             or self.strategy_version != self.signal.strategy_version
         ):
-            raise PipelineInvariantError(
-                "Result strategy identity does not match Signal"
-            )
+            raise PipelineInvariantError("Result strategy identity does not match Signal")
         if (
             self.correlation_id != self.signal.correlation_id
             or self.intent_plan.correlation_id != self.correlation_id
@@ -129,17 +125,14 @@ class DecisionPipelineResult:
         try:
             object.__setattr__(self, "metadata", freeze_mapping(self.metadata))
         except (TypeError, ValueError) as error:
-            raise PipelineInvariantError(
-                "metadata must contain immutable values"
-            ) from error
+            raise PipelineInvariantError("metadata must contain immutable values") from error
 
     def _validate_outcome(self) -> None:
         if self.outcome is PipelineOutcome.HOLD:
             valid = (
                 self.signal.direction is SignalDirection.HOLD
                 and self.order_intent is None
-                and self.intent_plan.outcome
-                is IntentPlanOutcome.NO_INTENT_FOR_HOLD
+                and self.intent_plan.outcome is IntentPlanOutcome.NO_INTENT_FOR_HOLD
             )
         elif self.outcome is PipelineOutcome.INTENT_CREATED:
             valid = (
@@ -165,9 +158,7 @@ class TradingDecisionPipeline:
         pipeline_run_id_factory: PipelineRunIdFactory,
     ) -> None:
         if not isinstance(strategy, Strategy):
-            raise InvalidPipelineConfigurationError(
-                "strategy must satisfy Strategy Protocol"
-            )
+            raise InvalidPipelineConfigurationError("strategy must satisfy Strategy Protocol")
         if not isinstance(intent_planner, IntentPlanner):
             raise InvalidPipelineConfigurationError(
                 "intent_planner must satisfy IntentPlanner Protocol"
@@ -226,9 +217,7 @@ class TradingDecisionPipeline:
             order_intent=intent_plan.intent,
             outcome=outcome,
             reason_code=(
-                signal.reason_code
-                if outcome is PipelineOutcome.HOLD
-                else intent_plan.reason_code
+                signal.reason_code if outcome is PipelineOutcome.HOLD else intent_plan.reason_code
             ),
             correlation_id=signal.correlation_id,
             completed_stages=completed_stages,
@@ -244,9 +233,7 @@ class TradingDecisionPipeline:
         except Exception as error:
             raise PipelineRunIdFactoryError("Pipeline run ID factory failed") from error
         if not isinstance(run_id, str) or not run_id.strip():
-            raise PipelineRunIdFactoryError(
-                "Pipeline run ID factory returned an empty ID"
-            )
+            raise PipelineRunIdFactoryError("Pipeline run ID factory returned an empty ID")
         return run_id
 
     def _validate_signal(self, snapshot: MarketSnapshot, signal: object) -> None:
@@ -259,37 +246,25 @@ class TradingDecisionPipeline:
         if signal.strategy_name != self._strategy.name:
             raise PipelineInvariantError("Signal strategy_name does not match Strategy")
         if signal.strategy_version != self._strategy.version:
-            raise PipelineInvariantError(
-                "Signal strategy_version does not match Strategy"
-            )
-        if (
-            signal.created_at_ms != snapshot.as_of_ms
-            or signal.effective_at_ms != snapshot.as_of_ms
-        ):
+            raise PipelineInvariantError("Signal strategy_version does not match Strategy")
+        if signal.created_at_ms != snapshot.as_of_ms or signal.effective_at_ms != snapshot.as_of_ms:
             raise PipelineInvariantError("Signal timestamps do not match snapshot")
         if signal.correlation_id != snapshot.correlation_cycle_id:
             raise PipelineInvariantError("Signal correlation does not match snapshot")
 
     def _validate_plan(self, signal: Signal, plan: object) -> None:
         if not isinstance(plan, IntentPlanResult):
-            raise PipelineInvariantError(
-                "Intent Planner must return an IntentPlanResult"
-            )
+            raise PipelineInvariantError("Intent Planner must return an IntentPlanResult")
         if plan.signal_id != signal.signal_id:
             raise PipelineInvariantError("Intent plan signal_id does not match Signal")
         if plan.planner_name != self._intent_planner.name:
             raise PipelineInvariantError("Intent plan planner_name does not match Planner")
         if plan.planner_version != self._intent_planner.version:
-            raise PipelineInvariantError(
-                "Intent plan planner_version does not match Planner"
-            )
+            raise PipelineInvariantError("Intent plan planner_version does not match Planner")
         if plan.correlation_id != signal.correlation_id:
             raise PipelineInvariantError("Intent plan correlation does not match Signal")
         if signal.direction is SignalDirection.HOLD:
-            if (
-                plan.outcome is not IntentPlanOutcome.NO_INTENT_FOR_HOLD
-                or plan.intent is not None
-            ):
+            if plan.outcome is not IntentPlanOutcome.NO_INTENT_FOR_HOLD or plan.intent is not None:
                 raise PipelineInvariantError("HOLD must not create an intent")
             return
         if plan.outcome is IntentPlanOutcome.DECLINED:
@@ -317,18 +292,11 @@ class TradingDecisionPipeline:
         if signal.direction is SignalDirection.BUY:
             if intent.action is not OrderIntentAction.ENTER_LONG:
                 raise PipelineInvariantError("BUY must create ENTER_LONG")
-            expected = self._intent_planner.configuration.get(
-                "long_target_exposure"
-            )
+            expected = self._intent_planner.configuration.get("long_target_exposure")
             if intent.target_exposure != expected:
                 raise PipelineInvariantError(
                     "BUY target exposure does not match Planner configuration"
                 )
         elif signal.direction is SignalDirection.SELL:
-            if (
-                intent.action is not OrderIntentAction.EXIT_LONG
-                or intent.target_exposure != 0
-            ):
-                raise PipelineInvariantError(
-                    "SELL must create EXIT_LONG with zero exposure"
-                )
+            if intent.action is not OrderIntentAction.EXIT_LONG or intent.target_exposure != 0:
+                raise PipelineInvariantError("SELL must create EXIT_LONG with zero exposure")

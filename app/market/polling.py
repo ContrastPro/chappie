@@ -72,9 +72,7 @@ class SystemClock:
 class StopAwareSleeper:
     def __init__(self, check_interval_seconds: float = 0.1) -> None:
         if check_interval_seconds <= 0:
-            raise PollingEngineConfigurationError(
-                "Sleeper check interval must be positive"
-            )
+            raise PollingEngineConfigurationError("Sleeper check interval must be positive")
         self._check_interval_seconds = check_interval_seconds
 
     def wait(
@@ -141,35 +139,19 @@ class PollingPolicy:
         if self.max_provider_attempts <= 0:
             raise PollingEngineConfigurationError("Provider attempts must be positive")
         if len(self.provider_retry_delays) < self.max_provider_attempts - 1:
-            raise PollingEngineConfigurationError(
-                "Provider retry delays must cover all retries"
-            )
+            raise PollingEngineConfigurationError("Provider retry delays must cover all retries")
         if any(delay < 0 for delay in self.provider_retry_delays):
-            raise PollingEngineConfigurationError(
-                "Provider retry delays must not be negative"
-            )
-        if not self.cycle_backoff_delays or any(
-            delay <= 0 for delay in self.cycle_backoff_delays
-        ):
-            raise PollingEngineConfigurationError(
-                "Cycle backoff delays must be positive"
-            )
+            raise PollingEngineConfigurationError("Provider retry delays must not be negative")
+        if not self.cycle_backoff_delays or any(delay <= 0 for delay in self.cycle_backoff_delays):
+            raise PollingEngineConfigurationError("Cycle backoff delays must be positive")
         if self.max_retry_after_seconds <= 0:
-            raise PollingEngineConfigurationError(
-                "Maximum Retry-After must be positive"
-            )
+            raise PollingEngineConfigurationError("Maximum Retry-After must be positive")
         if self.max_bootstrap_limit <= 0:
-            raise PollingEngineConfigurationError(
-                "Maximum bootstrap limit must be positive"
-            )
+            raise PollingEngineConfigurationError("Maximum bootstrap limit must be positive")
         if self.regular_limit < 2:
-            raise PollingEngineConfigurationError(
-                "Regular polling limit must be at least 2"
-            )
+            raise PollingEngineConfigurationError("Regular polling limit must be at least 2")
         if self.max_failed_cycles <= 0:
-            raise PollingEngineConfigurationError(
-                "Maximum failed cycles must be positive"
-            )
+            raise PollingEngineConfigurationError("Maximum failed cycles must be positive")
         if self.clock_skew_warning_seconds < 0:
             raise PollingEngineConfigurationError(
                 "Clock skew warning threshold must not be negative"
@@ -270,9 +252,7 @@ class SynchronousRestPollingEngine:
         self._dispatcher = dispatcher
         self._projector = projector
         self._event_id_factory = event_id_factory or UUIDEventIdFactory()
-        self._correlation_id_factory = (
-            correlation_id_factory or UUIDCorrelationIdFactory()
-        )
+        self._correlation_id_factory = correlation_id_factory or UUIDCorrelationIdFactory()
         self._cycle_exchange_time_ms: int | None = None
         self._cycle_clock_skew_ms: int | None = None
         self._status = PollingStatus(
@@ -418,8 +398,7 @@ class SynchronousRestPollingEngine:
             )
             if result.bootstrap and result.outcome is PollCycleOutcome.SUCCESS:
                 self._logger.info(
-                    "Bootstrap events published: inserted=%s updated=%s "
-                    "closed=0 evicted=%s",
+                    "Bootstrap events published: inserted=%s updated=%s closed=0 evicted=%s",
                     result.inserted,
                     result.updated,
                     result.evicted,
@@ -631,11 +610,7 @@ class SynchronousRestPollingEngine:
             )
 
         try:
-            ingestion_batch = (
-                fetch.candles
-                if bootstrap
-                else self._recovery_suffix(fetch.candles)
-            )
+            ingestion_batch = fetch.candles if bootstrap else self._recovery_suffix(fetch.candles)
             cache_result = self._cache.upsert_candles(
                 self._stream_key,
                 ingestion_batch,
@@ -717,8 +692,7 @@ class SynchronousRestPollingEngine:
         return self._merge_delivery(
             result,
             diagnostic.published_count,
-            diagnostic.handler_failure_count
-            + (diagnostic.infrastructure_error is not None),
+            diagnostic.handler_failure_count + (diagnostic.infrastructure_error is not None),
         )
 
     def _sequence_failure(
@@ -745,8 +719,7 @@ class SynchronousRestPollingEngine:
         return self._merge_delivery(
             result,
             diagnostic.published_count,
-            diagnostic.handler_failure_count
-            + (diagnostic.infrastructure_error is not None),
+            diagnostic.handler_failure_count + (diagnostic.infrastructure_error is not None),
         )
 
     def _recover_gap(
@@ -948,9 +921,7 @@ class SynchronousRestPollingEngine:
     ) -> CandleSequenceGapError:
         latest = self._cache.get_latest_candle(self._stream_key)
         if latest is None or not candles:
-            raise MarketCacheGapError(
-                "Cache boundary gap requires cached and received candles"
-            )
+            raise MarketCacheGapError("Cache boundary gap requires cached and received candles")
         current_index = next(
             (
                 index
@@ -985,12 +956,10 @@ class SynchronousRestPollingEngine:
                 last_success_time_ms=self._clock.now_ms(),
                 last_error_category=None,
                 published_event_count=(
-                    self._status.published_event_count
-                    + result.published_event_count
+                    self._status.published_event_count + result.published_event_count
                 ),
                 delivery_failure_count=(
-                    self._status.delivery_failure_count
-                    + result.delivery_failure_count
+                    self._status.delivery_failure_count + result.delivery_failure_count
                 ),
                 last_exchange_time_ms=(
                     result.exchange_time_ms
@@ -1016,12 +985,10 @@ class SynchronousRestPollingEngine:
                 consecutive_failures=consecutive,
                 last_error_category=result.error_category,
                 published_event_count=(
-                    self._status.published_event_count
-                    + result.published_event_count
+                    self._status.published_event_count + result.published_event_count
                 ),
                 delivery_failure_count=(
-                    self._status.delivery_failure_count
-                    + result.delivery_failure_count
+                    self._status.delivery_failure_count + result.delivery_failure_count
                 ),
                 last_exchange_time_ms=(
                     result.exchange_time_ms
@@ -1095,9 +1062,7 @@ class SynchronousRestPollingEngine:
             PollErrorCategory.PROVIDER: MarketStreamFailureReason.PROVIDER,
             PollErrorCategory.EMPTY_RESPONSE: MarketStreamFailureReason.EMPTY_RESPONSE,
             PollErrorCategory.VALIDATION: MarketStreamFailureReason.VALIDATION,
-            PollErrorCategory.BOOTSTRAP_VALIDATION: (
-                MarketStreamFailureReason.VALIDATION
-            ),
+            PollErrorCategory.BOOTSTRAP_VALIDATION: (MarketStreamFailureReason.VALIDATION),
             PollErrorCategory.CACHE: MarketStreamFailureReason.CACHE_INTEGRITY,
             PollErrorCategory.GAP_RECOVERY: MarketStreamFailureReason.GAP_RECOVERY,
             PollErrorCategory.EVENT_PROJECTION: MarketStreamFailureReason.DELIVERY,
@@ -1130,8 +1095,7 @@ class SynchronousRestPollingEngine:
         return self._merge_delivery(
             result,
             publication.published_count,
-            publication.handler_failure_count
-            + (publication.infrastructure_error is not None),
+            publication.handler_failure_count + (publication.infrastructure_error is not None),
         )
 
     def _publish_gap_event(
@@ -1159,9 +1123,7 @@ class SynchronousRestPollingEngine:
                 source=MarketEventSource.REST_POLLING,
                 expected_open_time_ms=gap_error.expected_open_time_ms,
                 received_open_time_ms=gap_error.received_open_time_ms,
-                last_confirmed_open_time_ms=(
-                    latest.open_time_ms if latest is not None else None
-                ),
+                last_confirmed_open_time_ms=(latest.open_time_ms if latest is not None else None),
                 phase=phase,
                 reason=reason,
                 previous_index=gap_error.previous_index,
@@ -1225,9 +1187,7 @@ class SynchronousRestPollingEngine:
             delivery_outcome = PollDeliveryOutcome.DELIVERY_DEGRADED
         return replace(
             result,
-            published_event_count=(
-                result.published_event_count + published_event_count
-            ),
+            published_event_count=(result.published_event_count + published_event_count),
             delivery_failure_count=total_failures,
             delivery_outcome=delivery_outcome,
         )

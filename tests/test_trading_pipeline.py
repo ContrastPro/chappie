@@ -132,9 +132,7 @@ class FakeStrategy:
 class FakePlanner:
     name = "fake_planner"
     version = "1"
-    configuration: ClassVar[dict[str, object]] = {
-        "long_target_exposure": Decimal(1)
-    }
+    configuration: ClassVar[dict[str, object]] = {"long_target_exposure": Decimal(1)}
 
     def __init__(self, result: IntentPlanResult | BaseException) -> None:
         self.result = result
@@ -560,9 +558,7 @@ def test_decision_modules_have_no_forbidden_infrastructure_dependencies() -> Non
             )
         ]
         assert not any(
-            dependency.startswith(prefix)
-            for dependency in imports
-            for prefix in forbidden
+            dependency.startswith(prefix) for dependency in imports for prefix in forbidden
         )
 
 
@@ -658,7 +654,9 @@ def test_result_rejects_distinct_but_equal_intent_and_corrupted_identity() -> No
         DecisionPipelineResult(**{**common, "correlation_id": "wrong"})
 
 
-def market_snapshot(closes: list[int], *, stale: bool = False, include_open: bool = False) -> MarketSnapshot:
+def market_snapshot(
+    closes: list[int], *, stale: bool = False, include_open: bool = False
+) -> MarketSnapshot:
     values: list[Candle] = []
     for index, close_value in enumerate(closes + ([999] if include_open else [])):
         open_ms = NOW_MS + index * 60_000
@@ -689,8 +687,22 @@ def market_snapshot(closes: list[int], *, stale: bool = False, include_open: boo
 @pytest.mark.parametrize(
     ("closes", "stale", "outcome", "direction", "action", "exposure"),
     [
-        ([3, 2, 1, 4], False, PipelineOutcome.INTENT_CREATED, SignalDirection.BUY, OrderIntentAction.ENTER_LONG, Decimal("0.4")),
-        ([1, 2, 3, 0], False, PipelineOutcome.INTENT_CREATED, SignalDirection.SELL, OrderIntentAction.EXIT_LONG, Decimal(0)),
+        (
+            [3, 2, 1, 4],
+            False,
+            PipelineOutcome.INTENT_CREATED,
+            SignalDirection.BUY,
+            OrderIntentAction.ENTER_LONG,
+            Decimal("0.4"),
+        ),
+        (
+            [1, 2, 3, 0],
+            False,
+            PipelineOutcome.INTENT_CREATED,
+            SignalDirection.SELL,
+            OrderIntentAction.EXIT_LONG,
+            Decimal(0),
+        ),
         ([3, 2, 1, 4, 5], False, PipelineOutcome.HOLD, SignalDirection.HOLD, None, None),
         ([3, 2, 1, 4], True, PipelineOutcome.HOLD, SignalDirection.HOLD, None, None),
     ],

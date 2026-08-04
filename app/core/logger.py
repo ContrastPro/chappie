@@ -2,10 +2,7 @@ import logging
 from pathlib import Path
 from uuid import uuid4
 
-LOG_FORMAT = (
-    "%(asctime)s | %(levelname)s | %(name)s | "
-    "run_id=%(run_id)s | %(message)s"
-)
+LOG_FORMAT = "%(asctime)s | %(levelname)s | %(name)s | run_id=%(run_id)s | %(message)s"
 
 
 class UUIDRunIdFactory:

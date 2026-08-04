@@ -22,9 +22,7 @@ class MarketStreamKey:
                 "Market stream symbol must contain only ASCII letters and digits"
             )
         if not isinstance(self.interval, str) or not self.interval:
-            raise MarketStreamKeyError(
-                "Market stream interval must be a non-empty string"
-            )
+            raise MarketStreamKeyError("Market stream interval must be a non-empty string")
         if self.interval != self.interval.strip():
             raise MarketStreamKeyError("Market stream interval must be normalized")
 

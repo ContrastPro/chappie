@@ -51,9 +51,7 @@ class MarketSnapshotFactory:
         for candle in items:
             if as_of_ms > candle.close_time_ms:
                 if open_candles:
-                    raise InvalidMarketSnapshotError(
-                        "A closed candle cannot follow an open candle"
-                    )
+                    raise InvalidMarketSnapshotError("A closed candle cannot follow an open candle")
                 closed.append(candle)
             else:
                 open_candles.append(candle)
@@ -63,9 +61,7 @@ class MarketSnapshotFactory:
         latest_closed = closed[-1] if closed else None
         latest_open = open_candles[0] if open_candles else None
         staleness_ms = (
-            None
-            if latest_closed is None
-            else max(0, as_of_ms - latest_closed.close_time_ms)
+            None if latest_closed is None else max(0, as_of_ms - latest_closed.close_time_ms)
         )
         return MarketSnapshot(
             snapshot_id=snapshot_id,
@@ -78,11 +74,7 @@ class MarketSnapshotFactory:
             correlation_cycle_id=correlation_cycle_id,
             data_version=self._data_version,
             staleness_ms=staleness_ms,
-            is_stale=(
-                True
-                if staleness_ms is None
-                else staleness_ms > self._stale_after_ms
-            ),
+            is_stale=(True if staleness_ms is None else staleness_ms > self._stale_after_ms),
         )
 
     @staticmethod

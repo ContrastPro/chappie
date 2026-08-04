@@ -73,9 +73,7 @@ class ChappieTraderApplication:
         snapshot = self.cache.get_snapshot(stream_key)
         latest = self.cache.get_latest_candle(stream_key)
         market_as_of_ms = (
-            status.last_exchange_time_ms
-            if status.last_exchange_time_ms is not None
-            else 0
+            status.last_exchange_time_ms if status.last_exchange_time_ms is not None else 0
         )
         latest_closed = self.cache.get_latest_closed_candle(
             stream_key,
@@ -89,18 +87,12 @@ class ChappieTraderApplication:
             consecutive_failures=status.consecutive_failures,
             last_success_time_ms=status.last_success_time_ms,
             last_error_category=(
-                status.last_error_category.value
-                if status.last_error_category is not None
-                else None
+                status.last_error_category.value if status.last_error_category is not None else None
             ),
             cached_candle_count=len(snapshot),
-            latest_candle=(
-                CandleSnapshot.from_candle(latest) if latest is not None else None
-            ),
+            latest_candle=(CandleSnapshot.from_candle(latest) if latest is not None else None),
             latest_closed_candle=(
-                CandleSnapshot.from_candle(latest_closed)
-                if latest_closed is not None
-                else None
+                CandleSnapshot.from_candle(latest_closed) if latest_closed is not None else None
             ),
             published_event_count=status.published_event_count,
             delivery_failure_count=status.delivery_failure_count,
@@ -127,9 +119,7 @@ def build_application(
     )
     market_cache = InMemoryMarketCache(settings.market_cache_capacity)
     dispatcher = MarketEventDispatcher()
-    projector = MarketEventProjector(
-        projector_event_id_factory or UUIDEventIdFactory()
-    )
+    projector = MarketEventProjector(projector_event_id_factory or UUIDEventIdFactory())
     production_clock = clock or SystemClock()
     production_sleeper = sleeper or StopAwareSleeper()
     policy = PollingPolicy(
@@ -137,9 +127,7 @@ def build_application(
         max_bootstrap_limit=settings.polling_bootstrap_limit,
         regular_limit=settings.polling_regular_limit,
         max_failed_cycles=settings.max_consecutive_failures,
-        clock_skew_warning_seconds=(
-            settings.market_clock_skew_warning_seconds
-        ),
+        clock_skew_warning_seconds=(settings.market_clock_skew_warning_seconds),
     )
     stream_key = MarketStreamKey(
         settings.default_symbol,
@@ -155,9 +143,7 @@ def build_application(
         dispatcher=dispatcher,
         projector=projector,
         event_id_factory=diagnostic_event_id_factory or UUIDEventIdFactory(),
-        correlation_id_factory=(
-            correlation_id_factory or UUIDCorrelationIdFactory()
-        ),
+        correlation_id_factory=(correlation_id_factory or UUIDCorrelationIdFactory()),
     )
     agent = TraderAgent(settings=settings, polling_engine=engine)
     subscriptions = register_market_event_logging(
@@ -215,10 +201,7 @@ def run_application(
     try:
         application.agent.start()
         status = application.engine.status
-        if (
-            status.lifecycle_state is PollingLifecycleState.FAILED
-            or status.failed_cycles > 0
-        ):
+        if status.lifecycle_state is PollingLifecycleState.FAILED or status.failed_cycles > 0:
             exit_code = 1
     except KeyboardInterrupt:
         interrupted = True

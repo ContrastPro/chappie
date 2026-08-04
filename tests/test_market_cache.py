@@ -37,11 +37,7 @@ def make_candle(
     volume: str = "10",
     open_time_ms: int | None = None,
 ) -> Candle:
-    candle_open_time = (
-        OPEN_TIME_MS + index * INTERVAL_MS
-        if open_time_ms is None
-        else open_time_ms
-    )
+    candle_open_time = OPEN_TIME_MS + index * INTERVAL_MS if open_time_ms is None else open_time_ms
     return Candle(
         open_time_ms=candle_open_time,
         close_time_ms=candle_open_time + INTERVAL_MS - 1,

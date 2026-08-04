@@ -121,26 +121,18 @@ class MarketSnapshot:
         previous: CandleSnapshot | None = None
         for candle in self.closed_candles:
             if previous is not None and candle.open_time_ms <= previous.open_time_ms:
-                raise InvalidMarketSnapshotError(
-                    "closed_candles must be strictly ordered"
-                )
+                raise InvalidMarketSnapshotError("closed_candles must be strictly ordered")
             if previous is not None and candle.open_time_ms <= previous.close_time_ms:
                 raise InvalidMarketSnapshotError("closed_candles must not overlap")
             if self.as_of_ms <= candle.close_time_ms:
-                raise InvalidMarketSnapshotError(
-                    "closed_candles must be closed at as_of_ms"
-                )
+                raise InvalidMarketSnapshotError("closed_candles must be closed at as_of_ms")
             previous = candle
         expected_latest = self.closed_candles[-1] if self.closed_candles else None
         if self.latest_closed_candle != expected_latest:
-            raise InvalidMarketSnapshotError(
-                "latest_closed_candle must match the closed history"
-            )
+            raise InvalidMarketSnapshotError("latest_closed_candle must match the closed history")
         if self.latest_open_candle is not None:
             if not isinstance(self.latest_open_candle, CandleSnapshot):
-                raise InvalidMarketSnapshotError(
-                    "latest_open_candle must be a CandleSnapshot"
-                )
+                raise InvalidMarketSnapshotError("latest_open_candle must be a CandleSnapshot")
             if self.as_of_ms > self.latest_open_candle.close_time_ms:
                 raise InvalidMarketSnapshotError("latest_open_candle is already closed")
             if (
@@ -152,8 +144,7 @@ class MarketSnapshot:
                 )
             if (
                 expected_latest is not None
-                and self.latest_open_candle.open_time_ms
-                <= expected_latest.close_time_ms
+                and self.latest_open_candle.open_time_ms <= expected_latest.close_time_ms
             ):
                 raise InvalidMarketSnapshotError(
                     "latest_open_candle must not overlap closed history"
@@ -201,38 +192,26 @@ class Signal:
         _require_timestamp(self.created_at_ms, "created_at_ms", InvalidSignalError)
         _require_timestamp(self.effective_at_ms, "effective_at_ms", InvalidSignalError)
         if self.effective_at_ms > self.created_at_ms:
-            raise InconsistentTradingTimestampError(
-                "effective_at_ms must not exceed created_at_ms"
-            )
+            raise InconsistentTradingTimestampError("effective_at_ms must not exceed created_at_ms")
         if self.effective_at_ms != self.created_at_ms:
             raise InconsistentTradingTimestampError(
                 "M2.2 signals require effective_at_ms equal to created_at_ms"
             )
-        if (
-            self.direction is SignalDirection.BUY
-            and self.reason_code != BUY_REASON_CODE
-        ):
-            raise InvalidSignalError(
-                "BUY signals require reason_code bullish_crossover"
-            )
-        if (
-            self.direction is SignalDirection.SELL
-            and self.reason_code != SELL_REASON_CODE
-        ):
-            raise InvalidSignalError(
-                "SELL signals require reason_code bearish_crossover"
-            )
+        if self.direction is SignalDirection.BUY and self.reason_code != BUY_REASON_CODE:
+            raise InvalidSignalError("BUY signals require reason_code bullish_crossover")
+        if self.direction is SignalDirection.SELL and self.reason_code != SELL_REASON_CODE:
+            raise InvalidSignalError("SELL signals require reason_code bearish_crossover")
         if self.direction is SignalDirection.HOLD and self.reason_code in {
             BUY_REASON_CODE,
             SELL_REASON_CODE,
         }:
-            raise InvalidSignalError(
-                "HOLD signals cannot use crossover direction reason codes"
-            )
+            raise InvalidSignalError("HOLD signals cannot use crossover direction reason codes")
         if self.correlation_id is not None:
             _require_non_empty(self.correlation_id, "correlation_id", InvalidSignalError)
         try:
-            object.__setattr__(self, "strategy_parameters", freeze_mapping(self.strategy_parameters))
+            object.__setattr__(
+                self, "strategy_parameters", freeze_mapping(self.strategy_parameters)
+            )
             object.__setattr__(self, "metadata", freeze_mapping(self.metadata))
         except (TypeError, InvalidDecimalValueError) as error:
             raise InvalidSignalError("Signal mappings must be immutable values") from error
@@ -321,12 +300,9 @@ class RiskDecision:
         except InvalidDecimalValueError as error:
             raise InvalidRiskDecisionError(str(error)) from error
         if not isinstance(self.rejection_reasons, tuple) or any(
-            not isinstance(reason, str) or not reason.strip()
-            for reason in self.rejection_reasons
+            not isinstance(reason, str) or not reason.strip() for reason in self.rejection_reasons
         ):
-            raise InvalidRiskDecisionError(
-                "rejection_reasons must be a tuple of non-empty strings"
-            )
+            raise InvalidRiskDecisionError("rejection_reasons must be a tuple of non-empty strings")
         if self.outcome is RiskDecisionOutcome.APPROVED:
             if approved != requested or self.rejection_reasons:
                 raise InvalidRiskDecisionError(
@@ -339,13 +315,9 @@ class RiskDecision:
                 )
         else:
             if approved is None or approved == requested:
-                raise InvalidRiskDecisionError(
-                    "MODIFIED requires a different approved exposure"
-                )
+                raise InvalidRiskDecisionError("MODIFIED requires a different approved exposure")
             if self.rejection_reasons:
-                raise InvalidRiskDecisionError(
-                    "MODIFIED must not contain rejection reasons"
-                )
+                raise InvalidRiskDecisionError("MODIFIED must not contain rejection reasons")
         if self.correlation_id is not None:
             _require_non_empty(
                 self.correlation_id,
