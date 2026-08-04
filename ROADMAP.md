@@ -99,6 +99,20 @@
 - `TraderAgent` преобразован в координатор постоянного pipeline.
 - Добавлены unit-тесты сигналов и граничных случаев стратегии.
 
+#### M2.3 Trading Decision Pipeline — design
+
+- Спроектировать синхронную stateless orchestration `MarketSnapshot -> Strategy -> Signal -> Intent Planner -> OrderIntent`.
+- Зафиксировать immutable pipeline/planner results, cross-model invariants, error policy и audit correlation.
+- Утвердить первый Spot long-only target-exposure planner без portfolio, risk и execution.
+- Подготовить deterministic testing strategy и минимальный implementation plan M2.4.
+
+#### M2.4 Intent Planner and Trading Decision Pipeline — implementation complete, final review pending
+
+- Реализованы типизированный Spot long-only `IntentPlanner` и синхронный stateless `TradingDecisionPipeline`.
+- Зафиксирован детерминированный поток `MarketSnapshot -> Strategy -> Signal -> IntentPlanResult -> OrderIntent | None`.
+- Добавлены cross-model invariants, типизированные ошибки boundary и внедряемые фабрики идентификаторов.
+- Добавлены unit- и integration-тесты, включая совместную работу с EMA baseline strategy.
+
 ### Критерии готовности
 
 - Стратегия не зависит от Binance, HTTP или базы данных.

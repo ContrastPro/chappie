@@ -332,7 +332,7 @@ Polling Engine после успешного cache commit передаёт по�
 7. Event Dispatcher синхронно доставляет события подписанным внутренним модулям.
 8. Indicators, Strategy, Analytics, Risk и AI читают рыночные данные только из Market Cache.
 9. Strategy формирует только immutable `Signal` из `MarketSnapshot`.
-10. Отдельный deterministic Intent Planner формирует `OrderIntent`.
+10. Application-level `TradingDecisionPipeline` проверяет Signal и координирует отдельный deterministic Intent Planner, который формирует `OrderIntent` или типизированно не создаёт его.
 11. Risk Manager создаёт обязательный `RiskDecision` относительно лимитов и портфеля.
 12. Execution отправляет или симулирует только разрешённый ордер.
 13. Полученные fills обновляют портфель.

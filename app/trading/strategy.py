@@ -4,6 +4,7 @@ from uuid import uuid4
 from app.trading.models import ImmutableMapping, MarketSnapshot, Signal
 
 
+@runtime_checkable
 class SignalIdFactory(Protocol):
     def next_id(self) -> str:
         """Return the next signal identifier."""

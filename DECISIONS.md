@@ -181,3 +181,21 @@
 - **Решение:** Первая baseline strategy использует только закрытые свечи и чистое пересечение fast/slow EMA. EMA и alpha рассчитываются через `Decimal`; начальное EMA равно SMA первого окна. ATR, volatility filter, confidence, fees и position state не входят в первую версию.
 - **Причины:** Простота, объяснимость, отсутствие look-ahead, детерминированность и лёгкость unit-тестирования.
 - **Последствия:** Baseline является техническим benchmark и не обещает прибыльность. Добавление фильтров или изменение crossover rules требует версионирования и отдельного review.
+
+## ADR-021: Trading decisions are coordinated by an application pipeline
+
+- **Статус:** принято
+- **Дата:** 2026-08-04
+- **Контекст:** Strategy и Intent Planner должны образовать воспроизводимый поток, но прямое связывание компонентов затруднит проверку межмодельных invariants, аудит и дальнейшее добавление обязательного Risk Manager.
+- **Решение:** Синхронный application-level Trading Decision Pipeline получает готовый `MarketSnapshot`, вызывает одну Strategy, проверяет `Signal`, вызывает один заменяемый Intent Planner и возвращает immutable result. Pipeline не содержит торговых формул, не читает инфраструктуру и не выполняет risk или execution.
+- **Причины:** Явный порядок, единая проверка cross-model invariants, детерминированное тестирование и подготовленная граница для будущего risk gate.
+- **Последствия:** Один pipeline instance использует одну Strategy. Pipeline stateless и deterministic при одинаковых factories, но сам по себе не обеспечивает execution idempotency. Multi-strategy coordination, persistence, Risk Manager и execution добавляются отдельно.
+
+## ADR-022: First intent planner uses long-only target exposure
+
+- **Статус:** принято
+- **Дата:** 2026-08-04
+- **Контекст:** Stage 2 должен преобразовать Signal в типизированное намерение без преждевременной зависимости от balances, instrument filters, portfolio accounting и executable quantity.
+- **Решение:** Первый deterministic Spot long-only planner преобразует BUY в `ENTER_LONG` с configurable target exposure, SELL — в `EXIT_LONG` с exposure `0`, а HOLD не создаёт intent. Default long target равен `Decimal("1")`.
+- **Причины:** Простая объяснимая policy, соответствие long-only Spot и отделение направления стратегии от будущих sizing/risk calculations.
+- **Последствия:** Planner не знает текущую позицию и может повторно описать ту же target exposure. Quantity, position-aware suppression и risk approval появляются позже; OrderIntent не является приказом на немедленную сделку.
