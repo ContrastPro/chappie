@@ -226,3 +226,48 @@
 - **Решение:** Market Cache хранит внутренний immutable entry с `Candle`, `closure_confirmed` и последним явным временем наблюдения. Свеча, сохранённая открытой, может получить монотонный финальный update после close boundary; данные и переход `OPEN -> CLOSED_CONFIRMED` коммитятся атомарно. Exact duplicate также может подтвердить закрытие без изменения данных. После подтверждения свеча immutable, кроме exact duplicate. `MarketCacheChange` явно сообщает data change и closure transition Event Projector-у.
 - **Причины:** Детерминированная lifecycle-модель, корректный Binance REST reconciliation, атомарность и запрет изменения действительно подтверждённой истории.
 - **Последствия:** Update permission больше не выводится только из текущего времени. Event Projector публикует финальный `CandleUpdated` перед `CandleClosed`; public snapshots остаются обычными defensive `Candle` и не раскрывают lifecycle metadata. Persistence и distributed exactly-once guarantees не добавляются.
+
+## ADR-026: Risk Manager is mandatory before execution
+
+- **Статус:** proposal
+- **Дата:** 2026-08-04
+- **Контекст:** `OrderIntent` выражает желаемую экспозицию, но не учитывает balances, instrument rules и централизованные лимиты.
+- **Решение:** Любой paper, testnet или live order обязан пройти детерминированный Risk Manager. Strategy, AI и Intent Planner не могут создавать executable approval.
+- **Причины:** Безопасность, единая policy, объяснимость и невозможность обхода лимитов.
+- **Последствия:** Execution принимает только разрешённые параметры RiskDecision. Недоступность Risk Manager означает отсутствие исполнения.
+
+## ADR-027: Deterministic paper execution is the first execution adapter
+
+- **Статус:** proposal
+- **Дата:** 2026-08-04
+- **Контекст:** До testnet нужен воспроизводимый способ проверить sizing, fees, fills и accounting без private API и капитала.
+- **Решение:** Первым `ExecutionProvider` становится synchronous in-memory paper adapter с immediate full MARKET fill, явными fee/slippage rules, injected IDs/time и без сети.
+- **Причины:** Детерминированные тесты, безопасная интеграция и минимальная инфраструктурная сложность.
+- **Последствия:** Модель не обещает реалистичную liquidity/latency/partial-fill симуляцию; ограничения явно отражаются в результатах.
+
+## ADR-028: Portfolio is authoritative for balances and positions
+
+- **Статус:** принято
+- **Дата:** 2026-08-04
+- **Контекст:** Дублирование balances и positions между risk, execution и orchestration создаёт расхождения.
+- **Решение:** Portfolio является единственным владельцем balances, position, cost basis, fees и cumulative realised PnL; только подтверждённый Fill может изменить это состояние.
+- **Причины:** Ясное владение, атомарные инварианты, idempotency и auditability.
+- **Последствия:** Risk читает immutable snapshot, execution не мутирует Portfolio, а повторный fill подавляется или вызывает typed conflict.
+
+## ADR-029: Target exposure is resolved through portfolio equity
+
+- **Статус:** proposal
+- **Дата:** 2026-08-04
+- **Контекст:** `OrderIntent.target_exposure` не является quantity; перевод зависит от текущего капитала, позиции и цены.
+- **Решение:** Risk Manager вычисляет target notional как target exposure, умноженную на Portfolio equity по одной reference price, затем применяет limits и получает delta order.
+- **Причины:** Единая семантика sizing для enter, resize и exit, независимая от абсолютного капитала.
+- **Последствия:** Нужны согласованные immutable market/portfolio snapshots; rounding и минимальные размеры проверяются после расчёта delta.
+
+## ADR-030: Instrument rules control financial rounding
+
+- **Статус:** принято
+- **Дата:** 2026-08-04
+- **Контекст:** Quantity, price и notional должны удовлетворять правилам инструмента без float и скрытой биржевой логики.
+- **Решение:** Использовать versioned `InstrumentRules`; quantity округляется вниз к step, затем повторно проверяются minimum quantity/notional, balances и limits.
+- **Причины:** Запрет overspend/oversell, воспроизводимость и независимость домена от Binance payload.
+- **Последствия:** Rules передаются через boundary и сохраняются в audit. Изменение правил не должно менять интерпретацию уже созданных решений.

@@ -85,6 +85,12 @@
 
 ## Этап 2. Доменное ядро и baseline-стратегия
 
+Статус этапа: **completed** (2026-08-04).
+
+Подтверждение: реализованы EMA baseline, Intent Planner, Trading Decision Pipeline и
+Shadow Trading Decision Engine. Реальный Binance smoke-run сформировал восемь
+объяснимых HOLD decisions без failures, execution или ордеров.
+
 ### Цель
 
 Сформировать независимую от биржи модель торгового решения и первую простую детерминированную стратегию.
@@ -96,11 +102,23 @@
 - Реализована простая детерминированная EMA crossover strategy без дополнительных фильтров как прозрачный baseline benchmark.
 - Параметры стратегии типизированы и валидируются.
 - Сигналы содержат время, причину, версию стратегии и входные параметры.
-- Trading pipeline реализован как изолированный application-компонент и пока не
-  подключён к `TraderAgent` или runtime composition.
+- Trading pipeline подключён к runtime только через feature-flagged shadow flow и
+  не связан с risk, portfolio или execution.
 - Добавлены unit-тесты сигналов и граничных случаев стратегии.
 
+#### M2.1 Trading Domain Model — completed
+
+- Утверждены immutable `MarketSnapshot`, `Signal`, `OrderIntent`, `RiskDecision`,
+  границы Strategy и target-exposure sizing contract.
+
+#### M2.2 Trading Domain Models and EMA Baseline — completed
+
+- Реализованы и протестированы доменные модели, Snapshot Factory и
+  детерминированная closed-candle-only EMA crossover strategy.
+
 #### M2.3 Trading Decision Pipeline — design
+
+Статус: **completed**. Design реализован и подтверждён этапом M2.4.
 
 - Спроектировать синхронную stateless orchestration `MarketSnapshot -> Strategy -> Signal -> Intent Planner -> OrderIntent`.
 - Зафиксировать immutable pipeline/planner results, cross-model invariants, error policy и audit correlation.
@@ -162,6 +180,47 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 
 Создать воспроизводимую среду оценки стратегии до допуска к биржевому исполнению.
 
+#### M3.1 Risk, Portfolio and Paper Execution Core — design
+
+Статус: **completed** (2026-08-04).
+
+- Спроектировать обязательный Risk Manager, Portfolio accounting и детерминированный
+  paper execution для Binance Spot `BTCUSDT`, long-only.
+- Зафиксировать контракты, Decimal sizing/rounding, fee/slippage, idempotency,
+  ownership, audit boundaries и будущую persistence.
+- Не подключать private API, testnet, live trading или реальный капитал.
+
+#### M3.2 Portfolio Accounting Core
+
+Статус: **completed** (2026-08-04).
+
+- Реализованы immutable `InstrumentRules`, `Fill`, `Position`, `PortfolioConfig` и
+  `PortfolioSnapshot`, а также single-stream Portfolio aggregate.
+- Подтверждены deterministic Decimal accounting, exact reconciliation, atomic fill
+  application, bounded idempotency, абсолютный drawdown и архитектурная изоляция.
+- Runtime wiring, Risk Manager и PaperExecutionProvider не подключены.
+
+#### M3.3 Risk Manager
+
+- Реализовать обязательный deterministic risk gate, portfolio-aware sizing, limits
+  и approved execution parameters без подключения execution adapter.
+
+#### M3.4 Deterministic Paper Execution
+
+- Реализовать paper adapter и performance metrics без сети и private API.
+
+#### M3.5 Paper Trading Orchestration
+
+- Подключить feature-flagged PaperTradingEngine, idempotency и observer boundary.
+
+#### M3.6 Persistence and Audit
+
+- Реализовать SQLite journal, audit persistence, recovery и reconciliation.
+
+#### M3.7 Stage 3 completion
+
+- Подтвердить backtest/paper parity, controlled smoke-run и критерии качества.
+
 ### Планируемые результаты
 
 - Реализован replay исторических свечей.
@@ -188,17 +247,18 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 - Оптимизация параметров на всей истории без out-of-sample проверки.
 - Реальное биржевое исполнение.
 
-## Этап 4. Risk management и execution
+## Этап 4. Risk hardening и биржевое execution
 
 ### Цель
 
-Построить обязательный безопасный контур проверки и исполнения ордеров.
+Расширить проверенный paper-контур эксплуатационными risk controls, durable
+recovery и изолированным testnet execution до отдельного допуска live.
 
 ### Планируемые результаты
 
-- Определён порт `ExecutionProvider`.
-- Реализован централизованный Risk Manager.
-- Введены лимиты размера ордера, позиции, экспозиции, дневного убытка и просадки.
+- Укреплён порт `ExecutionProvider` для stateful exchange lifecycle.
+- Расширен централизованный Risk Manager поверх проверенного Stage 3 core.
+- К базовым лимитам добавлены дневной убыток, просадка и kill switch.
 - Реализованы kill switch и запрет торговли на устаревших данных.
 - Добавлены идемпотентные client order IDs и защита от повторной отправки.
 - Определена state machine ордера.

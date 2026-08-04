@@ -52,6 +52,60 @@ def candle(index: int = 0, *, duration_ms: int = 59_999) -> Candle:
     )
 
 
+def test_portfolio_architecture_boundaries() -> None:
+    forbidden = {
+        "httpx",
+        "random",
+        "sqlite3",
+        "app.shadow",
+        "app.agent",
+        "app.application",
+        "app.main",
+        "app.risk",
+        "app.database",
+        "app.market.binance_provider",
+    }
+    portfolio_files = sorted(Path("app/portfolio").glob("*.py"))
+    assert portfolio_files
+    for path in portfolio_files:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        imports = {
+            node.module
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module is not None
+        }
+        imports.update(
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        )
+        assert not any(
+            imported == blocked or imported.startswith(f"{blocked}.")
+            for imported in imports
+            for blocked in forbidden
+        ), f"{path} crosses a portfolio architecture boundary"
+        calls = {
+            node.func.attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        }
+        assert not ({"time", "time_ns", "now", "utcnow"} & calls)
+
+    execution_tree = ast.parse(
+        Path("app/execution/models.py").read_text(encoding="utf-8"),
+        filename="app/execution/models.py",
+    )
+    execution_imports = {
+        node.module
+        for node in ast.walk(execution_tree)
+        if isinstance(node, ast.ImportFrom) and node.module is not None
+    }
+    assert not any(
+        name == "app.portfolio" or name.startswith("app.portfolio.") for name in execution_imports
+    )
+
+
 def event_values() -> dict[str, object]:
     return {
         "event_id": "event-1",

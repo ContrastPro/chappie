@@ -330,15 +330,22 @@ consistency checks, dedup и error policy описаны в
 
 ### `risk`
 
-Принимает `OrderIntent` и состояние портфеля, после чего разрешает, ограничивает или отклоняет намерение. Этот этап обязателен для paper и live режимов.
+Принимает `OrderIntent`, immutable market context и Portfolio snapshot, после чего
+разрешает, ограничивает или отклоняет намерение. Этот этап обязателен для любого
+paper, testnet и live execution. Execution получает только параметры, разрешённые
+Risk Manager, а не исходный intent напрямую.
 
 ### `execution`
 
-Преобразует разрешённое намерение в ордер и отслеживает его жизненный цикл. Конкретные адаптеры реализуют paper, testnet и live execution.
+Преобразует разрешённое RiskDecision намерение в `Order`/`Fill`. Первый adapter —
+детерминированный synchronous paper execution без сети; он не изменяет Portfolio.
+Testnet и live adapters требуют отдельных design review и допуска.
 
 ### `portfolio`
 
-Целевой модуль, которого пока нет. Отвечает за позиции, денежные остатки, fills, комиссии, realised/unrealised PnL и экспозицию.
+Является единственным авторитетным источником balances, позиции, cost basis,
+комиссий, realised/unrealised PnL и экспозиции. Он атомарно применяет подтверждённые
+fills, но не содержит стратегию, risk policy или execution logic.
 
 ### `database`
 
@@ -366,7 +373,9 @@ consistency checks, dedup и error policy описаны в
 - `Portfolio` — агрегированное состояние капитала и экспозиции;
 - `PerformanceSnapshot` — показатели результата в определённый момент.
 
-Точные поля этих сущностей являются предметом отдельного design review.
+Точные Stage 3 поля и границы paper-контура предложены в
+`PAPER_TRADING_CORE_DESIGN.md`; до утверждения ADR-026–030 они не являются
+реализованным публичным контрактом.
 
 ## 10. Основной поток данных
 
@@ -381,9 +390,9 @@ consistency checks, dedup и error policy описаны в
 9. Strategy формирует только immutable `Signal` из `MarketSnapshot`.
 10. Application-level `TradingDecisionPipeline` проверяет Signal и координирует отдельный deterministic Intent Planner, который формирует `OrderIntent` или типизированно не создаёт его.
 11. Shadow Engine формирует immutable record и передаёт его observer-у; на этом shadow flow заканчивается без risk и execution.
-12. В будущих исполняемых режимах Risk Manager создаёт обязательный `RiskDecision` относительно лимитов и портфеля.
-13. Execution отправляет или симулирует только разрешённый ордер.
-14. Полученные fills обновляют портфель.
+12. В paper-контуре отдельный Paper Trading Engine передаёт `OrderIntent`, market context и immutable Portfolio snapshot обязательному Risk Manager.
+13. Execution симулирует только параметры, разрешённые `RiskDecision`, и создаёт immutable `Order`/`Fill`.
+14. Portfolio атомарно и идемпотентно применяет Fill; execution не меняет его напрямую.
 15. Каждое решение и изменение состояния записывается для аудита и аналитики.
 
 Ни одна стратегия, включая AI-стратегию, не должна напрямую обращаться к live execution.

@@ -408,3 +408,14 @@ Stage 1 orchestration.
    immutable data и отсутствие look-ahead.
 7. Не подключать strategy к долгоживущему agent pipeline до отдельного integration
    review; M2.2 сначала должен доказать доменную детерминированность изолированно.
+
+## 16. Stage 3 extension boundary
+
+Stage 2 завершён без execution. Детальная эволюция `RiskDecision`, а также модели
+`InstrumentRules`, `Order`, `Fill`, `Position`, `PortfolioSnapshot` и
+`PerformanceSnapshot` вынесены в `PAPER_TRADING_CORE_DESIGN.md`.
+
+Существующие exposure-поля `RiskDecision` сохраняются. Для Stage 3 предлагается
+добавить отдельные immutable approved order parameters с quantity, notional,
+reference price, portfolio/rules versions и idempotency key. Это не превращает
+`OrderIntent` в order и не даёт Strategy или AI права обходить Risk Manager.
