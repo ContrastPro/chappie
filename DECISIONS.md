@@ -163,3 +163,21 @@
 - **Решение:** Первая версия использует синхронные in-process Market Events и один Event Dispatcher. `asyncio`, message broker и distributed delivery не применяются. Cache-события создаются только после успешного атомарного cache commit или успешной идемпотентной reconciliation, подтвердившей переход свечи в закрытое состояние. Порядок публикации соответствует порядку подтверждённых изменений cache. Обработчики получают immutable snapshot-данные и не могут изменить cache через ссылки.
 - **Причины:** Детерминированный порядок, простое тестирование, соответствие одному процессу и writer, отсутствие преждевременной распределённой инфраструктуры и единая граница для внутренних потребителей.
 - **Последствия:** Доставка не означает durable storage и не гарантируется после перезапуска процесса; durable event log будет отдельной частью persistence/audit. Dispatcher вызывает всех подходящих handlers, собирает типизированные ошибки и не откатывает уже подтверждённый cache commit. Ошибка одного handler не должна незаметно останавливать остальных. Event Dispatcher не зависит от Binance, HTTP, Polling Engine internals или execution. Детальный контракт зафиксирован в `MARKET_EVENTS_DESIGN.md`.
+
+## ADR-019: Signals are separated from order intents
+
+- **Статус:** принято
+- **Дата:** 2026-08-04
+- **Контекст:** Рыночное мнение, распределение капитала, контроль риска и исполнение имеют разные требования к изменениям и аудиту. Их объединение позволило бы стратегии или AI задавать исполняемый ордер в обход централизованных политик.
+- **Решение:** Strategy создаёт только immutable `Signal`. Отдельный deterministic Intent Planner позднее создаёт `OrderIntent`. Только Risk Manager создаёт `RiskDecision`. Ни Strategy, ни AI не формируют финальный executable order напрямую.
+- **Причины:** Разделение анализа, sizing, риска и исполнения; воспроизводимость; независимое тестирование; обязательный risk gate.
+- **Последствия:** `Signal` не содержит sizing или execution parameters, `OrderIntent` не является `Order`, а HOLD не создаёт intent. M2.2 реализует модели, но не Intent Planner, Risk Manager или execution.
+
+## ADR-020: EMA crossover without filters as the first baseline strategy
+
+- **Статус:** принято
+- **Дата:** 2026-08-04
+- **Контекст:** Stage 2 нужен максимально прозрачный benchmark до оптимизации и backtesting. Volatility/ATR filter добавляет параметры и затрудняет выделение ошибок базовой crossover-семантики.
+- **Решение:** Первая baseline strategy использует только закрытые свечи и чистое пересечение fast/slow EMA. EMA и alpha рассчитываются через `Decimal`; начальное EMA равно SMA первого окна. ATR, volatility filter, confidence, fees и position state не входят в первую версию.
+- **Причины:** Простота, объяснимость, отсутствие look-ahead, детерминированность и лёгкость unit-тестирования.
+- **Последствия:** Baseline является техническим benchmark и не обещает прибыльность. Добавление фильтров или изменение crossover rules требует версионирования и отдельного review.
