@@ -316,3 +316,66 @@
 - **Решение:** Paper execution использует versioned `InstrumentRules`: gross и fee вычисляются Decimal-only и явно округляются вниз до quote precision; fee равна rounded `gross_notional × configured fee_rate`, slippage первой версии равен нулю.
 - **Причины:** Exact reconciliation, отсутствие скрытого float/rounding и единый владелец внешних quote facts.
 - **Последствия:** Fee config не может превышать Risk-approved envelope; изменение rounding или slippage требует versioning и review.
+
+## ADR-036: PaperTradingEngine coordinates risk, execution and portfolio
+
+- **Статус:** принято
+- **Дата:** 2026-08-05
+- **Контекст:** Risk, execution и Portfolio имеют отдельные безопасные контракты, но сквозной paper cycle требует единого владельца порядка вызовов, cross-model проверок и failure boundaries.
+- **Решение:** Synchronous application-level `PaperTradingEngine` получает готовые `DecisionPipelineResult` и `MarketSnapshot`, владеет injected Portfolio aggregate, координирует valuation, Risk, paper execution, Fill apply и observer, не дублируя доменные вычисления.
+- **Причины:** Один явный orchestration authority, audit chain и невозможность обойти обязательный Risk gate.
+- **Последствия:** Engine является stateful in-memory service, но не содержит Strategy, execution/accounting formulas, network или runtime subscription.
+
+## ADR-037: Portfolio is marked to market on every closed-candle decision
+
+- **Статус:** принято
+- **Дата:** 2026-08-05
+- **Контекст:** Если Portfolio оценивается только при intent, HOLD-candles не обновляют equity, unrealised PnL и drawdown, а Risk получает несогласованную valuation.
+- **Решение:** После validation/dedup PaperTradingEngine выполняет `Portfolio.mark_to_market()` по latest closed close и snapshot time для HOLD, planner-declined и intent cycles до любых Risk/Execution действий.
+- **Причины:** Непрерывная paper equity history и один authority синхронизации Portfolio с MarketSnapshot.
+- **Последствия:** Valuation является committed non-trade update и сохраняется при Risk rejection или последующей ошибке; duplicate cycle не выполняет её повторно.
+
+## ADR-038: Paper cycle deduplication is bounded and process-local
+
+- **Статус:** принято
+- **Дата:** 2026-08-05
+- **Контекст:** Risk и execution stateless, а повтор одного decision до persistence мог бы создать новый Fill и повторно изменить Portfolio.
+- **Решение:** Engine хранит bounded FIFO completed-result registry: ключ intent cycle — `intent_id`, no-intent cycle — `pipeline_run_id`; duplicate возвращает прежний immutable result без новых ID или component calls.
+- **Причины:** Безопасная process-lifecycle защита с детерминированным eviction до появления durable journal.
+- **Последствия:** Dedup сбрасывается при restart и не является exactly-once; persistence milestone должен сохранить observable semantics.
+
+## ADR-039: Shadow and paper consume one shared decision result
+
+- **Статус:** принято
+- **Дата:** 2026-08-05
+- **Контекст:** Независимый запуск Strategy для shadow и paper на одном CandleClosed создаёт разные IDs/results, лишние вычисления и риск расхождения решений.
+- **Решение:** Будущий `TradingDecisionCoordinator` вычисляет один `DecisionPipelineResult` и передаёт его независимым shadow observer и PaperTradingEngine paths согласно feature flags.
+- **Причины:** Одна торговая гипотеза на candle, воспроизводимость и единый audit origin.
+- **Последствия:** Shadow и paper flags независимы, но pipeline существует при включении любого consumer; runtime coordinator реализуется отдельным milestone.
+
+## ADR-040: PaperTradingEngine has composition lifecycle and single-writer ownership
+
+- **Статус:** принято
+- **Дата:** 2026-08-05
+- **Контекст:** Orchestrator нуждается в mutable operational state, но M3.8 не включает runtime, concurrency или lifecycle worker-а.
+- **Решение:** Composition root создаёт и владеет Portfolio, RiskManager, PaperExecutionProvider, factories и observer. Engine работает синхронно, не имеет `start/stop/close`, владеет только bounded dedup/status и допускает один вызов `process()` одновременно.
+- **Причины:** Явное владение, отсутствие скрытых ресурсов и сохранение single-writer гарантий Portfolio.
+- **Последствия:** Re-entrant/concurrent вызов отклоняется типизированно; подписка на события и shutdown остаются ответственностью будущего runtime coordinator.
+
+## ADR-041: Ambiguous post-execution failures degrade the engine
+
+- **Статус:** принято
+- **Дата:** 2026-08-05
+- **Контекст:** Без persistence нет общей транзакции между созданием Fill, применением Portfolio и process-local dedup.
+- **Решение:** После возврата валидного `FILLED` результата ошибка `Portfolio.apply_fill()` или последующая неоднозначная проверка commit переводит экземпляр в `DEGRADED`. Новые cycles запрещены до внешней проверки и пересоздания; автоматического retry нет. Обычная execution exception до возвращённого Fill не считается финансовым commit.
+- **Причины:** Повтор может создать второй Fill или повторно изменить Portfolio, а продолжение после неоднозначного состояния нарушает безопасность.
+- **Последствия:** M3.8 не обещает crash recovery/exactly-once; durable journal и reconciliation остаются отдельным persistence milestone.
+
+## ADR-042: Paper observer delivery occurs after business commit and is isolated
+
+- **Статус:** принято
+- **Дата:** 2026-08-05
+- **Контекст:** Observer нужен для диагностики, но не должен участвовать в финансовой атомарности или инициировать повтор исполнения.
+- **Решение:** Engine вызывает один injected observer после определения и commit бизнес-результата, затем фиксирует delivery status в immutable result и dedup registry. Ошибка observer даёт явную degradation доставки, не откатывает Portfolio и не повторяет Risk/Execution.
+- **Причины:** Разделение финансового состояния и best-effort наблюдаемости, однозначный результат для caller-а.
+- **Последствия:** Dedup hit не публикуется повторно; fan-out реализуется отдельным observer adapter; durable delivery/replay отсутствуют до persistence.

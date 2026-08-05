@@ -451,11 +451,17 @@ domain ports, но risk/portfolio не импортируют paper adapter ил
 5. **M3.6 — Paper Execution Provider Implementation:** deterministic adapter и
    offline RiskDecision -> Fill -> Portfolio tests без runtime — **completed; final
    review passed**.
-6. **M3.7 — Paper Trading Orchestration:** feature-flagged PaperTradingEngine,
-   idempotency, observer и offline integration flow.
-7. **M3.8 — Persistence and Audit:** SQLite adapters, journal, restart recovery и
+6. **M3.7 — Paper Trading Orchestration Design:** application contract, continuous
+   valuation, failure boundaries, dedup и observer semantics — **completed**.
+7. **M3.8 — Paper Trading Engine Design Review:** lifecycle, composition root,
+   ownership, atomicity, recovery и final implementation contract — **completed**.
+8. **M3.9 — Paper Trading Engine Implementation:** in-memory orchestration и offline
+   HOLD -> BUY -> HOLD -> SELL flow.
+9. **M3.10 — Shared Decision Runtime Coordination:** feature-flagged delivery одного
+   DecisionPipelineResult в shadow и paper consumers без повторного Strategy run.
+10. **M3.11 — Persistence and Audit:** SQLite adapters, journal, restart recovery и
    reconciliation.
-8. **M3.9 — Stage 3 Completion:** backtest/replay parity, controlled paper smoke,
+11. **M3.12 — Stage 3 Completion:** backtest/replay parity, controlled paper smoke,
    quality evidence и отдельный review. Testnet/live остаются закрыты.
 
 ## 18. Открытые вопросы
@@ -467,8 +473,9 @@ domain ports, но risk/portfolio не импортируют paper adapter ил
    `DUST_LIQUIDATION` без partial SELL.
 4. Утвердить idempotency key следующего orchestration слоя; fill registry M3.2 уже
    использует bounded FIFO по `fill_id`.
-5. Определить, должен ли M3.4 слушать общий decision result event или вызываться
-   единым orchestrator-ом; двойной запуск pipeline запрещён.
+5. **Решено в M3.7:** будущий общий runtime coordinator вычисляет один
+   `DecisionPipelineResult` и передаёт его независимым shadow и paper consumers;
+   двойной запуск pipeline запрещён. Runtime wiring вынесен в M3.10.
 6. Утвердить semantics peak equity/drawdown при внешнем deposit/withdrawal; в первой
    версии внешние cash flows запрещены.
 7. Определить момент внедрения trading events: рекомендация — после устойчивого

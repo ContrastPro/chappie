@@ -383,6 +383,21 @@ fills, но не содержит стратегию, risk policy или executi
 
 Координирует pipeline и жизненный цикл. Не дублирует расчёты стратегии, риска, исполнения или портфеля.
 
+### `paper`
+
+Application-level paper orchestration module. Получает готовые
+`DecisionPipelineResult + MarketSnapshot`, оценивает принадлежащий ему Portfolio на
+каждой закрытой свече, затем координирует обязательный Risk, Paper Execution и Fill
+apply. Он не содержит Strategy, sizing, fee или accounting formulas, не читает Market
+Cache и не знает Binance. Контракт описан в `PAPER_TRADING_ORCHESTRATION_DESIGN.md`.
+
+PaperTradingEngine является синхронным single-writer application service без
+start/stop lifecycle, background thread, сети и persistence. Composition root владеет
+Portfolio, RiskManager, PaperExecutionProvider, factories и observer; engine владеет
+только bounded process-local dedup и operational status. После неоднозначной ошибки
+на границе execution/Portfolio экземпляр становится degraded и не продолжает работу
+до внешней проверки и пересоздания.
+
 ## 9. Базовые доменные сущности
 
 Перед реализацией торгового контура необходимо утвердить минимальный словарь:
@@ -399,7 +414,8 @@ fills, но не содержит стратегию, risk policy или executi
 
 Точные Stage 3 поля и границы paper-контура описаны в
 `PAPER_TRADING_CORE_DESIGN.md`, `RISK_MANAGER_DESIGN.md` и
-`PAPER_EXECUTION_PROVIDER_DESIGN.md`. Paper execution остаётся design-only до M3.6.
+`PAPER_EXECUTION_PROVIDER_DESIGN.md`. Portfolio, Risk и Paper Execution реализованы;
+финальная архитектура их orchestration утверждена в M3.8, runtime wiring отсутствует.
 
 ## 10. Основной поток данных
 
@@ -417,7 +433,9 @@ fills, но не содержит стратегию, risk policy или executi
 12. В paper-контуре application orchestration предварительно согласует Portfolio valuation с MarketSnapshot и передаёт `OrderIntent`, immutable Portfolio snapshot и MarketSnapshot обязательному Risk Manager.
 13. Execution симулирует только параметры, разрешённые `RiskDecision`, и создаёт immutable `Order`/`Fill`.
 14. Portfolio атомарно и идемпотентно применяет Fill; execution не меняет его напрямую.
-15. Каждое решение и изменение состояния записывается для аудита и аналитики.
+15. PaperTradingEngine по утверждённому M3.8 контракту формирует единый immutable cycle result и compact
+    observer record; HOLD и declined cycles обновляют только valuation.
+16. Каждое решение и изменение состояния записывается для аудита и аналитики.
 
 Для paper-only dust liquidation Portfolio допускает исключение из minimum quantity/
 notional только для SELL всей текущей позиции с явным immutable Fill marker. Это не

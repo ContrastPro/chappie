@@ -242,13 +242,33 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 
 #### M3.7 Paper Trading Orchestration
 
-- Подключить feature-flagged PaperTradingEngine, idempotency и observer boundary.
+Статус: **completed** (2026-08-05).
 
-#### M3.8 Persistence and Audit
+- Спроектировать application-level PaperTradingEngine, continuous mark-to-market,
+  bounded process-local dedup, observer и failure atomicity.
+- Не подключать runtime и не запускать Strategy повторно.
+
+#### M3.8 Paper Trading Engine design review
+
+Статус: **completed; final architecture approved for implementation** (2026-08-05).
+
+- Утверждены lifecycle, composition root, ownership, sequence, atomicity, dedup,
+  observer/result/status contracts, logging и recovery assumptions.
+- Существующие API Decision Pipeline, Risk, Paper Execution и Portfolio не меняются.
+
+#### M3.9 Paper Trading Engine implementation
+
+- Реализовать in-memory orchestration и полный offline HOLD -> BUY -> HOLD -> SELL flow.
+
+#### M3.10 Shared decision runtime coordination
+
+- Подключить feature-flagged shared DecisionPipelineResult без повторного Strategy run.
+
+#### M3.11 Persistence and Audit
 
 - Реализовать SQLite journal, audit persistence, recovery и reconciliation.
 
-#### M3.9 Stage 3 completion
+#### M3.12 Stage 3 completion
 
 - Подтвердить backtest/paper parity, controlled smoke-run и критерии качества.
 

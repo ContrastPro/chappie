@@ -53,6 +53,12 @@ Engine:
 Planner или `TraderAgent` business logic. Market и trading domain не импортируют
 shadow application service.
 
+Будущий paper runtime не должен запускать Strategy или pipeline второй раз. M3.8
+утверждает общий `TradingDecisionCoordinator`, который создаёт один
+`DecisionPipelineResult`, после чего shadow observer path и PaperTradingEngine получают
+его как независимые consumers. Текущий Shadow engine не меняется до отдельного runtime
+milestone.
+
 ## 3. Рекомендуемый public API
 
 ```text
