@@ -8,7 +8,8 @@
 - M3.1 design: **completed**.
 - M3.2 Portfolio Accounting Core: **implementation completed; final review passed**.
 - Stage 3: **in progress**; Risk и paper execution завершены и прошли final review,
-  а runtime orchestration остаётся future scope.
+  PaperTradingEngine реализован и прошёл final safety review; runtime wiring остаётся
+  future scope.
 
 Документ проектирует первый исполняемый, но полностью симулированный контур:
 
@@ -456,7 +457,7 @@ domain ports, но risk/portfolio не импортируют paper adapter ил
 7. **M3.8 — Paper Trading Engine Design Review:** lifecycle, composition root,
    ownership, atomicity, recovery и final implementation contract — **completed**.
 8. **M3.9 — Paper Trading Engine Implementation:** in-memory orchestration и offline
-   HOLD -> BUY -> HOLD -> SELL flow.
+   HOLD -> BUY -> HOLD -> SELL flow — **completed; final safety review passed**.
 9. **M3.10 — Shared Decision Runtime Coordination:** feature-flagged delivery одного
    DecisionPipelineResult в shadow и paper consumers без повторного Strategy run.
 10. **M3.11 — Persistence and Audit:** SQLite adapters, journal, restart recovery и

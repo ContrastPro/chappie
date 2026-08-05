@@ -258,7 +258,11 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 
 #### M3.9 Paper Trading Engine implementation
 
-- Реализовать in-memory orchestration и полный offline HOLD -> BUY -> HOLD -> SELL flow.
+Статус: **completed; final safety review passed** (2026-08-05).
+
+- Реализованы synchronous in-memory orchestration, bounded dedup, observer isolation,
+  DEGRADED safety boundary и полный offline HOLD -> BUY -> HOLD -> SELL flow.
+- Runtime events, shared coordinator и persistence не подключены.
 
 #### M3.10 Shared decision runtime coordination
 

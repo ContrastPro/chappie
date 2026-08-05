@@ -183,6 +183,44 @@ def test_execution_provider_architecture_boundaries() -> None:
         ), f"{path} crosses an execution architecture boundary"
 
 
+def test_paper_engine_architecture_boundaries() -> None:
+    forbidden = {
+        "httpx",
+        "random",
+        "sqlite3",
+        "pathlib",
+        "app.main",
+        "app.application",
+        "app.database",
+        "app.market.cache",
+        "app.market.polling",
+        "app.market.binance_provider",
+        "app.shadow",
+        "app.strategies",
+        "app.agent",
+    }
+    paper_files = sorted(Path("app/paper").glob("*.py"))
+    assert paper_files
+    for path in paper_files:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        imports = {
+            node.module
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module is not None
+        }
+        imports.update(
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        )
+        assert not any(
+            imported == blocked or imported.startswith(f"{blocked}.")
+            for imported in imports
+            for blocked in forbidden
+        ), f"{path} crosses a paper architecture boundary"
+
+
 def event_values() -> dict[str, object]:
     return {
         "event_id": "event-1",

@@ -5,7 +5,8 @@
 - Status: **M3.8 design review completed; final architecture approved for implementation**.
 - Date: 2026-08-05.
 - M3.7 orchestration design: **completed**.
-- M3.8 design review: **completed**; Python implementation remains pending.
+- M3.8 design review: **completed**.
+- M3.9 implementation: **completed; final safety review passed** (2026-08-05).
 
 `PaperTradingEngine` is a synchronous application service that coordinates existing
 domain components. It contains no Strategy, indicators, sizing, fee or accounting
@@ -387,6 +388,13 @@ The engine never repairs a mismatch.
 | Portfolio apply failure | valuation committed; Fill exists; trade state atomic | typed portfolio error with failure context |
 | Observer failure | business/Portfolio state committed | finalize/store degraded result; no rerun |
 
+An ordinary dependency `Exception` is classified and wrapped with its cause. A
+`BaseException` is never converted into a business outcome or suppressed. Before a
+trade commit it propagates while `activity` returns to `IDLE`; the engine remains
+`READY` and no dedup result is stored. A `BaseException` from Observer occurs after
+business/Portfolio commit but before final dedup insertion, so it propagates and marks
+the engine `DEGRADED` to prevent an unsafe replay.
+
 There is no atomic transaction across Fill creation and Portfolio commit. A process
 crash in that interval is unresolved until the persistence milestone. Retrying blindly
 could create another fill because execution is stateless.
@@ -451,7 +459,14 @@ There is no start/stop lifecycle in the core. `PaperTradingEngineActivity` is
 
 `READY` permits another synchronous call. `DEGRADED` is reserved for ambiguous or
 post-mutation invariant failure and rejects further processing on that instance.
-Observer failure increments its counter but does not degrade engine health.
+An ordinary Observer `Exception` increments its counter but does not degrade engine
+health; Observer `BaseException` after commit follows the `DEGRADED` rule above.
+
+`handled_decisions` counts every unique input that passed input validation and dedup,
+including attempts that later fail in the cycle-ID factory or a dependency. A dedup
+hit increments only `ignored_duplicates`. Business outcome counters increment only
+after a completed result; normal observer `Exception` increments
+`observation_failures`, not `failed_cycles`.
 
 Status mutation occurs only after a component result or classified failure. An
 exception cannot leave activity at PROCESSING.
@@ -602,8 +617,9 @@ is another reason runtime wiring waits for journal/reconciliation design.
 ## 23. Recommended milestone plan
 
 - M3.7: initial orchestration design — completed.
-- M3.8: final architecture review — completed; implementation remains pending.
-- M3.9: implement in-memory PaperTradingEngine, models, observer port and offline tests.
+- M3.8: final architecture review — completed.
+- M3.9: in-memory PaperTradingEngine, models, observer port and offline tests —
+  **completed; final safety review passed**.
 - M3.10: add feature-flagged shared decision runtime coordination after safety review.
 - M3.11: persistence, journal, recovery and reconciliation.
 - M3.12: Stage 3 completion evidence and controlled paper smoke review.

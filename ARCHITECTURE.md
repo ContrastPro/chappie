@@ -415,7 +415,8 @@ Portfolio, RiskManager, PaperExecutionProvider, factories и observer; engine в
 Точные Stage 3 поля и границы paper-контура описаны в
 `PAPER_TRADING_CORE_DESIGN.md`, `RISK_MANAGER_DESIGN.md` и
 `PAPER_EXECUTION_PROVIDER_DESIGN.md`. Portfolio, Risk и Paper Execution реализованы;
-финальная архитектура их orchestration утверждена в M3.8, runtime wiring отсутствует.
+финальная архитектура orchestration утверждена в M3.8, а synchronous in-memory
+PaperTradingEngine реализован и прошёл final safety review в M3.9 без runtime wiring.
 
 ## 10. Основной поток данных
 
