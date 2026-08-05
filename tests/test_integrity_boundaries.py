@@ -106,6 +106,44 @@ def test_portfolio_architecture_boundaries() -> None:
     )
 
 
+def test_risk_architecture_boundaries() -> None:
+    forbidden = {
+        "httpx",
+        "random",
+        "sqlite3",
+        "pathlib",
+        "app.shadow",
+        "app.agent",
+        "app.application",
+        "app.main",
+        "app.database",
+        "app.market.binance_provider",
+        "app.market.cache",
+        "app.market.events",
+        "app.market.polling",
+        "app.execution",
+        "app.portfolio.portfolio",
+    }
+    for path in sorted(Path("app/risk").glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        imports = {
+            node.module
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module is not None
+        }
+        imports.update(
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        )
+        assert not any(
+            imported == blocked or imported.startswith(f"{blocked}.")
+            for imported in imports
+            for blocked in forbidden
+        ), f"{path} crosses a risk architecture boundary"
+
+
 def event_values() -> dict[str, object]:
     return {
         "event_id": "event-1",

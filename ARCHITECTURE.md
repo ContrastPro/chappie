@@ -335,6 +335,23 @@ consistency checks, dedup и error policy описаны в
 paper, testnet и live execution. Execution получает только параметры, разрешённые
 Risk Manager, а не исходный intent напрямую.
 
+Risk Manager является synchronous pure domain service: он не читает Market Cache,
+не вызывает Portfolio aggregate, не создаёт Order/Fill и не использует I/O или
+системное время. Application layer передаёт ему согласованные immutable
+`OrderIntent`, `PortfolioSnapshot` и `MarketSnapshot`; результатом является только
+immutable `RiskDecision`.
+
+```text
+OrderIntent + PortfolioSnapshot + MarketSnapshot
+    -> Risk Manager
+    -> APPROVED | MODIFIED | REJECTED RiskDecision
+    -> future Execution
+```
+
+Target exposure преобразуется в target position через Portfolio equity и latest
+closed reference price, затем в delta order с применением InstrumentRules. Полный
+контракт, порядок gates, dust и fee boundary описаны в `RISK_MANAGER_DESIGN.md`.
+
 ### `execution`
 
 Преобразует разрешённое RiskDecision намерение в `Order`/`Fill`. Первый adapter —
@@ -390,7 +407,7 @@ fills, но не содержит стратегию, risk policy или executi
 9. Strategy формирует только immutable `Signal` из `MarketSnapshot`.
 10. Application-level `TradingDecisionPipeline` проверяет Signal и координирует отдельный deterministic Intent Planner, который формирует `OrderIntent` или типизированно не создаёт его.
 11. Shadow Engine формирует immutable record и передаёт его observer-у; на этом shadow flow заканчивается без risk и execution.
-12. В paper-контуре отдельный Paper Trading Engine передаёт `OrderIntent`, market context и immutable Portfolio snapshot обязательному Risk Manager.
+12. В paper-контуре application orchestration предварительно согласует Portfolio valuation с MarketSnapshot и передаёт `OrderIntent`, immutable Portfolio snapshot и MarketSnapshot обязательному Risk Manager.
 13. Execution симулирует только параметры, разрешённые `RiskDecision`, и создаёт immutable `Order`/`Fill`.
 14. Portfolio атомарно и идемпотентно применяет Fill; execution не меняет его напрямую.
 15. Каждое решение и изменение состояния записывается для аудита и аналитики.

@@ -229,8 +229,8 @@
 
 ## ADR-026: Risk Manager is mandatory before execution
 
-- **Статус:** proposal
-- **Дата:** 2026-08-04
+- **Статус:** принято
+- **Дата:** 2026-08-05
 - **Контекст:** `OrderIntent` выражает желаемую экспозицию, но не учитывает balances, instrument rules и централизованные лимиты.
 - **Решение:** Любой paper, testnet или live order обязан пройти детерминированный Risk Manager. Strategy, AI и Intent Planner не могут создавать executable approval.
 - **Причины:** Безопасность, единая policy, объяснимость и невозможность обхода лимитов.
@@ -256,8 +256,8 @@
 
 ## ADR-029: Target exposure is resolved through portfolio equity
 
-- **Статус:** proposal
-- **Дата:** 2026-08-04
+- **Статус:** принято
+- **Дата:** 2026-08-05
 - **Контекст:** `OrderIntent.target_exposure` не является quantity; перевод зависит от текущего капитала, позиции и цены.
 - **Решение:** Risk Manager вычисляет target notional как target exposure, умноженную на Portfolio equity по одной reference price, затем применяет limits и получает delta order.
 - **Причины:** Единая семантика sizing для enter, resize и exit, независимая от абсолютного капитала.
@@ -271,3 +271,21 @@
 - **Решение:** Использовать versioned `InstrumentRules`; quantity округляется вниз к step, затем повторно проверяются minimum quantity/notional, balances и limits.
 - **Причины:** Запрет overspend/oversell, воспроизводимость и независимость домена от Binance payload.
 - **Последствия:** Rules передаются через boundary и сохраняются в audit. Изменение правил не должно менять интерпретацию уже созданных решений.
+
+## ADR-031: Risk sizing uses one closed market snapshot and synchronized portfolio valuation
+
+- **Статус:** принято
+- **Дата:** 2026-08-05
+- **Контекст:** Target exposure зависит от equity и reference price. Использование разных market times для Portfolio и Risk создаёт ложную delta quantity и невоспроизводимое решение.
+- **Решение:** Risk использует close последней закрытой candle из одного immutable `MarketSnapshot`. До evaluate Portfolio должен быть оценён по той же цене и `as_of_ms`; несовпадение приводит к typed rejection. Risk не читает cache и не выполняет mark-to-market самостоятельно.
+- **Причины:** Exact воспроизводимость sizing, отсутствие скрытого времени и чёткая ownership boundary.
+- **Последствия:** Application orchestration обязана подготовить согласованные snapshots. Decision сохраняет market snapshot ID, portfolio version, reference price и rules version.
+
+## ADR-032: Risk Manager does not calculate execution fees
+
+- **Статус:** принято
+- **Дата:** 2026-08-05
+- **Контекст:** Fee и slippage зависят от execution model, тогда как Risk Manager должен оставаться независимым pure approval component.
+- **Решение:** Risk не рассчитывает фактические fee, slippage или fill price. M3.4 использует только консервативный approval envelope `quantity × reference_price × (1 + max_slippage_bps / 10000) × (1 + max_fee_rate)` для резервирования BUY quote. Execution отвечает за фактические значения и не может нарушать approved quantity или сделать Portfolio balance отрицательным.
+- **Причины:** Разделение risk approval и execution simulation, один источник fee semantics и отсутствие зависимости Risk от adapter-а.
+- **Последствия:** BUY reserve gap закрыт консервативным верхним пределом, но совместимость будущей execution-конфигурации с этим envelope обязательна перед runtime wiring.

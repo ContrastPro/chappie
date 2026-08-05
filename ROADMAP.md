@@ -202,22 +202,39 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 
 #### M3.3 Risk Manager
 
-- Реализовать обязательный deterministic risk gate, portfolio-aware sizing, limits
-  и approved execution parameters без подключения execution adapter.
+Статус: **design completed** (2026-08-05).
 
-#### M3.4 Deterministic Paper Execution
+- Спроектирован обязательный synchronous deterministic risk gate, преобразующий
+  `OrderIntent + PortfolioSnapshot + MarketSnapshot` в `RiskDecision`.
+- Зафиксированы ordered gates, portfolio-aware target/delta sizing, InstrumentRules,
+  APPROVED/MODIFIED/REJECTED, long-only и dust semantics.
+- Реализация, runtime wiring, fee calculation и execution не входят в M3.3.
+
+#### M3.4 Risk Manager implementation
+
+Статус: **completed** (2026-08-05).
+
+- Реализованы immutable risk policy/sizing models, ordered checks и типизированные
+  APPROVED/MODIFIED/REJECTED decisions.
+- Реализованы long-only target/delta sizing, deterministic caps, worst-case BUY
+  budget и полный EXIT с явной paper-only dust liquidation semantics.
+- Final safety review пройден: подтверждены exact sizing, cap/minimum ordering,
+  affordability boundaries, full exit, dust semantics и statelessness.
+- Runtime wiring, Portfolio mutation, execution и persistence не добавлены.
+
+#### M3.5 Paper Execution Provider
 
 - Реализовать paper adapter и performance metrics без сети и private API.
 
-#### M3.5 Paper Trading Orchestration
+#### M3.6 Paper Trading Orchestration
 
 - Подключить feature-flagged PaperTradingEngine, idempotency и observer boundary.
 
-#### M3.6 Persistence and Audit
+#### M3.7 Persistence and Audit
 
 - Реализовать SQLite journal, audit persistence, recovery и reconciliation.
 
-#### M3.7 Stage 3 completion
+#### M3.8 Stage 3 completion
 
 - Подтвердить backtest/paper parity, controlled smoke-run и критерии качества.
 

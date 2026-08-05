@@ -272,6 +272,13 @@ class RiskDecision:
     applied_limits: ImmutableMapping
     risk_policy_version: str
     correlation_id: str | None = None
+    market_snapshot_id: str | None = None
+    portfolio_id: str | None = None
+    portfolio_version: int | None = None
+    approved_order: object | None = None
+    sizing_audit: object | None = None
+    modification_reasons: tuple[str, ...] = ()
+    risk_policy_name: str | None = None
 
     def __post_init__(self) -> None:
         _require_non_empty(self.decision_id, "decision_id", InvalidRiskDecisionError)
@@ -303,6 +310,8 @@ class RiskDecision:
             not isinstance(reason, str) or not reason.strip() for reason in self.rejection_reasons
         ):
             raise InvalidRiskDecisionError("rejection_reasons must be a tuple of non-empty strings")
+        if len(set(self.rejection_reasons)) != len(self.rejection_reasons):
+            raise InvalidRiskDecisionError("rejection_reasons must not contain duplicates")
         if self.outcome is RiskDecisionOutcome.APPROVED:
             if approved != requested or self.rejection_reasons:
                 raise InvalidRiskDecisionError(
@@ -314,7 +323,7 @@ class RiskDecision:
                     "REJECTED requires no exposure and at least one reason"
                 )
         else:
-            if approved is None or approved == requested:
+            if approved is None or (approved == requested and not self.modification_reasons):
                 raise InvalidRiskDecisionError("MODIFIED requires a different approved exposure")
             if self.rejection_reasons:
                 raise InvalidRiskDecisionError("MODIFIED must not contain rejection reasons")
@@ -324,6 +333,50 @@ class RiskDecision:
                 "correlation_id",
                 InvalidRiskDecisionError,
             )
+        enriched = any(
+            value is not None
+            for value in (
+                self.market_snapshot_id,
+                self.portfolio_id,
+                self.portfolio_version,
+                self.approved_order,
+                self.sizing_audit,
+                self.risk_policy_name,
+            )
+        ) or bool(self.modification_reasons)
+        if enriched:
+            for name in ("market_snapshot_id", "portfolio_id", "risk_policy_name"):
+                _require_non_empty(getattr(self, name), name, InvalidRiskDecisionError)
+            if (
+                isinstance(self.portfolio_version, bool)
+                or not isinstance(self.portfolio_version, int)
+                or self.portfolio_version < 0
+            ):
+                raise InvalidRiskDecisionError("portfolio_version must be non-negative")
+            if self.sizing_audit is None:
+                raise InvalidRiskDecisionError("enriched decisions require sizing_audit")
+            if not isinstance(self.modification_reasons, tuple) or any(
+                not isinstance(reason, str) or not reason.strip()
+                for reason in self.modification_reasons
+            ):
+                raise InvalidRiskDecisionError(
+                    "modification_reasons must contain non-empty string enums"
+                )
+            if len(set(self.modification_reasons)) != len(self.modification_reasons):
+                raise InvalidRiskDecisionError("modification_reasons must not contain duplicates")
+            if self.outcome is RiskDecisionOutcome.REJECTED:
+                if self.approved_order is not None or self.modification_reasons:
+                    raise InvalidRiskDecisionError(
+                        "REJECTED enriched decisions cannot contain approval or modifications"
+                    )
+            elif self.approved_order is None:
+                raise InvalidRiskDecisionError(
+                    "APPROVED and MODIFIED enriched decisions require approved_order"
+                )
+            if self.outcome is RiskDecisionOutcome.APPROVED and self.modification_reasons:
+                raise InvalidRiskDecisionError("APPROVED cannot contain modification reasons")
+            if self.outcome is RiskDecisionOutcome.MODIFIED and not self.modification_reasons:
+                raise InvalidRiskDecisionError("MODIFIED requires a modification reason")
         try:
             object.__setattr__(self, "applied_limits", freeze_mapping(self.applied_limits))
         except (TypeError, InvalidDecimalValueError) as error:

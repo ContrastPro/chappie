@@ -436,22 +436,26 @@ domain ports, но risk/portfolio не импортируют paper adapter ил
 1. **M3.2 — Portfolio Accounting Core:** модели, InstrumentRules, snapshots,
    Portfolio accounting, deterministic precision, idempotency и unit tests —
    **completed; final review passed**. Risk вынесен в M3.3.
-2. **M3.3 — Risk Manager:** portfolio-aware target sizing, limits и approved order
-   parameters; без execution adapter.
-3. **M3.4 — Deterministic Paper Execution:** fee/slippage adapter и performance
+2. **M3.3 — Risk Manager Design:** ordered gates, portfolio-aware target/delta
+   sizing, limits и approved order parameters — design/review only.
+3. **M3.4 — Risk Manager Implementation:** pure risk service и offline tests без
+   execution adapter.
+4. **M3.5 — Deterministic Paper Execution:** fee/slippage adapter и performance
    metrics поверх утверждённого Portfolio Core.
-4. **M3.5 — Paper Trading Orchestration:** feature-flagged PaperTradingEngine,
+5. **M3.6 — Paper Trading Orchestration:** feature-flagged PaperTradingEngine,
    idempotency, observer и offline integration flow.
-5. **M3.6 — Persistence and Audit:** SQLite adapters, journal, restart recovery и
+6. **M3.7 — Persistence and Audit:** SQLite adapters, journal, restart recovery и
    reconciliation.
-6. **M3.7 — Stage 3 Completion:** backtest/replay parity, controlled paper smoke,
+7. **M3.8 — Stage 3 Completion:** backtest/replay parity, controlled paper smoke,
    quality evidence и отдельный review. Testnet/live остаются закрыты.
 
 ## 18. Открытые вопросы
 
 1. Выбрать точную quote precision для fee и balances; не выводить её неявно из tick.
 2. Определить freshness threshold для paper risk gate по interval.
-3. Определить policy при `equity == 0` и при dust position.
+3. **Решено в M3.4:** non-positive equity отклоняется; `EXIT_LONG` ликвидирует всю
+   позицию, а существующий dust допускается только как явно отмеченная paper-only
+   `DUST_LIQUIDATION` без partial SELL.
 4. Утвердить idempotency key следующего orchestration слоя; fill registry M3.2 уже
    использует bounded FIFO по `fill_id`.
 5. Определить, должен ли M3.4 слушать общий decision result event или вызываться
