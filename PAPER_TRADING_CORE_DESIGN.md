@@ -7,7 +7,8 @@
 - Дата: 2026-08-04.
 - M3.1 design: **completed**.
 - M3.2 Portfolio Accounting Core: **implementation completed; final review passed**.
-- Stage 3: **in progress**; risk, paper execution и runtime sections остаются future scope.
+- Stage 3: **in progress**; Risk и paper execution завершены и прошли final review,
+  а runtime orchestration остаётся future scope.
 
 Документ проектирует первый исполняемый, но полностью симулированный контур:
 
@@ -40,8 +41,10 @@ testnet, live capital, margin, futures, leverage или short. Этот design �
   процесса; durable exactly-once отсутствует.
 - Execution layer обязан передавать уже округлённые внешние quote values. Portfolio
   проверяет их exact consistency и не округляет повторно.
-- Остаточный base dust после валидного partial SELL допускается; любой следующий
-  Fill всё равно обязан самостоятельно удовлетворять актуальным InstrumentRules.
+- Остаточный base dust после валидного partial SELL допускается. M3.6 добавляет узкое
+  исключение: paper-only SELL всей текущей позиции с подтверждённым
+  `dust_liquidation=True` может быть ниже `min_quantity` или `min_notional`; step,
+  gross, fee, stream и reconciliation проверки остаются обязательными.
 
 ## 2. Принципы и границы
 
@@ -49,7 +52,8 @@ testnet, live capital, margin, futures, leverage или short. Этот design �
   execution напрямую.
 - Portfolio — единственный авторитетный источник balances, position, cost basis и
   cumulative realised PnL.
-- Execution создаёт факты `Order`/`Fill`, но не меняет Portfolio.
+- Первая immediate-fill Execution создаёт `Fill`, но не меняет Portfolio; отдельный
+  `Order` появится только вместе с order lifecycle.
 - Portfolio применяет Fill и не рассчитывает рыночное решение.
 - Все финансовые величины — finite `Decimal`; время и IDs передаются явно.
 - Одинаковые входы, config, IDs и timestamps дают одинаковый результат.
@@ -67,12 +71,11 @@ CandleClosed
   -> Trading Decision Engine
   -> TradingDecisionResult
   -> PaperTradingEngine
-  -> RiskManager.process_intent(intent, market_context, portfolio_snapshot)
+  -> RiskManager.evaluate(intent, portfolio_snapshot, market_snapshot)
   -> RiskDecision
-  -> approved execution request
-  -> PaperExecutionProvider.execute(order, market_context)
+  -> PaperExecutionProvider.execute(risk_decision)
   -> Fill
-  -> Portfolio.apply_fill(fill)
+  -> Portfolio.apply_fill(fill, mark_price)
   -> PaperTradingCycleResult
   -> observer / future persistence
 ```
@@ -80,10 +83,10 @@ CandleClosed
 Рекомендуемый узкий Risk API:
 
 ```text
-process_intent(
-    order_intent: OrderIntent,
-    market_context: ExecutionMarketContext,
-    portfolio_snapshot: PortfolioSnapshot,
+evaluate(
+    intent: OrderIntent,
+    portfolio: PortfolioSnapshot,
+    market_snapshot: MarketSnapshot,
 ) -> RiskDecision
 ```
 
@@ -96,9 +99,12 @@ factories и observer; зависимости не закрываются engine
 переиспользовать результат того же decision evaluation, но не зависит от включения
 shadow logging observer. Pipeline не должен вычисляться дважды для одного события.
 
-## 4. ExecutionMarketContext
+## 4. Future orchestration market context
 
-Immutable контекст фиксирует данные, относительно которых проводится risk и fill:
+Application orchestration может фиксировать следующий immutable context для
+согласования Risk и Portfolio. `PaperExecutionProvider` его не принимает: необходимые
+execution facts уже подтверждены в RiskDecision, а stream/precision приходят через
+его собственные `InstrumentRules`.
 
 | Поле | Тип | Назначение |
 |---|---|---|
@@ -266,29 +272,29 @@ quantity `0.00001`. Они конфигурируемы и versioned, не hard-
 ## 8. Execution contract
 
 ```text
-ExecutionProvider.execute(
-    order: Order,
-    context: ExecutionMarketContext,
-) -> ExecutionResult
+PaperExecutionProvider.execute(
+    decision: RiskDecision,
+) -> PaperExecutionResult
 ```
 
-`Order` содержит `order_id`, `intent_id`, `risk_decision_id`, idempotency key,
-stream, side, type=`MARKET`, quantity, created time и correlation. `Fill` содержит
-`fill_id`, `order_id`, side, quantity, fill price, gross notional, fee asset/amount,
-exchange time, model version и correlation.
+Первая immediate-fill версия не создаёт отдельный `Order`: `execution_id` используется
+как `Fill.order_id`. Существующий `Fill` содержит fill/execution/decision/intent IDs,
+stream, side, quantity, fill price, gross notional, fee asset/amount, logical execution
+time и correlation. Отдельная Order lifecycle model появится только с явным consumer.
 
 `PaperExecutionProvider`:
 
 - выполняет MARKET order сразу и полностью;
 - не делает network calls и не меняет Portfolio;
-- применяет детерминированный adverse slippage: BUY выше, SELL ниже reference;
+- использует Risk-approved reference price и нулевой slippage;
 - рассчитывает fee от fill notional;
-- использует только внедрённые config, ID factory и явное время;
+- использует только внедрённые config, InstrumentRules и ID factories;
+- выводит execution time из decision timestamp и configured fixed latency без clock;
 - для одинаковых входов возвращает одинаковую семантику результата;
-- отклоняет повторный idempotency key либо возвращает сохранённый immutable result.
+- остаётся stateless; decision-level dedup принадлежит будущей orchestration/journal.
 
-Первая версия не моделирует partial fill, latency, spread/order book, cancellation
-или liquidity impact. Эти ограничения обязательно присутствуют в отчёте.
+Первая версия не моделирует partial fill, variable latency, spread/order book,
+cancellation или liquidity impact. Эти ограничения обязательно присутствуют в отчёте.
 
 ## 9. Idempotency и атомарность
 
@@ -301,7 +307,7 @@ paper:{portfolio_id}:{intent_id}:{risk_policy_version}:{portfolio_version}
 Защита действует на трёх уровнях:
 
 1. engine dedup не обрабатывает один intent повторно;
-2. execution не создаёт второй Order/Fill по одному key;
+2. future execution journal обеспечивает decision-level uniqueness;
 3. Portfolio не применяет один `fill_id` дважды.
 
 Risk approval, execution и portfolio mutation пока не образуют durable transaction.
@@ -437,16 +443,19 @@ domain ports, но risk/portfolio не импортируют paper adapter ил
    Portfolio accounting, deterministic precision, idempotency и unit tests —
    **completed; final review passed**. Risk вынесен в M3.3.
 2. **M3.3 — Risk Manager Design:** ordered gates, portfolio-aware target/delta
-   sizing, limits и approved order parameters — design/review only.
+   sizing, limits и approved order parameters — **completed**.
 3. **M3.4 — Risk Manager Implementation:** pure risk service и offline tests без
-   execution adapter.
-4. **M3.5 — Deterministic Paper Execution:** fee/slippage adapter и performance
-   metrics поверх утверждённого Portfolio Core.
-5. **M3.6 — Paper Trading Orchestration:** feature-flagged PaperTradingEngine,
+   execution adapter — **completed; final review passed**.
+4. **M3.5 — Paper Execution Provider Design:** immediate-fill contract, fee/time/
+   factory semantics и offline integration plan.
+5. **M3.6 — Paper Execution Provider Implementation:** deterministic adapter и
+   offline RiskDecision -> Fill -> Portfolio tests без runtime — **completed; final
+   review passed**.
+6. **M3.7 — Paper Trading Orchestration:** feature-flagged PaperTradingEngine,
    idempotency, observer и offline integration flow.
-6. **M3.7 — Persistence and Audit:** SQLite adapters, journal, restart recovery и
+7. **M3.8 — Persistence and Audit:** SQLite adapters, journal, restart recovery и
    reconciliation.
-7. **M3.8 — Stage 3 Completion:** backtest/replay parity, controlled paper smoke,
+8. **M3.9 — Stage 3 Completion:** backtest/replay parity, controlled paper smoke,
    quality evidence и отдельный review. Testnet/live остаются закрыты.
 
 ## 18. Открытые вопросы

@@ -358,6 +358,13 @@ closed reference price, затем в delta order с применением Inst
 детерминированный synchronous paper execution без сети; он не изменяет Portfolio.
 Testnet и live adapters требуют отдельных design review и допуска.
 
+Первая версия получает только готовый `RiskDecision`, immutable execution config и
+`InstrumentRules`; она не читает Market Cache и не знает Risk Policy. `APPROVED` и
+`MODIFIED` исполняются сразу одним существующим immutable `Fill` по reference price,
+с нулевым slippage и explicit Decimal fee. Время fill выводится из decision timestamp
+и configured deterministic latency без clock, sleep или random. Подробный контракт
+описан в `PAPER_EXECUTION_PROVIDER_DESIGN.md`.
+
 ### `portfolio`
 
 Является единственным авторитетным источником balances, позиции, cost basis,
@@ -390,9 +397,9 @@ fills, но не содержит стратегию, risk policy или executi
 - `Portfolio` — агрегированное состояние капитала и экспозиции;
 - `PerformanceSnapshot` — показатели результата в определённый момент.
 
-Точные Stage 3 поля и границы paper-контура предложены в
-`PAPER_TRADING_CORE_DESIGN.md`; до утверждения ADR-026–030 они не являются
-реализованным публичным контрактом.
+Точные Stage 3 поля и границы paper-контура описаны в
+`PAPER_TRADING_CORE_DESIGN.md`, `RISK_MANAGER_DESIGN.md` и
+`PAPER_EXECUTION_PROVIDER_DESIGN.md`. Paper execution остаётся design-only до M3.6.
 
 ## 10. Основной поток данных
 
@@ -411,6 +418,10 @@ fills, но не содержит стратегию, risk policy или executi
 13. Execution симулирует только параметры, разрешённые `RiskDecision`, и создаёт immutable `Order`/`Fill`.
 14. Portfolio атомарно и идемпотентно применяет Fill; execution не меняет его напрямую.
 15. Каждое решение и изменение состояния записывается для аудита и аналитики.
+
+Для paper-only dust liquidation Portfolio допускает исключение из minimum quantity/
+notional только для SELL всей текущей позиции с явным immutable Fill marker. Это не
+ослабляет quantity step, price tick, gross/fee reconciliation или запрет short.
 
 Ни одна стратегия, включая AI-стратегию, не должна напрямую обращаться к live execution.
 

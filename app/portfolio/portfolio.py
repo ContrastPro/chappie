@@ -198,7 +198,13 @@ class Portfolio:
                     received=fill.price,
                 )
             )
-        if fill.quantity < rules.min_quantity:
+        dust_liquidation = (
+            fill.side is FillSide.SELL
+            and fill.metadata.get("dust_liquidation") is True
+            and self._snapshot.position is not None
+            and fill.quantity == self._snapshot.position.quantity
+        )
+        if fill.quantity < rules.min_quantity and not dust_liquidation:
             raise FillRuleViolationError(
                 self._fill_context(
                     fill,
@@ -208,7 +214,7 @@ class Portfolio:
                 )
             )
         expected_gross = rules.round_quote(precise_product(fill.quantity, fill.price))
-        if expected_gross < rules.min_notional:
+        if expected_gross < rules.min_notional and not dust_liquidation:
             raise FillRuleViolationError(
                 self._fill_context(
                     fill,

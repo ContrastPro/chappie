@@ -224,17 +224,31 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 
 #### M3.5 Paper Execution Provider
 
-- Реализовать paper adapter и performance metrics без сети и private API.
+Статус: **completed** (2026-08-05).
 
-#### M3.6 Paper Trading Orchestration
+- Спроектировать synchronous stateless immediate-fill adapter без сети и private API.
+- Использовать существующий immutable `Fill`, explicit Decimal fee/quote rounding,
+  injected IDs и decision-derived logical time.
+- Runtime wiring не входит в design или implementation provider-а.
+
+#### M3.6 Paper Execution Provider implementation
+
+Статус: **completed** (2026-08-05).
+
+- Реализован и проверен provider offline, включая RiskDecision -> Fill -> Portfolio.
+- Final safety review подтвердил fee envelope, deterministic timestamps, full-fill,
+  REJECTED и dust compatibility semantics.
+- Runtime, PaperTradingEngine, persistence и decision-level dedup не добавлены.
+
+#### M3.7 Paper Trading Orchestration
 
 - Подключить feature-flagged PaperTradingEngine, idempotency и observer boundary.
 
-#### M3.7 Persistence and Audit
+#### M3.8 Persistence and Audit
 
 - Реализовать SQLite journal, audit persistence, recovery и reconciliation.
 
-#### M3.8 Stage 3 completion
+#### M3.9 Stage 3 completion
 
 - Подтвердить backtest/paper parity, controlled smoke-run и критерии качества.
 

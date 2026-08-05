@@ -718,6 +718,7 @@ class RiskManager:
             sizing_audit=audit,
             modification_reasons=modification_reasons,
             risk_policy_name=self._policy.policy_name,
+            stream_key=intent.stream_key,
         )
 
     def _applied_limits(self) -> dict[str, str | Decimal]:

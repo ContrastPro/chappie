@@ -279,6 +279,7 @@ class RiskDecision:
     sizing_audit: object | None = None
     modification_reasons: tuple[str, ...] = ()
     risk_policy_name: str | None = None
+    stream_key: MarketStreamKey | None = None
 
     def __post_init__(self) -> None:
         _require_non_empty(self.decision_id, "decision_id", InvalidRiskDecisionError)
@@ -342,11 +343,14 @@ class RiskDecision:
                 self.approved_order,
                 self.sizing_audit,
                 self.risk_policy_name,
+                self.stream_key,
             )
         ) or bool(self.modification_reasons)
         if enriched:
             for name in ("market_snapshot_id", "portfolio_id", "risk_policy_name"):
                 _require_non_empty(getattr(self, name), name, InvalidRiskDecisionError)
+            if not isinstance(self.stream_key, MarketStreamKey):
+                raise InvalidRiskDecisionError("stream_key must be a MarketStreamKey")
             if (
                 isinstance(self.portfolio_version, bool)
                 or not isinstance(self.portfolio_version, int)

@@ -238,8 +238,8 @@
 
 ## ADR-027: Deterministic paper execution is the first execution adapter
 
-- **Статус:** proposal
-- **Дата:** 2026-08-04
+- **Статус:** принято
+- **Дата:** 2026-08-05
 - **Контекст:** До testnet нужен воспроизводимый способ проверить sizing, fees, fills и accounting без private API и капитала.
 - **Решение:** Первым `ExecutionProvider` становится synchronous in-memory paper adapter с immediate full MARKET fill, явными fee/slippage rules, injected IDs/time и без сети.
 - **Причины:** Детерминированные тесты, безопасная интеграция и минимальная инфраструктурная сложность.
@@ -289,3 +289,30 @@
 - **Решение:** Risk не рассчитывает фактические fee, slippage или fill price. M3.4 использует только консервативный approval envelope `quantity × reference_price × (1 + max_slippage_bps / 10000) × (1 + max_fee_rate)` для резервирования BUY quote. Execution отвечает за фактические значения и не может нарушать approved quantity или сделать Portfolio balance отрицательным.
 - **Причины:** Разделение risk approval и execution simulation, один источник fee semantics и отсутствие зависимости Risk от adapter-а.
 - **Последствия:** BUY reserve gap закрыт консервативным верхним пределом, но совместимость будущей execution-конфигурации с этим envelope обязательна перед runtime wiring.
+
+## ADR-033: Paper execution uses one immediate full fill
+
+- **Статус:** принято
+- **Дата:** 2026-08-05
+- **Контекст:** Первый paper adapter должен проверить execution/Portfolio boundary без преждевременной модели exchange lifecycle.
+- **Решение:** `APPROVED` и `MODIFIED` RiskDecision синхронно создают ровно один полный существующий immutable `Fill`; отдельный `Order`, partial fills, reject, timeout и cancel в первую версию не входят.
+- **Причины:** Минимальный воспроизводимый контракт, отсутствие ложной реалистичности и повторное использование утверждённой Fill-модели.
+- **Последствия:** `execution_id` используется как `Fill.order_id`; расширение order lifecycle потребует отдельного ADR.
+
+## ADR-034: Paper execution time is derived from the risk decision
+
+- **Статус:** принято
+- **Дата:** 2026-08-05
+- **Контекст:** Wall clock, monotonic clock и sleep сделали бы одинаковый offline input невоспроизводимым и смешали бы market chronology с runtime scheduling.
+- **Решение:** `started_at_ms` равен `RiskDecision.decided_at_ms`, `completed_at_ms` и `Fill.filled_at_ms` равны ему плюс configured deterministic `latency_ms`; default latency равна нулю.
+- **Причины:** Детерминированный replay, отсутствие скрытого времени и простые exact tests.
+- **Последствия:** Monotonic time может использоваться будущей orchestration только как operational metric и не определяет timestamp Fill.
+
+## ADR-035: Execution owns explicit quote rounding and fee facts
+
+- **Статус:** принято
+- **Дата:** 2026-08-05
+- **Контекст:** Portfolio не округляет валидные Fill values, а Risk резервирует envelope, но не создаёт фактическую execution fee.
+- **Решение:** Paper execution использует versioned `InstrumentRules`: gross и fee вычисляются Decimal-only и явно округляются вниз до quote precision; fee равна rounded `gross_notional × configured fee_rate`, slippage первой версии равен нулю.
+- **Причины:** Exact reconciliation, отсутствие скрытого float/rounding и единый владелец внешних quote facts.
+- **Последствия:** Fee config не может превышать Risk-approved envelope; изменение rounding или slippage требует versioning и review.
