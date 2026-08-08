@@ -631,5 +631,7 @@ is another reason runtime wiring waits for journal/reconciliation design.
   **completed; final safety review passed**.
 - M3.10: shared decision runtime coordination design — completed; review passed.
 - M3.11: implement feature-flagged coordinator and shadow consumer after review.
+- M3.11 implementation completed; final safety review pending. Paper runtime is
+  reached only through the shared coordinator and existing `process()` API.
 - M3.12: persistence, journal, recovery and reconciliation.
 - M3.13: Stage 3 completion evidence and controlled paper smoke review.

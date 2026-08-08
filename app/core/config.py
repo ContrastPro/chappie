@@ -35,12 +35,32 @@ class Settings(BaseSettings):
     smoke_run_cycles: int | None = Field(default=None, gt=0)
 
     shadow_decisions_enabled: bool = False
+    paper_trading_enabled: bool = False
+    decision_coordinator_history_limit: int = Field(default=1000, gt=0)
+    decision_coordinator_dedup_capacity: int = Field(default=10000, gt=0)
     shadow_history_limit: int = Field(default=1000, gt=0)
     shadow_dedup_capacity: int = Field(default=10000, gt=0)
     snapshot_stale_after_ms: int = Field(default=120000, gt=0)
     ema_fast_window: int = Field(default=12, ge=2)
     ema_slow_window: int = Field(default=26, gt=2)
     long_target_exposure: Decimal = Decimal(1)
+
+    paper_portfolio_id: str = "paper-btcusdt"
+    paper_initial_quote_balance: Decimal = Decimal(10_000)
+    paper_fee_rate: Decimal = Decimal("0.001")
+    paper_execution_latency_ms: int = Field(default=0, ge=0)
+    paper_dedup_capacity: int = Field(default=10000, gt=0)
+    portfolio_fill_dedup_capacity: int = Field(default=10000, gt=0)
+    instrument_price_tick: Decimal = Decimal("0.01")
+    instrument_quantity_step: Decimal = Decimal("0.00001")
+    instrument_min_quantity: Decimal = Decimal("0.00001")
+    instrument_min_notional: Decimal = Decimal(5)
+    instrument_base_precision: int = Field(default=8, ge=0)
+    instrument_quote_precision: int = Field(default=2, ge=0)
+    risk_max_order_notional: Decimal = Decimal(1_000)
+    risk_max_position_notional: Decimal = Decimal(5_000)
+    risk_max_fee_rate: Decimal = Decimal("0.001")
+    risk_max_slippage_bps: Decimal = Decimal(5)
 
     binance_api_key: str | None = None
     binance_secret_key: str | None = None
@@ -58,19 +78,72 @@ class Settings(BaseSettings):
             raise ValueError("polling_bootstrap_limit must not exceed market_cache_capacity")
         if self.shadow_history_limit > self.market_cache_capacity:
             raise ValueError("shadow_history_limit must not exceed market_cache_capacity")
+        if self.decision_coordinator_history_limit > self.market_cache_capacity:
+            raise ValueError(
+                "decision_coordinator_history_limit must not exceed market_cache_capacity"
+            )
         if self.ema_slow_window <= self.ema_fast_window:
             raise ValueError("ema_slow_window must be greater than ema_fast_window")
         if not self.long_target_exposure.is_finite() or not (
             Decimal(0) < self.long_target_exposure <= Decimal(1)
         ):
             raise ValueError("long_target_exposure must be finite and in (0, 1]")
+        decimal_fields = (
+            "paper_initial_quote_balance",
+            "paper_fee_rate",
+            "instrument_price_tick",
+            "instrument_quantity_step",
+            "instrument_min_quantity",
+            "instrument_min_notional",
+            "risk_max_order_notional",
+            "risk_max_position_notional",
+            "risk_max_fee_rate",
+            "risk_max_slippage_bps",
+        )
+        if any(not getattr(self, name).is_finite() for name in decimal_fields):
+            raise ValueError("paper financial settings must be finite")
+        if self.paper_initial_quote_balance <= 0:
+            raise ValueError("paper_initial_quote_balance must be positive")
+        for name in (
+            "instrument_price_tick",
+            "instrument_quantity_step",
+            "instrument_min_quantity",
+            "instrument_min_notional",
+            "risk_max_order_notional",
+            "risk_max_position_notional",
+        ):
+            if getattr(self, name) <= 0:
+                raise ValueError(f"{name} must be positive")
+        if not (Decimal(0) <= self.paper_fee_rate < Decimal(1)):
+            raise ValueError("paper_fee_rate must be in [0, 1)")
+        if not (Decimal(0) <= self.risk_max_fee_rate < Decimal(1)):
+            raise ValueError("risk_max_fee_rate must be in [0, 1)")
+        if self.paper_fee_rate > self.risk_max_fee_rate:
+            raise ValueError("paper_fee_rate must not exceed risk_max_fee_rate")
+        if self.risk_max_position_notional < self.risk_max_order_notional:
+            raise ValueError("risk position cap must not be below order cap")
+        if self.risk_max_slippage_bps < 0:
+            raise ValueError("risk_max_slippage_bps must not be negative")
         return self
 
-    @field_validator("long_target_exposure", mode="before")
+    @field_validator(
+        "long_target_exposure",
+        "paper_initial_quote_balance",
+        "paper_fee_rate",
+        "instrument_price_tick",
+        "instrument_quantity_step",
+        "instrument_min_quantity",
+        "instrument_min_notional",
+        "risk_max_order_notional",
+        "risk_max_position_notional",
+        "risk_max_fee_rate",
+        "risk_max_slippage_bps",
+        mode="before",
+    )
     @classmethod
     def reject_float_exposure(cls, value: object) -> object:
         if isinstance(value, float):
-            raise TypeError("long_target_exposure must not be a float")
+            raise TypeError("financial settings must not use float")
         return value
 
 

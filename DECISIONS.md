@@ -382,7 +382,7 @@
 
 ## ADR-043: One shared decision evaluation feeds all runtime consumers
 
-- **Статус:** предложение
+- **Статус:** принято
 - **Дата:** 2026-08-08
 - **Контекст:** Независимые shadow и paper event paths повторно строили бы snapshot и запускали Strategy/Pipeline для одного `CandleClosed`, создавая разные IDs и потенциально разные решения.
 - **Решение:** Runtime создаёт ровно один `MarketSnapshot` и вызывает `TradingDecisionPipeline.evaluate()` ровно один раз на уникальный source event. Shadow и paper получают те же экземпляры snapshot, result, signal и intent.
@@ -391,7 +391,7 @@
 
 ## ADR-044: TradingDecisionCoordinator owns CandleClosed decision orchestration
 
-- **Статус:** предложение
+- **Статус:** принято
 - **Дата:** 2026-08-08
 - **Контекст:** Event subscription, cache consistency, snapshot creation, pipeline evaluation и fan-out являются application/runtime orchestration, а не торговой доменной логикой.
 - **Решение:** `TradingDecisionCoordinator` становится единственным decision-path subscriber на `CandleClosed`, владеет только своей subscription, bounded dedup и status, а зависимости и их lifecycle принадлежат composition root.
@@ -400,7 +400,7 @@
 
 ## ADR-045: Consumer failures are isolated after shared decision creation
 
-- **Статус:** предложение
+- **Статус:** принято
 - **Дата:** 2026-08-08
 - **Контекст:** Shadow observation и paper mutation имеют разные failure domains; сбой одного не должен отменять общий decision или препятствовать другому consumer.
 - **Решение:** Consumers вызываются детерминированно: shadow, затем paper. Обычный `Exception` одного consumer классифицируется и не препятствует другому; `BaseException` не подавляется. Trading outcome отделён от delivery outcome.
@@ -409,7 +409,7 @@
 
 ## ADR-046: Event-level shared-decision deduplication is bounded and process-local
 
-- **Статус:** предложение
+- **Статус:** принято
 - **Дата:** 2026-08-08
 - **Контекст:** Повторная доставка `CandleClosed` может повторно вычислить decision и вызвать consumers, а durable journal пока отсутствует.
 - **Решение:** Coordinator использует bounded FIFO по `source_event_id` и хранит immutable final result. Pre-decision failures не кэшируются; после любого consumer attempt результат завершается и кэшируется независимо от delivery failure.
@@ -418,7 +418,7 @@
 
 ## ADR-047: Paper degradation does not stop shadow analysis
 
-- **Статус:** предложение
+- **Статус:** принято
 - **Дата:** 2026-08-08
 - **Контекст:** `PaperTradingEngine.DEGRADED` означает неоднозначное финансовое состояние, но не повреждение market ingestion или общего аналитического pipeline.
 - **Решение:** Coordinator продолжает shared decision и shadow path, но не вызывает degraded paper engine и отмечает paper как `UNAVAILABLE` до внешней reconciliation и пересоздания.

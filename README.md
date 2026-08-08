@@ -122,3 +122,10 @@ git diff --check
 ```
 
 Automated tests do not require network access. A real smoke-run is a separate manual verification because it contacts Binance and may otherwise run for an unintended duration.
+# Shared decision runtime
+
+Decision processing remains disabled by default. `SHADOW_DECISIONS_ENABLED=true`
+enables observational delivery; `PAPER_TRADING_ENABLED=true` enables deterministic
+in-memory paper execution. Either flag creates one `TradingDecisionCoordinator`, so
+Strategy/Pipeline is evaluated once per confirmed candle. Paper mode uses no private
+Binance endpoint and provides no restart recovery or durable exactly-once guarantee.

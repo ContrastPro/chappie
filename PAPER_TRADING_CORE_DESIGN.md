@@ -461,7 +461,8 @@ domain ports, но risk/portfolio не импортируют paper adapter ил
 9. **M3.10 — Shared Decision Runtime Coordination Design:** единый coordinator,
    feature matrix, consumer isolation и event-level dedup — **completed; design review passed**.
 10. **M3.11 — Shared Decision Runtime Coordination Implementation:** feature-flagged
-   delivery одного DecisionPipelineResult в shadow и paper без повторного Strategy run.
+   delivery одного DecisionPipelineResult в shadow и paper без повторного Strategy run
+   — **implementation completed; final safety review pending**.
 11. **M3.12 — Persistence, Audit and Recovery:** SQLite adapters, journal, restart recovery и
    reconciliation.
 12. **M3.13 — Stage 3 Completion:** backtest/replay parity, controlled paper smoke,

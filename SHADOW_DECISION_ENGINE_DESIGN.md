@@ -71,6 +71,11 @@ Event-level lifecycle/counters переходят coordinator. Consumer status �
 `last_error`. Существующий engine может остаться compatibility wrapper только при
 доказанной необходимости; composition root выбирает ровно один active decision path.
 
+M3.11 реализует `ShadowDecisionConsumer` и общий pure event/cache consistency helper.
+Application runtime больше не создаёт legacy engine при включённых decision features:
+единственным subscriber становится TradingDecisionCoordinator. Legacy API сохранён
+для standalone compatibility до отдельного решения после final safety review.
+
 ## 3. Рекомендуемый public API
 
 ```text

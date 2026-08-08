@@ -277,14 +277,14 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 
 #### M3.11 Shared decision runtime coordination implementation
 
-Статус: **next**.
+Статус: **completed; final safety review passed** (2026-08-08).
 
-- Реализовать coordinator, ShadowDecisionConsumer, feature-flagged composition и
-  полный offline integration test без persistence и live execution.
+- Реализованы coordinator, ShadowDecisionConsumer, feature-flagged composition,
+  process-local dedup и paper runtime graph без private API/live execution.
 
 #### M3.12 Persistence, Audit and Recovery
 
-Статус: **pending**.
+Статус: **next after M3.11**.
 
 - Реализовать SQLite journal, audit persistence, recovery и reconciliation.
 

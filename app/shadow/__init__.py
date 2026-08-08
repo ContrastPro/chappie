@@ -1,3 +1,8 @@
+from app.shadow.consumer import (
+    ShadowDecisionConsumer,
+    ShadowDecisionConsumerStatus,
+    validate_event_cache_consistency,
+)
 from app.shadow.engine import ShadowTradingDecisionEngine
 from app.shadow.factories import UUIDShadowRunIdFactory, UUIDSnapshotIdFactory
 from app.shadow.models import (
@@ -14,6 +19,8 @@ from app.shadow.ports import MarketCacheReader, ShadowRunIdFactory, SnapshotIdFa
 __all__ = [
     "LoggingShadowDecisionObserver",
     "MarketCacheReader",
+    "ShadowDecisionConsumer",
+    "ShadowDecisionConsumerStatus",
     "ShadowDecisionEngineStatus",
     "ShadowDecisionObserver",
     "ShadowDecisionRecord",
@@ -26,4 +33,5 @@ __all__ = [
     "SnapshotIdFactory",
     "UUIDShadowRunIdFactory",
     "UUIDSnapshotIdFactory",
+    "validate_event_cache_consistency",
 ]

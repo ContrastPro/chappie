@@ -5,7 +5,7 @@ from collections.abc import Callable
 from dataclasses import replace
 
 from app.market.events import CandleClosed, MarketEventDispatcher, SubscriptionToken
-from app.market.models import CandleSnapshot
+from app.shadow.consumer import validate_event_cache_consistency
 from app.shadow.exceptions import (
     InvalidShadowConfigurationError,
     ShadowCacheReadError,
@@ -264,20 +264,7 @@ class ShadowTradingDecisionEngine:
 
     @staticmethod
     def _validate_consistency(event: CandleClosed, candles: tuple[object, ...]) -> None:
-        if event.occurred_at_ms <= event.candle.close_time_ms:
-            raise ShadowEventCacheMismatchError("CandleClosed occurred at or before close boundary")
-        if not candles:
-            raise ShadowEventCacheMismatchError("Market cache snapshot is empty")
-        found = next(
-            (item for item in candles if item.open_time_ms == event.candle.open_time_ms), None
-        )
-        if found is None:
-            raise ShadowEventCacheMismatchError("Event candle is absent from configured history")
-        cached = CandleSnapshot.from_candle(found)
-        if cached != event.candle:
-            raise ShadowEventCacheMismatchError("Event candle does not match cache snapshot")
-        if event.occurred_at_ms <= cached.close_time_ms:
-            raise ShadowEventCacheMismatchError("Cached event candle is not closed")
+        validate_event_cache_consistency(event, candles)
 
     @staticmethod
     def _new_id(factory: Callable[[], str], label: str) -> str:

@@ -5,11 +5,18 @@ from decimal import Decimal
 import pytest
 
 from app.application import build_application, run_application
+from app.coordination import TradingCoordinationStateError
 from app.core.config import Settings
+from app.market.cache import MarketStreamKey
+from app.market.events import (
+    CandleClosed,
+    CandleClosedReason,
+    MarketEventSource,
+)
 from app.market.exceptions import MarketProviderHTTPError
-from app.market.models import Candle, ServerTime, TickerPrice
+from app.market.models import Candle, CandleSnapshot, ServerTime, TickerPrice
 from app.market.polling import PollingLifecycleState
-from app.shadow.exceptions import ShadowEngineStateError
+from app.paper import PaperTradingCycleOutcome
 
 OPEN_TIME_MS = 1_700_000_000_000
 
@@ -49,6 +56,15 @@ class ApplicationProvider:
         self.close_calls += 1
 
 
+class ClosingCandleProvider(ApplicationProvider):
+    def __init__(self, response: list[Candle]) -> None:
+        super().__init__(response)
+        self.server_times = iter((OPEN_TIME_MS + 30_000, OPEN_TIME_MS + 60_000))
+
+    def get_server_time(self) -> ServerTime:
+        return ServerTime(timestamp_ms=next(self.server_times))
+
+
 class FixedClock:
     def now_ms(self) -> int:
         return OPEN_TIME_MS + 120_000
@@ -76,6 +92,7 @@ def make_settings(**overrides: object) -> Settings:
         "polling_bootstrap_limit": 10,
         "market_cache_capacity": 10,
         "shadow_history_limit": 10,
+        "decision_coordinator_history_limit": 10,
         **overrides,
     }
     return Settings(_env_file=None, **values)
@@ -89,7 +106,7 @@ def test_composition_runs_finite_smoke_and_closes_provider_once() -> None:
         clock=FixedClock(),
         sleeper=NoWaitSleeper(),
     )
-    assert application.shadow_engine is None
+    assert application.coordinator is None
 
     exit_code = run_application(application, logging.getLogger("test"))
     report = application.status_report()
@@ -122,12 +139,139 @@ def test_shadow_composition_is_feature_gated_and_stops_before_provider_close() -
         clock=FixedClock(),
         sleeper=NoWaitSleeper(),
     )
-    assert application.shadow_engine is not None
-    assert application.shadow_engine.status.subscribed
+    assert application.coordinator is not None
+    assert application.shadow_consumer is not None
+    assert application.coordinator.status.lifecycle.value == "RUNNING"
     assert application.status_report().shadow_enabled
     application.close()
-    assert not application.shadow_engine.status.subscribed
+    assert application.coordinator.status.lifecycle.value == "STOPPED"
     assert provider.close_calls == 1
+
+
+@pytest.mark.parametrize(
+    ("shadow_enabled", "paper_enabled"),
+    ((False, False), (True, False), (False, True), (True, True)),
+)
+def test_shared_decision_feature_matrix(
+    shadow_enabled: bool,
+    paper_enabled: bool,
+) -> None:
+    provider = ApplicationProvider([make_candle()])
+    application = build_application(
+        make_settings(
+            shadow_decisions_enabled=shadow_enabled,
+            paper_trading_enabled=paper_enabled,
+        ),
+        provider=provider,
+        clock=FixedClock(),
+        sleeper=NoWaitSleeper(),
+    )
+
+    assert (application.coordinator is not None) is (shadow_enabled or paper_enabled)
+    assert (application.shadow_consumer is not None) is shadow_enabled
+    assert (application.paper_engine is not None) is paper_enabled
+    assert (application.paper_portfolio is not None) is paper_enabled
+    decision_subscriptions = [
+        subscription
+        for subscription in application.dispatcher._subscriptions
+        if subscription.event_type is CandleClosed
+        and application.coordinator is not None
+        and getattr(subscription.handler, "__self__", None) is application.coordinator
+    ]
+    assert len(decision_subscriptions) == int(shadow_enabled or paper_enabled)
+    if application.coordinator is not None:
+        assert application.coordinator.status.lifecycle.value == "RUNNING"
+    report = application.status_report()
+    assert report.coordinator_enabled is (shadow_enabled or paper_enabled)
+    assert report.shadow_enabled is shadow_enabled
+    assert report.paper_enabled is paper_enabled
+    assert (report.paper_health is not None) is paper_enabled
+    assert (report.paper_quote_balance is not None) is paper_enabled
+    application.close()
+
+
+def test_combined_runtime_uses_real_pipeline_shadow_and_paper_once() -> None:
+    provider = ApplicationProvider([make_candle()])
+    application = build_application(
+        make_settings(shadow_decisions_enabled=True, paper_trading_enabled=True),
+        provider=provider,
+        clock=FixedClock(),
+        sleeper=NoWaitSleeper(),
+    )
+    key = MarketStreamKey("BTCUSDT", "1m")
+    source = make_candle()
+    occurred_at_ms = source.close_time_ms + 1
+    application.cache.upsert_candle(key, source, occurred_at_ms)
+    delivery = application.dispatcher.publish(
+        CandleClosed(
+            event_id="runtime-close-1",
+            occurred_at_ms=occurred_at_ms,
+            stream_key=key,
+            correlation_cycle_id="runtime-cycle-1",
+            source=MarketEventSource.REPLAY,
+            candle=CandleSnapshot.from_candle(source),
+            reason=CandleClosedReason.TIME_CONFIRMED,
+        )
+    )
+
+    assert delivery.failure_count == 0
+    assert application.coordinator is not None
+    assert application.coordinator.status.successful_decisions == 1
+    assert application.shadow_consumer is not None
+    assert application.shadow_consumer.status.successful_records == 1
+    assert application.paper_engine is not None
+    assert application.paper_engine.last_result is not None
+    assert application.paper_engine.last_result.outcome is PaperTradingCycleOutcome.NO_INTENT
+    assert application.paper_portfolio is not None
+    assert application.paper_portfolio.snapshot.version == 1
+    report = application.status_report()
+    assert report.coordinator_shadow_deliveries == 1
+    assert report.coordinator_paper_deliveries == 1
+    assert report.coordinator_paper_unavailable == 0
+    assert report.paper_last_outcome == PaperTradingCycleOutcome.NO_INTENT.value
+    assert report.paper_last_fill_id is None
+    application.close()
+
+
+@pytest.mark.parametrize(
+    ("shadow_enabled", "paper_enabled"),
+    ((True, False), (False, True), (True, True)),
+)
+def test_offline_polling_closure_reaches_only_enabled_shared_consumers(
+    shadow_enabled: bool,
+    paper_enabled: bool,
+) -> None:
+    provider = ClosingCandleProvider([make_candle()])
+    application = build_application(
+        make_settings(
+            shadow_decisions_enabled=shadow_enabled,
+            paper_trading_enabled=paper_enabled,
+        ),
+        provider=provider,
+        clock=FixedClock(),
+        sleeper=NoWaitSleeper(),
+    )
+
+    bootstrap = application.engine.run_once()
+    regular = application.engine.run_once()
+
+    assert bootstrap.bootstrap
+    assert regular.bootstrap is False
+    assert application.coordinator is not None
+    assert application.coordinator.status.successful_decisions == 1
+    assert application.coordinator.status.hold_decisions == 1
+    assert application.coordinator.status.shadow_deliveries == int(shadow_enabled)
+    assert application.coordinator.status.paper_deliveries == int(paper_enabled)
+    if shadow_enabled:
+        assert application.shadow_consumer is not None
+        assert application.shadow_consumer.status.successful_records == 1
+    if paper_enabled:
+        assert application.paper_engine is not None
+        assert application.paper_engine.last_result is not None
+        assert application.paper_engine.last_result.outcome is PaperTradingCycleOutcome.NO_INTENT
+        assert application.paper_portfolio is not None
+        assert application.paper_portfolio.snapshot.version == 1
+    application.close()
 
 
 def test_shadow_unsubscribe_failure_keeps_state_explicit_and_still_closes_provider(
@@ -146,12 +290,11 @@ def test_shadow_unsubscribe_failure_keeps_state_explicit_and_still_closes_provid
         raise RuntimeError("dispatcher unavailable")
 
     monkeypatch.setattr(application.dispatcher, "unsubscribe", fail_unsubscribe)
-    with pytest.raises(ShadowEngineStateError, match="unsubscribe"):
+    with pytest.raises(TradingCoordinationStateError, match="unsubscribe"):
         application.close()
     assert provider.close_calls == 1
-    assert application.shadow_engine is not None
-    assert application.shadow_engine.status.subscribed
-    assert application.shadow_engine.status.lifecycle.value == "running"
+    assert application.coordinator is not None
+    assert application.coordinator.status.lifecycle.value == "RUNNING"
     application.close()
     assert provider.close_calls == 1
 

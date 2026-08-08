@@ -352,6 +352,13 @@ shadow analysis продолжаются. Текущий ShadowTradingDecisionEn
 одновременно подписан с coordinator; migration выделяет consumer без cache read и
 pipeline evaluation. Полный контракт описан в `SHARED_DECISION_RUNTIME_DESIGN.md`.
 
+M3.11 реализует этот flow в `app.coordination`. Application composition создаёт
+coordinator только если включён shadow или paper, подписывает только его как decision
+handler и передаёт один shared result в consumers. Paper-only mode создаёт единые
+InstrumentRules для Portfolio, RiskManager и PaperExecutionProvider; никакие private
+Binance endpoints не используются. Implementation и final safety review завершены
+2026-08-08; ADR-043–047 приняты.
+
 ### `strategies`
 
 Преобразует рыночный контекст в типизированный сигнал или намерение. Не отправляет ордера и не меняет портфель напрямую.

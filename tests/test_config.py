@@ -24,6 +24,9 @@ def test_market_data_configuration_defaults() -> None:
     assert settings.smoke_run_cycles is None
     assert settings.trading_mode == "paper"
     assert settings.shadow_decisions_enabled is False
+    assert settings.paper_trading_enabled is False
+    assert settings.decision_coordinator_history_limit == 1000
+    assert settings.decision_coordinator_dedup_capacity == 10000
     assert settings.shadow_history_limit == 1000
     assert settings.shadow_dedup_capacity == 10000
     assert settings.snapshot_stale_after_ms == 120000
@@ -95,5 +98,37 @@ def test_regular_limit_may_be_greater_than_two() -> None:
     ],
 )
 def test_invalid_shadow_configuration(overrides: dict[str, object]) -> None:
+    with pytest.raises((ValidationError, TypeError)):
+        make_settings(**overrides)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {
+            "market_cache_capacity": 10,
+            "polling_bootstrap_limit": 10,
+            "shadow_history_limit": 10,
+            "decision_coordinator_history_limit": 11,
+        },
+        {"paper_initial_quote_balance": Decimal(0)},
+        {"paper_initial_quote_balance": Decimal("NaN")},
+        {"instrument_price_tick": Decimal(0)},
+        {"instrument_quantity_step": Decimal(0)},
+        {"instrument_min_quantity": Decimal(0)},
+        {"instrument_min_notional": Decimal(0)},
+        {"risk_max_order_notional": Decimal(0)},
+        {"risk_max_position_notional": Decimal(0)},
+        {"paper_fee_rate": Decimal(-1)},
+        {"paper_fee_rate": Decimal(1)},
+        {"risk_max_fee_rate": Decimal(-1)},
+        {"risk_max_fee_rate": Decimal(1)},
+        {"paper_fee_rate": Decimal("0.002"), "risk_max_fee_rate": Decimal("0.001")},
+        {"risk_max_order_notional": Decimal(2), "risk_max_position_notional": Decimal(1)},
+        {"risk_max_slippage_bps": Decimal(-1)},
+        {"paper_fee_rate": 0.1},
+    ],
+)
+def test_invalid_paper_runtime_configuration(overrides: dict[str, object]) -> None:
     with pytest.raises((ValidationError, TypeError)):
         make_settings(**overrides)

@@ -395,6 +395,22 @@ def test_architecture_import_boundaries() -> None:
             "app.agent.trader",
         ),
         "app/shadow/observer.py": ("pathlib", "app.database"),
+        "app/shadow/consumer.py": (
+            "app.market.cache",
+            "app.trading.pipeline.TradingDecisionPipeline",
+            "app.market.binance_provider",
+            "app.portfolio",
+            "app.risk",
+            "app.execution",
+            "httpx",
+        ),
+        "app/coordination/trading.py": (
+            "app.market.binance_provider",
+            "app.market.polling",
+            "app.database",
+            "app.execution.paper",
+            "httpx",
+        ),
     }
     for filename, forbidden in constraints.items():
         tree = ast.parse(Path(filename).read_text(encoding="utf-8"))

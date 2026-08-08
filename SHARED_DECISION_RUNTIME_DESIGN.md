@@ -4,9 +4,10 @@
 
 - Milestone: M3.10 Shared Decision Runtime Coordination Design.
 - Status: design completed; design review completed.
+- Implementation: completed; final safety review passed (2026-08-08).
 - Design date: 2026-08-08.
 - Implementation milestone: M3.11.
-- Basis: ADR-039 and proposed ADR-043–ADR-047.
+- Basis: ADR-039 and accepted ADR-043–ADR-047.
 
 This document specifies the synchronous application/runtime coordination layer that
 turns one confirmed `CandleClosed` into one shared trading decision and delivers the
@@ -444,9 +445,12 @@ Deferred to implementation/persistence milestones:
 - Final Settings names and validation placement require M3.11 implementation review.
 - Legacy wrapper retention is decided after mapping its standalone tests in M3.11.
 
-## 23. Recommended M3.11 implementation
+## 23. M3.11 implementation status
 
-Implement immutable models/errors, coordinator lifecycle/direct processing, extract
-shadow consumer without prematurely deleting compatibility code, wire feature flags,
-and add unit/boundary/offline integration tests. Do not add persistence, internal
-retry, threads, networking or live/testnet execution.
+Implemented immutable models/errors, coordinator lifecycle/direct processing,
+reusable event/cache consistency validation, ShadowDecisionConsumer, feature-matrix
+composition, deterministic paper graph and unit/boundary integration coverage.
+Legacy ShadowTradingDecisionEngine remains available but is no longer constructed by
+application runtime when coordinator is enabled. Persistence, internal retry, threads,
+network trading and live/testnet execution remain excluded. The final safety review
+passed on 2026-08-08; bounded process-local dedup remains explicitly non-durable.
