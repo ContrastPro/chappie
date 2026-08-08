@@ -324,6 +324,34 @@ shadow decision появляется только после нового `Candl
 consistency checks, dedup и error policy описаны в
 `SHADOW_DECISION_ENGINE_DESIGN.md`.
 
+#### Shared Decision Runtime Coordination
+
+M3.10 проектирует `TradingDecisionCoordinator` как application/runtime orchestration
+boundary и единственного будущего decision-path subscriber на `CandleClosed`:
+
+```text
+CandleClosed
+    -> TradingDecisionCoordinator
+    -> committed Market Cache snapshot
+    -> one MarketSnapshot
+    -> TradingDecisionPipeline.evaluate() exactly once
+    -> one DecisionPipelineResult
+        -> optional ShadowDecisionConsumer
+        -> optional PaperTradingEngine
+```
+
+Coordinator не является частью trading domain: он не содержит Strategy, Intent,
+Risk, Execution или Portfolio formulas. Он владеет только своей subscription,
+bounded process-local event dedup и operational status; dispatcher, cache, pipeline,
+consumers и resources принадлежат composition root.
+
+При включённых shadow и paper оба consumer получают те же immutable object instances.
+Обычная ошибка одного consumer не препятствует другому и не останавливает ingestion.
+Если PaperTradingEngine уже `DEGRADED`, paper path не вызывается, но shared decision и
+shadow analysis продолжаются. Текущий ShadowTradingDecisionEngine не должен быть
+одновременно подписан с coordinator; migration выделяет consumer без cache read и
+pipeline evaluation. Полный контракт описан в `SHARED_DECISION_RUNTIME_DESIGN.md`.
+
 ### `strategies`
 
 Преобразует рыночный контекст в типизированный сигнал или намерение. Не отправляет ордера и не меняет портфель напрямую.
@@ -427,11 +455,11 @@ PaperTradingEngine реализован и прошёл final safety review в M
 5. Проверенные данные атомарно помещаются в Market Cache.
 6. После успешного commit Market Event Projector создаёт события подтверждённых изменений.
 7. Event Dispatcher синхронно доставляет события подписанным внутренним модулям.
-8. В shadow mode `CandleClosed` вызывает Shadow Trading Decision Engine, который читает Market Cache и строит `MarketSnapshot` с временем и correlation события.
-9. Strategy формирует только immutable `Signal` из `MarketSnapshot`.
-10. Application-level `TradingDecisionPipeline` проверяет Signal и координирует отдельный deterministic Intent Planner, который формирует `OrderIntent` или типизированно не создаёт его.
-11. Shadow Engine формирует immutable record и передаёт его observer-у; на этом shadow flow заканчивается без risk и execution.
-12. В paper-контуре application orchestration предварительно согласует Portfolio valuation с MarketSnapshot и передаёт `OrderIntent`, immutable Portfolio snapshot и MarketSnapshot обязательному Risk Manager.
+8. При включённом decision runtime `CandleClosed` передаётся единственному `TradingDecisionCoordinator`, который проверяет committed Market Cache state и строит один `MarketSnapshot`.
+9. Coordinator ровно один раз вызывает `TradingDecisionPipeline`; Strategy формирует immutable `Signal`, а deterministic Intent Planner формирует максимум один `OrderIntent`.
+10. Один `DecisionPipelineResult` передаётся теми же object instances в независимо включённые shadow и paper consumers.
+11. ShadowDecisionConsumer формирует immutable record и передаёт его observer-у без risk и execution.
+12. PaperTradingEngine согласует Portfolio valuation с тем же MarketSnapshot и передаёт `OrderIntent`, immutable Portfolio snapshot и MarketSnapshot обязательному Risk Manager.
 13. Execution симулирует только параметры, разрешённые `RiskDecision`, и создаёт immutable `Order`/`Fill`.
 14. Portfolio атомарно и идемпотентно применяет Fill; execution не меняет его напрямую.
 15. PaperTradingEngine по утверждённому M3.8 контракту формирует единый immutable cycle result и compact

@@ -411,7 +411,7 @@ same previous immutable result object, increment `ignored_duplicates`, and do no
 the cycle factory, Portfolio, Risk, execution or observer again.
 
 This prevents duplicate paper trades only during one process lifetime. It resets on
-restart and is neither durable idempotency nor exactly-once delivery. M3.11 persistence
+restart and is neither durable idempotency nor exactly-once delivery. M3.12 persistence
 replaces it with a journal-backed decision/cycle key while preserving these semantics.
 
 Completed business outcomes, including observer-degraded outcomes, are entered only
@@ -515,9 +515,9 @@ Future composition:
 CandleClosed
     -> TradingDecisionCoordinator
          -> TradingDecisionPipeline.evaluate(snapshot) exactly once
-         -> DecisionPipelineResultDispatcher
-              -> optional ShadowDecisionObserver path
-              -> optional PaperTradingEngine path
+         -> one shared DecisionPipelineResult
+              -> optional ShadowDecisionConsumer
+              -> optional PaperTradingEngine
 ```
 
 Feature flags remain independent:
@@ -526,8 +526,16 @@ Feature flags remain independent:
 - `PAPER_TRADING_ENABLED`.
 
 Paper requires the common decision pipeline but not the shadow observer. Enabling both
-must not run Strategy twice. The coordinator/dispatcher and event subscription are not
-part of the M3.9 core implementation.
+must not run Strategy twice and both consumers receive identical snapshot/result
+instances. The coordinator/dispatcher and event subscription are not part of the M3.9
+core implementation; their M3.10 proposal is defined in
+`SHARED_DECISION_RUNTIME_DESIGN.md`.
+
+Delivery order is shared compute, shadow, paper, final coordination result. Ordinary
+consumer failures are isolated. A degraded PaperTradingEngine is not called; the
+coordinator records `UNAVAILABLE`, continues shadow analysis and does not attempt
+reset or reconciliation. Event-level partial-delivery dedup belongs to coordinator,
+while the engine retains its decision-level safety dedup.
 
 ### 18.1 Logging policy
 
@@ -545,7 +553,7 @@ not an audit store.
 
 ## 19. Persistence and crash gaps
 
-Before durable paper runtime, M3.11 must add:
+Before durable paper runtime, M3.12 must add:
 
 - cycle, RiskDecision, execution and Fill journal records;
 - Portfolio snapshot/state repository;
@@ -603,11 +611,12 @@ is another reason runtime wiring waits for journal/reconciliation design.
 4. **Dedup key:** intent ID for executable cycles, pipeline run ID otherwise.
 5. **Observer failure:** degraded observation status; never rollback or rerun.
 6. **Portfolio failure after Fill:** typed failure context; no retry before journal.
-7. **Common coordinator:** required for runtime so Strategy runs once; design later.
+7. **Common coordinator:** M3.10 design and review completed. It computes one
+   shared decision, isolates consumers and prevents duplicate runtime Strategy runs.
 8. **Persistence order:** append decision/risk/execution intent before Portfolio commit,
    then commit marker and snapshot in a recoverable transaction design.
 9. **Cycle journal schema:** stable IDs, versions, stages, outcomes and checksums;
-   full schema belongs to M3.11.
+   full schema belongs to M3.12.
 10. **Feature flags:** common pipeline exists if either consumer is enabled; paper flag
     can never select live execution.
 11. **Ambiguous failure:** mark the engine `DEGRADED` and reject new work; reconstruct
@@ -620,6 +629,7 @@ is another reason runtime wiring waits for journal/reconciliation design.
 - M3.8: final architecture review — completed.
 - M3.9: in-memory PaperTradingEngine, models, observer port and offline tests —
   **completed; final safety review passed**.
-- M3.10: add feature-flagged shared decision runtime coordination after safety review.
-- M3.11: persistence, journal, recovery and reconciliation.
-- M3.12: Stage 3 completion evidence and controlled paper smoke review.
+- M3.10: shared decision runtime coordination design — completed; review passed.
+- M3.11: implement feature-flagged coordinator and shadow consumer after review.
+- M3.12: persistence, journal, recovery and reconciliation.
+- M3.13: Stage 3 completion evidence and controlled paper smoke review.

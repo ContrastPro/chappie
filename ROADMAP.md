@@ -176,6 +176,8 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 
 ## Этап 3. Backtesting и paper trading
 
+Статус: **in progress**.
+
 ### Цель
 
 Создать воспроизводимую среду оценки стратегии до допуска к биржевому исполнению.
@@ -264,15 +266,31 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
   DEGRADED safety boundary и полный offline HOLD -> BUY -> HOLD -> SELL flow.
 - Runtime events, shared coordinator и persistence не подключены.
 
-#### M3.10 Shared decision runtime coordination
+#### M3.10 Shared Decision Runtime Coordination Design
 
-- Подключить feature-flagged shared DecisionPipelineResult без повторного Strategy run.
+- Статус: **completed; design review completed** (2026-08-08).
+- Спроектирован `TradingDecisionCoordinator`, создающий один MarketSnapshot и один
+  shared DecisionPipelineResult без повторного Strategy run.
+- Зафиксированы feature matrix, shadow migration, consumer isolation, bounded
+  event-level dedup и paper DEGRADED behavior.
+- Реализация и runtime wiring вынесены в M3.11.
 
-#### M3.11 Persistence and Audit
+#### M3.11 Shared decision runtime coordination implementation
+
+Статус: **next**.
+
+- Реализовать coordinator, ShadowDecisionConsumer, feature-flagged composition и
+  полный offline integration test без persistence и live execution.
+
+#### M3.12 Persistence, Audit and Recovery
+
+Статус: **pending**.
 
 - Реализовать SQLite journal, audit persistence, recovery и reconciliation.
 
-#### M3.12 Stage 3 completion
+#### M3.13 Stage 3 completion
+
+Статус: **pending**.
 
 - Подтвердить backtest/paper parity, controlled smoke-run и критерии качества.
 

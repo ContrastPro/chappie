@@ -53,11 +53,23 @@ Engine:
 Planner или `TraderAgent` business logic. Market и trading domain не импортируют
 shadow application service.
 
-Будущий paper runtime не должен запускать Strategy или pipeline второй раз. M3.8
-утверждает общий `TradingDecisionCoordinator`, который создаёт один
+Будущий paper runtime не должен запускать Strategy или pipeline второй раз. M3.10
+определяет общий `TradingDecisionCoordinator`, который создаёт один
 `DecisionPipelineResult`, после чего shadow observer path и PaperTradingEngine получают
-его как независимые consumers. Текущий Shadow engine не меняется до отдельного runtime
-milestone.
+его как независимые consumers. Текущий Shadow engine не меняется в design milestone и
+не может быть одновременно подписан с coordinator после runtime migration.
+
+### 2.1 Migration to ShadowDecisionConsumer
+
+M3.11 должен выделить `ShadowDecisionConsumer.consume(event, snapshot,
+decision_result, coordination_id)`. Consumer сохраняет создание shadow record и
+observer semantics, но не читает cache, не строит snapshot, не запускает pipeline,
+не подписывается на dispatcher и не дублирует source-event dedup.
+
+Event-level lifecycle/counters переходят coordinator. Consumer status ограничен
+`handled_decisions`, `successful_records`, `observation_failures`, `last_record` и
+`last_error`. Существующий engine может остаться compatibility wrapper только при
+доказанной необходимости; composition root выбирает ровно один active decision path.
 
 ## 3. Рекомендуемый public API
 

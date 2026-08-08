@@ -69,8 +69,8 @@ testnet, live capital, margin, futures, leverage или short. Этот design �
 
 ```text
 CandleClosed
-  -> Trading Decision Engine
-  -> TradingDecisionResult
+  -> TradingDecisionCoordinator
+  -> one MarketSnapshot + one DecisionPipelineResult
   -> PaperTradingEngine
   -> RiskManager.evaluate(intent, portfolio_snapshot, market_snapshot)
   -> RiskDecision
@@ -458,11 +458,13 @@ domain ports, но risk/portfolio не импортируют paper adapter ил
    ownership, atomicity, recovery и final implementation contract — **completed**.
 8. **M3.9 — Paper Trading Engine Implementation:** in-memory orchestration и offline
    HOLD -> BUY -> HOLD -> SELL flow — **completed; final safety review passed**.
-9. **M3.10 — Shared Decision Runtime Coordination:** feature-flagged delivery одного
-   DecisionPipelineResult в shadow и paper consumers без повторного Strategy run.
-10. **M3.11 — Persistence and Audit:** SQLite adapters, journal, restart recovery и
+9. **M3.10 — Shared Decision Runtime Coordination Design:** единый coordinator,
+   feature matrix, consumer isolation и event-level dedup — **completed; design review passed**.
+10. **M3.11 — Shared Decision Runtime Coordination Implementation:** feature-flagged
+   delivery одного DecisionPipelineResult в shadow и paper без повторного Strategy run.
+11. **M3.12 — Persistence, Audit and Recovery:** SQLite adapters, journal, restart recovery и
    reconciliation.
-11. **M3.12 — Stage 3 Completion:** backtest/replay parity, controlled paper smoke,
+12. **M3.13 — Stage 3 Completion:** backtest/replay parity, controlled paper smoke,
    quality evidence и отдельный review. Testnet/live остаются закрыты.
 
 ## 18. Открытые вопросы
@@ -476,7 +478,8 @@ domain ports, но risk/portfolio не импортируют paper adapter ил
    использует bounded FIFO по `fill_id`.
 5. **Решено в M3.7:** будущий общий runtime coordinator вычисляет один
    `DecisionPipelineResult` и передаёт его независимым shadow и paper consumers;
-   двойной запуск pipeline запрещён. Runtime wiring вынесен в M3.10.
+   двойной запуск pipeline запрещён. M3.10 зафиксировал точный contract, а runtime
+   wiring вынесен в M3.11.
 6. Утвердить semantics peak equity/drawdown при внешнем deposit/withdrawal; в первой
    версии внешние cash flows запрещены.
 7. Определить момент внедрения trading events: рекомендация — после устойчивого

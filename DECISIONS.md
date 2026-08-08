@@ -379,3 +379,48 @@
 - **Решение:** Engine вызывает один injected observer после определения и commit бизнес-результата, затем фиксирует delivery status в immutable result и dedup registry. Ошибка observer даёт явную degradation доставки, не откатывает Portfolio и не повторяет Risk/Execution.
 - **Причины:** Разделение финансового состояния и best-effort наблюдаемости, однозначный результат для caller-а.
 - **Последствия:** Dedup hit не публикуется повторно; fan-out реализуется отдельным observer adapter; durable delivery/replay отсутствуют до persistence.
+
+## ADR-043: One shared decision evaluation feeds all runtime consumers
+
+- **Статус:** предложение
+- **Дата:** 2026-08-08
+- **Контекст:** Независимые shadow и paper event paths повторно строили бы snapshot и запускали Strategy/Pipeline для одного `CandleClosed`, создавая разные IDs и потенциально разные решения.
+- **Решение:** Runtime создаёт ровно один `MarketSnapshot` и вызывает `TradingDecisionPipeline.evaluate()` ровно один раз на уникальный source event. Shadow и paper получают те же экземпляры snapshot, result, signal и intent.
+- **Причины:** Одна торговая гипотеза на событие, воспроизводимость, единая audit chain и отсутствие расхождения consumers.
+- **Последствия:** Все decision consumers подключаются только после общего coordinator; самостоятельный Shadow Engine не может одновременно оставаться активным runtime subscriber.
+
+## ADR-044: TradingDecisionCoordinator owns CandleClosed decision orchestration
+
+- **Статус:** предложение
+- **Дата:** 2026-08-08
+- **Контекст:** Event subscription, cache consistency, snapshot creation, pipeline evaluation и fan-out являются application/runtime orchestration, а не торговой доменной логикой.
+- **Решение:** `TradingDecisionCoordinator` становится единственным decision-path subscriber на `CandleClosed`, владеет только своей subscription, bounded dedup и status, а зависимости и их lifecycle принадлежат composition root.
+- **Причины:** Явная ownership boundary, тестируемый lifecycle и запрет скрытого повторного запуска Strategy.
+- **Последствия:** Coordinator размещается в `app/coordination`, не содержит Strategy/Risk/Execution/Portfolio logic и не закрывает dispatcher или provider.
+
+## ADR-045: Consumer failures are isolated after shared decision creation
+
+- **Статус:** предложение
+- **Дата:** 2026-08-08
+- **Контекст:** Shadow observation и paper mutation имеют разные failure domains; сбой одного не должен отменять общий decision или препятствовать другому consumer.
+- **Решение:** Consumers вызываются детерминированно: shadow, затем paper. Обычный `Exception` одного consumer классифицируется и не препятствует другому; `BaseException` не подавляется. Trading outcome отделён от delivery outcome.
+- **Причины:** Непрерывность ingestion/shadow analysis, честная диагностика partial delivery и отсутствие ложной общей транзакции.
+- **Последствия:** Coordination result хранит отдельные статусы/errors; после consumer attempt final result сохраняется и duplicate не повторяет side effects.
+
+## ADR-046: Event-level shared-decision deduplication is bounded and process-local
+
+- **Статус:** предложение
+- **Дата:** 2026-08-08
+- **Контекст:** Повторная доставка `CandleClosed` может повторно вычислить decision и вызвать consumers, а durable journal пока отсутствует.
+- **Решение:** Coordinator использует bounded FIFO по `source_event_id` и хранит immutable final result. Pre-decision failures не кэшируются; после любого consumer attempt результат завершается и кэшируется независимо от delivery failure.
+- **Причины:** Предотвращение повторных shadow/paper side effects при partial delivery и возможность повторить transient pre-decision failure.
+- **Последствия:** Защита ограничена process lifetime и capacity, internal retry отсутствует, durable exactly-once не обещается.
+
+## ADR-047: Paper degradation does not stop shadow analysis
+
+- **Статус:** предложение
+- **Дата:** 2026-08-08
+- **Контекст:** `PaperTradingEngine.DEGRADED` означает неоднозначное финансовое состояние, но не повреждение market ingestion или общего аналитического pipeline.
+- **Решение:** Coordinator продолжает shared decision и shadow path, но не вызывает degraded paper engine и отмечает paper как `UNAVAILABLE` до внешней reconciliation и пересоздания.
+- **Причины:** Безопасность Portfolio при сохранении наблюдаемости и рыночной аналитики.
+- **Последствия:** Paper degradation не останавливает ingestion; coordinator не выполняет reset/recovery и ведёт отдельный `paper_unavailable` counter.
