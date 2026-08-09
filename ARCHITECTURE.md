@@ -471,7 +471,9 @@ PaperTradingEngine реализован и прошёл final safety review в M
 14. Portfolio атомарно и идемпотентно применяет Fill; execution не меняет его напрямую.
 15. PaperTradingEngine по утверждённому M3.8 контракту формирует единый immutable cycle result и compact
     observer record; HOLD и declined cycles обновляют только valuation.
-16. Каждое решение и изменение состояния записывается для аудита и аналитики.
+16. В текущем M3.11 runtime audit/result остаются in-memory и в logs. Целевая
+    M3.13–M3.14 persistence boundary записывает decision claim, valuation, risk,
+    execution, Fill и Portfolio transition в один authoritative durable journal.
 
 Для paper-only dust liquidation Portfolio допускает исключение из minimum quantity/
 notional только для SELL всей текущей позиции с явным immutable Fill marker. Это не
@@ -506,6 +508,40 @@ Live-режим должен быть запрещён по умолчанию �
 - предусмотрен kill switch;
 - лимиты позиции, дневного убытка и просадки применяются независимо от стратегии;
 - каждое решение имеет audit trail с версией стратегии и конфигурации.
+
+### Durable paper persistence boundary
+
+M3.12 design и final design review утверждают направление, но не меняют runtime
+behavior:
+
+```text
+CandleClosed
+-> TradingDecisionCoordinator
+-> one DecisionPipelineResult
+-> Paper Cycle Unit of Work
+     -> deterministic Risk / Paper Execution / Portfolio transition
+     -> append-only Trading Journal
+     -> verified Portfolio Checkpoint
+-> COMMIT
+-> observer
+```
+
+Journal является authoritative source для финансовых mutations; checkpoint — только
+проверяемая recovery optimization. Durable stable decision key строится независимо от
+runtime UUID и включает fingerprint фактического ordered Strategy input window,
+strategy/planner versions и config fingerprints. Отдельный command key включает
+approved Risk, policy/rules и execution configuration. Decision claim, command, Fill,
+valuation, Portfolio transition/current projection и terminal cycle commit-ятся в
+одной application-level transaction. Domain, Risk, Portfolio, Strategy и Paper
+Execution не зависят от SQLite.
+
+После restart bounded coordinator/paper/fill caches остаются только fast-path. Startup
+обязан открыть storage, проверить schema/integrity, восстановить Portfolio через
+checkpoint + journal replay и завершить reconciliation до подписки coordinator.
+Неоднозначное или повреждённое financial state приводит к `RECOVERY_REQUIRED`; fallback
+к пустому Portfolio и автоматическое «исправление» денег запрещены. Observer вызывается
+после business commit и не может инициировать повторный Fill. Подробный контракт:
+`PERSISTENCE_RECOVERY_DESIGN.md`, ADR-048–054 (proposal).
 
 ## 13. Тестовая стратегия
 

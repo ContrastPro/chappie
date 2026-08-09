@@ -553,12 +553,12 @@ not an audit store.
 
 ## 19. Persistence and crash gaps
 
-Before durable paper runtime, M3.12 must add:
+M3.12 design completed the required persistence contract:
 
 - cycle, RiskDecision, execution and Fill journal records;
-- Portfolio snapshot/state repository;
+- append-only authoritative journal plus verified Portfolio checkpoints;
 - journal ordering and unique dedup keys;
-- recovery of Fill-created/Portfolio-not-applied cycles;
+- one application-level transaction covering execution/Fill and Portfolio transition;
 - startup reconciliation and observer replay policy.
 
 Without it, dedup and Portfolio reset on restart, audit is memory-only, and a crash
@@ -573,7 +573,8 @@ or durable-audit claim.
 
 A process crash after Portfolio commit but before observer/dedup finalization can also
 lose the completed-cycle registry entry. This is an explicitly accepted M3.9 gap and
-is another reason runtime wiring waits for journal/reconciliation design.
+is resolved only after M3.13–M3.14 implementation. The normative design is
+`PERSISTENCE_RECOVERY_DESIGN.md`; current M3.11 runtime behavior remains unchanged.
 
 ## 20. Security boundary
 
@@ -613,10 +614,11 @@ is another reason runtime wiring waits for journal/reconciliation design.
 6. **Portfolio failure after Fill:** typed failure context; no retry before journal.
 7. **Common coordinator:** M3.10 design and review completed. It computes one
    shared decision, isolates consumers and prevents duplicate runtime Strategy runs.
-8. **Persistence order:** append decision/risk/execution intent before Portfolio commit,
-   then commit marker and snapshot in a recoverable transaction design.
+8. **Persistence order:** M3.12 review requires one transaction for decision claim,
+   command/risk/execution/Fill, staged valuation/Portfolio transition, current state and
+   terminal cycle; in-memory Portfolio synchronizes only after COMMIT.
 9. **Cycle journal schema:** stable IDs, versions, stages, outcomes and checksums;
-   full schema belongs to M3.12.
+   design-level schema and constraints are fixed by M3.12 final review.
 10. **Feature flags:** common pipeline exists if either consumer is enabled; paper flag
     can never select live execution.
 11. **Ambiguous failure:** mark the engine `DEGRADED` and reject new work; reconstruct
@@ -630,8 +632,11 @@ is another reason runtime wiring waits for journal/reconciliation design.
 - M3.9: in-memory PaperTradingEngine, models, observer port and offline tests —
   **completed; final safety review passed**.
 - M3.10: shared decision runtime coordination design — completed; review passed.
-- M3.11: implement feature-flagged coordinator and shadow consumer after review.
-- M3.11 implementation completed; final safety review pending. Paper runtime is
-  reached only through the shared coordinator and existing `process()` API.
-- M3.12: persistence, journal, recovery and reconciliation.
-- M3.13: Stage 3 completion evidence and controlled paper smoke review.
+- M3.11: feature-flagged coordinator and shadow consumer — **completed; final safety
+  review passed**. Paper runtime is reached only through the shared coordinator.
+- M3.12: persistence, journal, durable idempotency and recovery design — **completed;
+  final design review passed**.
+- M3.13: Persistence Core and SQLite adapter.
+- M3.14: runtime recovery integration.
+- M3.15: crash/restart safety review.
+- M3.16: Stage 3 completion evidence and controlled paper smoke review.

@@ -417,8 +417,10 @@ HOLD plus mark-to-market is sufficient evidence; BUY/SELL is not guaranteed.
 
 M3.10/M3.11 provide no journal, durable replay, restart recovery or durable
 exactly-once. Dedup and Portfolio are lost on restart. Consumer retry is absent
-because partial delivery may already have side effects. M3.12 defines journaling and
-reconciliation before any durable paper runtime claim.
+because partial delivery may already have side effects. M3.12 now defines the
+append-only journal, checkpoint, stable-key, transaction and fail-closed recovery
+contract in `PERSISTENCE_RECOVERY_DESIGN.md`; those guarantees begin only after
+M3.13–M3.14 implementation and review.
 
 ## 22. Design-review resolutions and deferred implementation details
 

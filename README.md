@@ -129,3 +129,9 @@ enables observational delivery; `PAPER_TRADING_ENABLED=true` enables determinist
 in-memory paper execution. Either flag creates one `TradingDecisionCoordinator`, so
 Strategy/Pipeline is evaluated once per confirmed candle. Paper mode uses no private
 Binance endpoint and provides no restart recovery or durable exactly-once guarantee.
+
+The reviewed M3.12 persistence direction is documented in
+[`PERSISTENCE_RECOVERY_DESIGN.md`](PERSISTENCE_RECOVERY_DESIGN.md): an append-only
+authoritative paper journal, verified Portfolio checkpoints, stable restart identities
+and fail-closed recovery. It is design-only; the current runtime remains in-memory
+until M3.13–M3.14 implementation.

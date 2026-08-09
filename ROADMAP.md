@@ -284,11 +284,35 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 
 #### M3.12 Persistence, Audit and Recovery
 
-Статус: **next after M3.11**.
+Статус: **design completed; final design review passed; implementation pending**
+(2026-08-08).
 
-- Реализовать SQLite journal, audit persistence, recovery и reconciliation.
+- Спроектированы authoritative append-only journal, verified Portfolio checkpoints,
+  stable decision/execution keys, единая durable paper transaction и fail-closed
+  recovery. Контракт зафиксирован в `PERSISTENCE_RECOVERY_DESIGN.md`.
 
-#### M3.13 Stage 3 completion
+#### M3.13 Persistence Core and SQLite adapter
+
+Статус: **next after M3.12**.
+
+- Реализовать canonical durable keys/records, persistence ports, journal/checkpoint
+  core, migrations и первый SQLite adapter без runtime wiring.
+
+#### M3.14 Runtime Recovery Integration
+
+Статус: **pending**.
+
+- Подключить Paper Cycle Unit of Work, startup recovery, Portfolio restore, durable
+  idempotency и composition lifecycle до подписки coordinator.
+
+#### M3.15 Crash and Restart Safety Review
+
+Статус: **pending**.
+
+- Подтвердить failpoints до/после commit, exact restart reconstruction, corruption
+  handling, locking и отсутствие duplicate Fill.
+
+#### M3.16 Stage 3 completion
 
 Статус: **pending**.
 

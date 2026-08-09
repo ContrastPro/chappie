@@ -355,11 +355,11 @@ M3.2 не расширяет Market Events торговыми событиями
 `PaperOrderCreated`, `PaperFillCreated`, `PortfolioChanged` публикуются только после
 соответствующего commit; их ordering/delivery требует отдельного ADR.
 
-Предлагаемые persistence ports: `PortfolioRepository`, `ExecutionJournal`,
-`TradingAuditRepository`, `PerformanceRepository`. SQLite остаётся будущим adapter.
-Persistence не входит в минимальный M3.2, но durable journal, restart recovery и
-reconciliation обязательны до testnet/live и до заявления о надёжном долгоживущем
-paper runtime.
+M3.12 заменяет ранний набор независимых repository proposals единым transactional
+`TradingPersistence` / `PaperCycleTransaction` boundary: authoritative append-only
+journal и verified Portfolio checkpoints должны commit-ить Fill, valuation и
+Portfolio transition атомарно. SQLite остаётся первым adapter, но domain и aggregate
+от него не зависят. Полный контракт: `PERSISTENCE_RECOVERY_DESIGN.md`, ADR-048–054.
 
 Audit record связывает source event, snapshot, signal, intent, risk policy и limits,
 order, fill, portfolio versions, metrics и model/config versions. Секретов в нём нет.
@@ -462,10 +462,17 @@ domain ports, но risk/portfolio не импортируют paper adapter ил
    feature matrix, consumer isolation и event-level dedup — **completed; design review passed**.
 10. **M3.11 — Shared Decision Runtime Coordination Implementation:** feature-flagged
    delivery одного DecisionPipelineResult в shadow и paper без повторного Strategy run
-   — **implementation completed; final safety review pending**.
-11. **M3.12 — Persistence, Audit and Recovery:** SQLite adapters, journal, restart recovery и
-   reconciliation.
-12. **M3.13 — Stage 3 Completion:** backtest/replay parity, controlled paper smoke,
+   — **completed; final safety review passed**.
+11. **M3.12 — Persistence, Audit and Recovery Design:** journal/checkpoint model,
+   stable durable keys, transaction и fail-closed recovery — **design completed;
+   final design review passed**.
+12. **M3.13 — Persistence Core and SQLite Adapter:** ports, records, migrations,
+   journal/checkpoints и adapter без runtime wiring.
+13. **M3.14 — Runtime Recovery Integration:** durable Paper Unit of Work, startup
+   recovery и composition lifecycle.
+14. **M3.15 — Crash/Restart Safety Review:** failpoints, reconstruction, corruption
+   и locking review.
+15. **M3.16 — Stage 3 Completion:** backtest/replay parity, controlled paper smoke,
    quality evidence и отдельный review. Testnet/live остаются закрыты.
 
 ## 18. Открытые вопросы
