@@ -427,7 +427,8 @@
 
 ## ADR-048: Paper trading uses an append-only journal plus Portfolio checkpoints
 
-- **Статус:** предложение
+- **Статус:** принято
+- **Дата принятия:** 2026-08-09 (M3.15 crash/restart safety review)
 - **Дата:** 2026-08-08
 - **Контекст:** Snapshot-only storage не доказывает историю Fill и не позволяет надёжно классифицировать crash, а replay полного журнала без checkpoints неограниченно увеличивает startup time.
 - **Решение:** Authoritative source для paper mutations — append-only durable trading journal. Периодические verified Portfolio checkpoints являются только recovery optimization и ссылаются на точный journal sequence/state digest.
@@ -436,7 +437,8 @@
 
 ## ADR-049: SQLite is the first local persistence adapter
 
-- **Статус:** предложение
+- **Статус:** принято
+- **Дата принятия:** 2026-08-09 (M3.15 crash/restart safety review)
 - **Дата:** 2026-08-08
 - **Контекст:** Текущий paper runtime однопроцессный, синхронный и имеет одного writer, поэтому отдельный database server пока не оправдан.
 - **Решение:** Первый adapter использует SQLite за application persistence ports; SQLite imports и connection/transaction ownership остаются только в adapter/composition layer.
@@ -445,7 +447,8 @@
 
 ## ADR-050: Financial Decimal values are persisted losslessly
 
-- **Статус:** предложение
+- **Статус:** принято
+- **Дата принятия:** 2026-08-09 (M3.15 crash/restart safety review)
 - **Дата:** 2026-08-08
 - **Контекст:** SQLite REAL и float не обеспечивают exact reconciliation финансовых значений и делают digest/replay зависимыми от округления.
 - **Решение:** Все financial Decimal сохраняются как валидированные canonical base-10 TEXT values; NaN/Infinity и float intermediates запрещены.
@@ -454,7 +457,8 @@
 
 ## ADR-051: Durable idempotency uses stable decision and execution keys
 
-- **Статус:** предложение
+- **Статус:** принято
+- **Дата принятия:** 2026-08-09 (M3.15 crash/restart safety review)
 - **Дата:** 2026-08-08
 - **Контекст:** Runtime UUID, `source_event_id` и `intent_id` меняются при restart/replay и не предотвращают повторный Fill для той же strategy/candle semantics.
 - **Решение:** Durable decision key — SHA-256 от versioned canonical fingerprint фактического ordered Strategy input window, latest candle, snapshot policy и strategy/planner identity/configuration. От него, approved Risk authorization, policy/rules и execution configuration выводится отдельный durable command key. Correlation UUID не используются как idempotency keys.
@@ -463,7 +467,8 @@
 
 ## ADR-052: Paper execution and Portfolio mutation share one durable transaction
 
-- **Статус:** предложение
+- **Статус:** принято
+- **Дата принятия:** 2026-08-09 (M3.15 crash/restart safety review)
 - **Дата:** 2026-08-08
 - **Контекст:** Crash между stateless paper Fill creation и in-memory `Portfolio.apply_fill()` создаёт риск второго Fill и неоднозначное финансовое состояние.
 - **Решение:** Application-level Paper Cycle Unit of Work атомарно commit-ит decision claim, risk/execution/fill facts, valuation/Portfolio transition и terminal cycle state. `PaperExecutionProvider` остаётся deterministic calculator без database access.
@@ -472,7 +477,8 @@
 
 ## ADR-053: Recovery fails closed on ambiguous or corrupted financial state
 
-- **Статус:** предложение
+- **Статус:** принято
+- **Дата принятия:** 2026-08-09 (M3.15 crash/restart safety review)
 - **Дата:** 2026-08-08
 - **Контекст:** Автоматическое округление, удаление конфликтующей записи или fallback к пустому Portfolio способны скрыть финансовое повреждение.
 - **Решение:** Schema mismatch, malformed Decimal, broken FK/digest, impossible lifecycle/Portfolio state или conflicting duplicate приводят к `RECOVERY_REQUIRED`; decision runtime не стартует до доказуемой reconciliation.
@@ -481,7 +487,8 @@
 
 ## ADR-054: Observation delivery follows durable business commit
 
-- **Статус:** предложение
+- **Статус:** принято
+- **Дата принятия:** 2026-08-09 (M3.15 crash/restart safety review)
 - **Дата:** 2026-08-08
 - **Контекст:** Observer/logging являются best-effort side effects и не должны определять, был ли Fill/Portfolio transition committed.
 - **Решение:** Observer вызывается только после durable business commit. Delivery status может сохраняться отдельно, но observer failure или missing delivery никогда не вызывает trade replay и не меняет business outcome.

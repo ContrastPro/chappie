@@ -147,6 +147,23 @@ def test_preview_restore_and_committed_transition_are_explicit_and_atomic() -> N
     assert restored.snapshot == account.snapshot
 
 
+def test_committed_transition_batch_is_atomic_on_late_conflict() -> None:
+    account = Portfolio(config())
+    before = account.snapshot
+    valuation = account.preview_mark_to_market(D("100"), 1, "cycle-1")
+    execution = fill("batch-fill", FillSide.BUY, "1", "100", "0.10")
+    applied = account.preview_fill(execution, D("100"), base_state=valuation.after)
+    other_valuation = Portfolio(config()).preview_mark_to_market(D("101"), 1, "other-cycle")
+    conflicting = account.preview_fill(execution, D("100"), base_state=other_valuation.after)
+
+    with pytest.raises(PortfolioTransitionConflictError):
+        account.apply_committed_transitions((valuation, conflicting))
+
+    assert account.snapshot == before
+    assert account.apply_committed_transitions((valuation, applied)) == applied.after
+    assert account.apply_committed_transitions((valuation, applied)) == applied.after
+
+
 def test_restore_rejects_config_identity_and_initial_equity_mismatch() -> None:
     snapshot = Portfolio(config()).snapshot
     with pytest.raises(PortfolioRestoreError):

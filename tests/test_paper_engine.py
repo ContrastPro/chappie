@@ -150,7 +150,7 @@ class CorruptApplyPortfolio(Portfolio):
 
 
 class BrokenCommittedSyncPortfolio(Portfolio):
-    def apply_committed_transition(self, transition: object) -> object:
+    def apply_committed_transitions(self, transitions: object) -> object:
         raise RuntimeError("committed sync unavailable")
 
 
@@ -163,6 +163,62 @@ class CommitFailingPersistence(SQLiteTradingPersistence):
             raise RuntimeError("injected commit failure")
 
         transaction.commit = fail_commit  # type: ignore[method-assign]
+        return transaction
+
+
+class CrashInjectedPersistence(SQLiteTradingPersistence):
+    def __init__(self, config: SQLitePersistenceConfig, failpoint: str) -> None:
+        super().__init__(config)
+        self.failpoint = failpoint
+
+    def begin_cycle(self):  # type: ignore[no-untyped-def]
+        if self.failpoint in {"BEFORE_TRANSACTION", "AFTER_FILL_CREATED_IN_MEMORY"}:
+            raise RuntimeError("injected crash before transaction")
+        transaction = super().begin_cycle()
+        methods = {
+            "AFTER_DECISION_CLAIM": "claim_decision",
+            "AFTER_COMMAND_CLAIM": "record_command",
+            "AFTER_FILL_PERSISTED": "record_fill",
+            "AFTER_PORTFOLIO_CURRENT_WRITE": "set_portfolio_current",
+            "AFTER_TERMINAL_CYCLE_WRITE": "mark_terminal",
+        }
+        method_name = methods.get(self.failpoint)
+        if method_name is not None:
+            original = getattr(transaction, method_name)
+
+            def fail_after(*args: object, **kwargs: object) -> object:
+                original(*args, **kwargs)
+                raise RuntimeError(f"injected crash at {self.failpoint}")
+
+            setattr(transaction, method_name, fail_after)
+        if self.failpoint in {
+            "AFTER_FIRST_PORTFOLIO_TRANSITION",
+            "AFTER_FINAL_PORTFOLIO_TRANSITION",
+        }:
+            original_transition = transaction.record_portfolio_transition
+            calls = 0
+
+            def fail_transition(*args: object, **kwargs: object) -> object:
+                nonlocal calls
+                result = original_transition(*args, **kwargs)
+                calls += 1
+                expected = 1 if self.failpoint == "AFTER_FIRST_PORTFOLIO_TRANSITION" else 2
+                if calls == expected:
+                    raise RuntimeError(f"injected crash at {self.failpoint}")
+                return result
+
+            transaction.record_portfolio_transition = fail_transition  # type: ignore[method-assign]
+        if self.failpoint in {"BEFORE_COMMIT", "AFTER_COMMIT"}:
+            original_commit = transaction.commit
+
+            def fail_commit() -> None:
+                if self.failpoint == "BEFORE_COMMIT":
+                    transaction.rollback()
+                    raise RuntimeError("injected crash before commit")
+                original_commit()
+                raise RuntimeError("injected lost commit acknowledgement")
+
+            transaction.commit = fail_commit  # type: ignore[method-assign]
         return transaction
 
 
@@ -1216,6 +1272,242 @@ def test_durable_full_restart_reuses_terminal_sell_without_second_fill(tmp_path)
     assert continued.durable_committed is True
     assert continued.portfolio_after.version == committed.version + 1
     adapter_b.close()
+
+
+@pytest.mark.parametrize(
+    ("failpoint", "committed"),
+    [
+        ("BEFORE_TRANSACTION", False),
+        ("AFTER_FILL_CREATED_IN_MEMORY", False),
+        ("AFTER_DECISION_CLAIM", False),
+        ("AFTER_COMMAND_CLAIM", False),
+        ("AFTER_FILL_PERSISTED", False),
+        ("AFTER_FIRST_PORTFOLIO_TRANSITION", False),
+        ("AFTER_FINAL_PORTFOLIO_TRANSITION", False),
+        ("AFTER_PORTFOLIO_CURRENT_WRITE", False),
+        ("AFTER_TERMINAL_CYCLE_WRITE", False),
+        ("BEFORE_COMMIT", False),
+        ("AFTER_COMMIT", True),
+    ],
+)
+def test_crash_restart_transaction_matrix_has_only_rollback_or_committed_truth(
+    tmp_path, failpoint: str, committed: bool
+) -> None:
+    database = tmp_path / f"{failpoint.lower()}.sqlite3"
+    old_account = portfolio()
+    old_adapter = CrashInjectedPersistence(SQLitePersistenceConfig(database), failpoint)
+    old_adapter.initialize_portfolio(
+        InitialPortfolioRecord(snapshot_to_state(old_account.snapshot), "9" * 64, 0)
+    )
+    old_execution_ids = Ids("old-execution")
+    old_fill_ids = Ids("old-fill")
+    old_execution = PaperExecutionProvider(
+        PaperExecutionConfig(), rules(), old_execution_ids, old_fill_ids
+    )
+    snapshot = market_at_1000()
+    source = decision(snapshot, PipelineOutcome.INTENT_CREATED)
+
+    with pytest.raises(PaperTradingPortfolioError, match="durable"):
+        engine(
+            account=old_account,
+            execution=old_execution,
+            durable_store=durable_store(old_adapter),
+        ).process(source, snapshot)
+
+    assert old_account.snapshot.version == 0
+    assert old_execution_ids.calls == old_fill_ids.calls == 1
+    expected = 1 if committed else 0
+    for table in ("paper_decisions", "paper_commands", "fills"):
+        assert (
+            old_adapter._connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+            == expected
+        )
+    assert old_adapter._connection.execute("SELECT count(*) FROM journal_entries").fetchone()[
+        0
+    ] == (2 if committed else 0)
+    old_adapter.close()
+
+    new_adapter = SQLiteTradingPersistence(SQLitePersistenceConfig(database))
+    recovered = new_adapter.recover("portfolio-1", expected_config_fingerprint="9" * 64)
+    assert recovered.portfolio_state is not None
+    new_account = Portfolio.restore(
+        portfolio_config(), state_to_snapshot(recovered.portfolio_state)
+    )
+    new_risk_ids = Ids("new-risk")
+    new_risk = RiskManager(
+        PortfolioRiskPolicy(max_order_notional=D("10000"), max_position_notional=D("10000")),
+        rules(),
+        new_risk_ids,
+    )
+    new_execution_ids = Ids("new-execution")
+    new_fill_ids = Ids("new-fill")
+    new_execution = PaperExecutionProvider(
+        PaperExecutionConfig(), rules(), new_execution_ids, new_fill_ids
+    )
+    restarted = engine(
+        account=new_account,
+        risk=new_risk,
+        execution=new_execution,
+        durable_store=durable_store(new_adapter),
+    )
+    result = restarted.process(source, snapshot)
+
+    if committed:
+        assert result.outcome is PaperTradingCycleOutcome.DURABLE_REPLAY
+        assert new_risk_ids.calls == new_execution_ids.calls == new_fill_ids.calls == 0
+    else:
+        assert result.outcome is PaperTradingCycleOutcome.EXECUTED
+        assert new_risk_ids.calls == new_execution_ids.calls == new_fill_ids.calls == 1
+    assert new_adapter._connection.execute("SELECT count(*) FROM fills").fetchone()[0] == 1
+    assert len(new_adapter.load_transitions("portfolio-1")) == 2
+    new_adapter.close()
+
+
+@pytest.mark.parametrize("failure", [KeyboardInterrupt(), SystemExit(2), GeneratorExit()])
+def test_durable_observer_base_exception_propagates_without_financial_replay(
+    tmp_path, failure: BaseException
+) -> None:
+    database = tmp_path / f"observer-{type(failure).__name__}.sqlite3"
+    account = portfolio()
+    adapter = SQLiteTradingPersistence(SQLitePersistenceConfig(database))
+    adapter.initialize_portfolio(
+        InitialPortfolioRecord(snapshot_to_state(account.snapshot), "9" * 64, 0)
+    )
+    snapshot = market_at_1000()
+    source = decision(snapshot, PipelineOutcome.INTENT_CREATED)
+    with pytest.raises(type(failure)):
+        engine(
+            account=account,
+            observer=Observer(failure),
+            durable_store=durable_store(adapter),
+        ).process(source, snapshot)
+    committed = account.snapshot
+    assert committed.version == 2
+    adapter.close()
+
+    reopened = SQLiteTradingPersistence(SQLitePersistenceConfig(database))
+    recovery = reopened.recover("portfolio-1", expected_config_fingerprint="9" * 64)
+    assert recovery.portfolio_state is not None
+    restored = Portfolio.restore(portfolio_config(), state_to_snapshot(recovery.portfolio_state))
+    risk_ids = Ids("replay-risk")
+    execution_ids = Ids("replay-execution")
+    fill_ids = Ids("replay-fill")
+    replay = engine(
+        account=restored,
+        risk=RiskManager(
+            PortfolioRiskPolicy(max_order_notional=D("10000"), max_position_notional=D("10000")),
+            rules(),
+            risk_ids,
+        ),
+        execution=PaperExecutionProvider(PaperExecutionConfig(), rules(), execution_ids, fill_ids),
+        durable_store=durable_store(reopened),
+    ).process(source, snapshot)
+    assert replay.outcome is PaperTradingCycleOutcome.DURABLE_REPLAY
+    assert restored.snapshot == committed
+    assert risk_ids.calls == execution_ids.calls == fill_ids.calls == 0
+    reopened.close()
+
+
+def test_committed_decision_survives_five_fresh_runtime_duplicate_storm(tmp_path) -> None:
+    database = tmp_path / "duplicate-storm.sqlite3"
+    account = portfolio()
+    adapter = SQLiteTradingPersistence(SQLitePersistenceConfig(database))
+    adapter.initialize_portfolio(
+        InitialPortfolioRecord(snapshot_to_state(account.snapshot), "9" * 64, 0)
+    )
+    snapshot = market_at_1000()
+    source = decision(snapshot, PipelineOutcome.INTENT_CREATED)
+    committed = engine(account=account, durable_store=durable_store(adapter)).process(
+        source, snapshot
+    )
+    expected_portfolio = committed.portfolio_after
+    adapter.close()
+
+    for restart in range(5):
+        reopened = SQLiteTradingPersistence(SQLitePersistenceConfig(database))
+        recovery = reopened.recover("portfolio-1", expected_config_fingerprint="9" * 64)
+        assert recovery.portfolio_state is not None
+        restored = Portfolio.restore(
+            portfolio_config(), state_to_snapshot(recovery.portfolio_state), recent_fills=()
+        )
+        risk_ids = Ids(f"risk-{restart}")
+        execution_ids = Ids(f"execution-{restart}")
+        fill_ids = Ids(f"fill-{restart}")
+        replay = engine(
+            account=restored,
+            risk=RiskManager(
+                PortfolioRiskPolicy(
+                    max_order_notional=D("10000"), max_position_notional=D("10000")
+                ),
+                rules(),
+                risk_ids,
+            ),
+            execution=PaperExecutionProvider(
+                PaperExecutionConfig(), rules(), execution_ids, fill_ids
+            ),
+            durable_store=durable_store(reopened),
+        ).process(source, snapshot)
+        assert replay.outcome is PaperTradingCycleOutcome.DURABLE_REPLAY
+        assert restored.snapshot == expected_portfolio
+        assert risk_ids.calls == execution_ids.calls == fill_ids.calls == 0
+        assert reopened._connection.execute("SELECT count(*) FROM fills").fetchone()[0] == 1
+        assert len(reopened.load_transitions("portfolio-1")) == 2
+        reopened.close()
+
+
+@pytest.mark.parametrize(
+    ("terminal", "expected_outcome", "expected_commands"),
+    [
+        ("risk_rejected", PaperTradingCycleOutcome.RISK_REJECTED, 0),
+        ("not_executed", PaperTradingCycleOutcome.NOT_EXECUTED, 1),
+    ],
+)
+def test_non_fill_terminal_outcomes_replay_without_risk_or_execution(
+    tmp_path, terminal: str, expected_outcome: PaperTradingCycleOutcome, expected_commands: int
+) -> None:
+    database = tmp_path / f"{terminal}.sqlite3"
+    account = portfolio()
+    adapter = SQLiteTradingPersistence(SQLitePersistenceConfig(database))
+    adapter.initialize_portfolio(
+        InitialPortfolioRecord(snapshot_to_state(account.snapshot), "9" * 64, 0)
+    )
+    snapshot = market_at_1000()
+    if terminal == "risk_rejected":
+        snapshot = replace(snapshot, is_stale=True, staleness_ms=1)
+        execution = None
+    else:
+        execution = NotExecuted(rules())
+    source = decision(snapshot, PipelineOutcome.INTENT_CREATED)
+    first = engine(
+        account=account,
+        execution=execution,
+        durable_store=durable_store(adapter),
+    ).process(source, snapshot)
+    assert first.outcome is expected_outcome
+    adapter.close()
+
+    reopened = SQLiteTradingPersistence(SQLitePersistenceConfig(database))
+    recovery = reopened.recover("portfolio-1", expected_config_fingerprint="9" * 64)
+    assert recovery.portfolio_state is not None
+    restored = Portfolio.restore(portfolio_config(), state_to_snapshot(recovery.portfolio_state))
+    replay = engine(
+        account=restored,
+        risk=BrokenRisk(
+            PortfolioRiskPolicy(max_order_notional=D("10000"), max_position_notional=D("10000")),
+            rules(),
+            Ids("must-not-run-risk"),
+        ),
+        execution=BrokenExecution(rules()),
+        durable_store=durable_store(reopened),
+    ).process(source, snapshot)
+    assert replay.outcome is PaperTradingCycleOutcome.DURABLE_REPLAY
+    assert replay.metadata["original_durable_outcome"] == terminal.upper()
+    assert reopened._connection.execute("SELECT count(*) FROM fills").fetchone()[0] == 0
+    assert (
+        reopened._connection.execute("SELECT count(*) FROM paper_commands").fetchone()[0]
+        == expected_commands
+    )
+    reopened.close()
 
 
 def test_durable_hold_persists_valuation_and_restores_exactly(tmp_path) -> None:

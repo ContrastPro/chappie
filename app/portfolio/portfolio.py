@@ -212,30 +212,42 @@ class Portfolio:
         self, transition: PortfolioTransitionPreview
     ) -> PortfolioSnapshot:
         """Synchronize memory only after the caller has durably committed transition."""
-        if not isinstance(transition, PortfolioTransitionPreview):
+        return self.apply_committed_transitions((transition,))
+
+    def apply_committed_transitions(
+        self, transitions: tuple[PortfolioTransitionPreview, ...]
+    ) -> PortfolioSnapshot:
+        """Atomically synchronize one committed durable cycle into memory."""
+        if not isinstance(transitions, tuple) or any(
+            not isinstance(transition, PortfolioTransitionPreview) for transition in transitions
+        ):
             raise PortfolioTransitionConflictError(
-                "transition must be a PortfolioTransitionPreview"
+                "transitions must be a tuple of PortfolioTransitionPreview values"
             )
-        current = self._snapshot
-        if current == transition.after:
+        if transitions and self._snapshot == transitions[-1].after:
             return self.snapshot
-        if current != transition.before:
-            raise PortfolioTransitionConflictError(
-                "committed transition does not extend current Portfolio state"
-            )
-        registry = self._applied_fills.copy()
-        if transition.fill is not None:
-            fill = transition.fill
-            if not isinstance(fill, Fill):
-                raise PortfolioTransitionConflictError("transition Fill is invalid")
-            existing = registry.get(fill.fill_id)
-            if existing is not None and existing != fill:
-                raise PortfolioTransitionConflictError("committed Fill conflicts with registry")
-            registry[fill.fill_id] = fill
-            if len(registry) > self._config.applied_fill_id_capacity:
-                registry.popitem(last=False)
-        self._snapshot = replace(transition.after)
-        self._applied_fills = registry
+        staged_snapshot = self._snapshot
+        staged_registry = self._applied_fills.copy()
+        for transition in transitions:
+            if staged_snapshot == transition.after:
+                continue
+            if staged_snapshot != transition.before:
+                raise PortfolioTransitionConflictError(
+                    "committed transition does not extend current Portfolio state"
+                )
+            if transition.fill is not None:
+                fill = transition.fill
+                if not isinstance(fill, Fill):
+                    raise PortfolioTransitionConflictError("transition Fill is invalid")
+                existing = staged_registry.get(fill.fill_id)
+                if existing is not None and existing != fill:
+                    raise PortfolioTransitionConflictError("committed Fill conflicts with registry")
+                staged_registry[fill.fill_id] = fill
+                if len(staged_registry) > self._config.applied_fill_id_capacity:
+                    staged_registry.popitem(last=False)
+            staged_snapshot = transition.after
+        self._snapshot = replace(staged_snapshot)
+        self._applied_fills = staged_registry
         return self.snapshot
 
     def _preview_base(self, state: PortfolioSnapshot | None) -> PortfolioSnapshot:

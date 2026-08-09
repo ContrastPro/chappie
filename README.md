@@ -135,5 +135,6 @@ The persistence architecture is documented in
 authoritative paper journal, verified Portfolio checkpoints, stable restart identities
 and fail-closed recovery. M3.13 implements the SQLite core; M3.14 integrates startup
 recovery, durable paper transactions, restart-stable identities, commit-before-memory
-synchronization and checkpoint lifecycle. M3.15 remains the dedicated crash/restart
-safety review; live execution is absent.
+synchronization and checkpoint lifecycle. The M3.15 crash/restart safety review passed;
+its failpoint matrix and operational limits are recorded in
+[`M3_15_CRASH_RESTART_REPORT.md`](M3_15_CRASH_RESTART_REPORT.md). Live execution is absent.

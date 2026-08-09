@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-Статус: **M3.14 runtime integration implemented; final safety review pending**.
+Статус: **M3.14 runtime integration completed; M3.15 safety review passed**.
 
 Дата design review: 2026-08-08. Дата M3.13 final safety review: 2026-08-09.
 
@@ -961,3 +961,17 @@ Checkpoints остаются optimization: interval и shutdown checkpoints не
 authoritative financial transaction. Missing `portfolio_current` rebuild выполняется
 явно только из verified journal head; conflicting projection автоматически не
 ремонтируется. M3.15 сохраняет отдельный crash/restart torture-review scope.
+
+## 25. M3.15 crash/restart safety review
+
+M3.15 подтвердил двухсостоянийный crash contract: до COMMIT весь cycle rollback-ится,
+после COMMIT terminal decision, optional command/Fill и Portfolio journal
+восстанавливаются новым process без повторного Risk/Execution. Lost commit
+acknowledgement переводит текущий paper engine в `DEGRADED`; restart определяет истину
+только из SQLite.
+
+Post-commit memory synchronization применяет весь valuation+Fill batch атомарно:
+ошибка в поздней transition не оставляет aggregate в промежуточном состоянии. Observer
+и checkpoint failures остаются non-financial. Полная matrix, corruption proofs и
+ограничения backup freshness/database deletion перечислены в
+`M3_15_CRASH_RESTART_REPORT.md`.

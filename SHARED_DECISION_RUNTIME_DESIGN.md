@@ -463,3 +463,11 @@ Legacy ShadowTradingDecisionEngine remains available but is no longer constructe
 application runtime when coordinator is enabled. Persistence, internal retry, threads,
 network trading and live/testnet execution remain excluded. The final safety review
 passed on 2026-08-08; bounded process-local dedup remains explicitly non-durable.
+
+## 24. M3.15 durable restart result
+
+M3.15 подтвердил, что process-local coordinator/paper/Portfolio dedup не является
+financial authority. После полного пересоздания runtime stable durable decision lookup
+возвращает `DURABLE_REPLAY`, не вызывает Risk/Execution и не создаёт второй Fill.
+Decision-slot conflict деградирует только paper path; live/testnet execution остаётся
+вне runtime.

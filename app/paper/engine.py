@@ -356,8 +356,7 @@ class PaperTradingEngine:
                 raise wrapped from error
         if durable_commit is not None:
             try:
-                for transition in transitions:
-                    self._portfolio.apply_committed_transition(transition)
+                self._portfolio.apply_committed_transitions(transitions)
             except BaseException as error:
                 wrapped = PaperTradingPortfolioError(
                     "Portfolio synchronization failed after durable commit"

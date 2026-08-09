@@ -638,7 +638,7 @@ is resolved only after M3.13–M3.14 implementation. The normative design is
   final design review passed**.
 - M3.13: Persistence Core and SQLite adapter.
 - M3.14: runtime recovery integration.
-- M3.15: crash/restart safety review.
+- M3.15: crash/restart safety review — **completed** (2026-08-09).
 
 ## 23. M3.14 durable runtime implementation
 
@@ -654,3 +654,11 @@ Execution. Observer следует за COMMIT и memory sync; observer failure 
 outcome. Commit failure оставляет memory неизменной, а sync failure после commit
 переводит engine в `DEGRADED` и требует restart recovery.
 - M3.16: Stage 3 completion evidence and controlled paper smoke review.
+
+## 24. M3.15 durable crash boundary
+
+The review proved rollback before COMMIT and durable replay after COMMIT with entirely
+new adapters, Portfolio aggregates, Risk/Execution providers and engine instances.
+Valuation plus Fill synchronization is one atomic in-memory batch after the durable
+transaction. Observer, checkpoint and shutdown failures cannot request financial replay.
+See `M3_15_CRASH_RESTART_REPORT.md` for the failpoint matrix and limitations.

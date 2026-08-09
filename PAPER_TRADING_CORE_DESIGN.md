@@ -471,14 +471,15 @@ domain ports, но risk/portfolio не импортируют paper adapter ил
 13. **M3.14 — Runtime Recovery Integration:** durable Paper Unit of Work, startup
    recovery и composition lifecycle.
 14. **M3.15 — Crash/Restart Safety Review:** failpoints, reconstruction, corruption
-   и locking review.
+   и locking review — **completed** (2026-08-09).
 15. **M3.16 — Stage 3 Completion:** backtest/replay parity, controlled paper smoke,
    quality evidence и отдельный review. Testnet/live остаются закрыты.
 
 M3.14 implementation добавила additive Portfolio contracts: validated `restore`, pure
 valuation/Fill previews и atomic `apply_committed_transition`. Accounting formulas,
 Decimal semantics и instrument validation остаются в Portfolio; persistence хранит
-полные доказуемые before/after states. Application runtime выполняет durable commit до
+полные доказуемые before/after states. M3.15 усилил synchronization до атомарного
+valuation+Fill batch. Application runtime выполняет durable commit до
 изменения in-memory Portfolio и до observer delivery.
 
 ## 18. Открытые вопросы

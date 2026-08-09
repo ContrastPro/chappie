@@ -625,6 +625,12 @@ Infrastructure adapters -> Application services -> Domain
 
 На последующих design review остаётся определить внутреннее размещение доменных сущностей, точные правила baseline-стратегии, формат локального набора OHLCV, модель симулированного времени, схему SQLite и численные пороги качества. Эти детали не меняют утверждённые архитектурные направления.
 
+M3.15 завершил crash/restart review durable paper boundary. Financial cycle имеет только
+rollback-before-COMMIT или authoritative-commit-after-COMMIT; post-commit memory sync
+атомарен для полного transition batch. Новый process восстанавливает Portfolio из root +
+journal/checkpoint и suppress-ит duplicate Risk/Execution через stable durable identity.
+Stage 3 остаётся незавершённым до M3.16; private exchange execution отсутствует.
+
 ## 17. Future Chappie Integration
 
 В долгосрочной архитектуре Chappie Trader не является всей платформой Chappie и не должен поглощать её общие обязанности. Он входит в финансовый домен как специализированная автономная торговая система:
