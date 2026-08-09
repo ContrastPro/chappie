@@ -422,6 +422,13 @@ append-only journal, checkpoint, stable-key, transaction and fail-closed recover
 contract in `PERSISTENCE_RECOVERY_DESIGN.md`; those guarantees begin only after
 M3.13–M3.14 implementation and review.
 
+M3.14 implementation закрывает runtime boundary: coordinator подписывается только
+после successful Portfolio recovery. Он по-прежнему вычисляет один shared
+`DecisionPipelineResult`; paper consumer строит durable identity из фактической closed
+candle history, а shadow consumer не зависит от persistence. Serious paper persistence
+failure переводит paper engine в `DEGRADED`; consumer isolation позволяет shadow path
+продолжить без повторного запуска Strategy.
+
 ## 22. Design-review resolutions and deferred implementation details
 
 Approved in M3.10 review:

@@ -10,6 +10,14 @@ class PortfolioInvariantError(PortfolioError):
     pass
 
 
+class PortfolioRestoreError(PortfolioInvariantError):
+    """A persisted snapshot cannot safely restore this aggregate."""
+
+
+class PortfolioTransitionConflictError(PortfolioInvariantError):
+    """A committed transition does not extend the current aggregate state."""
+
+
 class PortfolioFillError(PortfolioError):
     pass
 

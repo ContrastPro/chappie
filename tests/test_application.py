@@ -17,6 +17,8 @@ from app.market.exceptions import MarketProviderHTTPError
 from app.market.models import Candle, CandleSnapshot, ServerTime, TickerPrice
 from app.market.polling import PollingLifecycleState
 from app.paper import PaperTradingCycleOutcome
+from app.paper.exceptions import PaperTradingConfigurationError
+from app.persistence.exceptions import PersistenceWriterConflictError
 
 OPEN_TIME_MS = 1_700_000_000_000
 
@@ -95,6 +97,9 @@ def make_settings(**overrides: object) -> Settings:
         "decision_coordinator_history_limit": 10,
         **overrides,
     }
+    if values.get("paper_trading_enabled") is True:
+        values.setdefault("persistence_enabled", True)
+        values.setdefault("sqlite_path", ":memory:")
     return Settings(_env_file=None, **values)
 
 
@@ -272,6 +277,90 @@ def test_offline_polling_closure_reaches_only_enabled_shared_consumers(
         assert application.paper_portfolio is not None
         assert application.paper_portfolio.snapshot.version == 1
     application.close()
+
+
+def test_application_restores_paper_portfolio_before_coordinator_start(tmp_path) -> None:
+    database = tmp_path / "runtime.sqlite3"
+    settings = make_settings(
+        paper_trading_enabled=True,
+        persistence_enabled=True,
+        sqlite_path=database,
+    )
+    first = build_application(
+        settings,
+        provider=ApplicationProvider([make_candle()]),
+        clock=FixedClock(),
+        sleeper=NoWaitSleeper(),
+    )
+    first_snapshot = first.paper_portfolio.snapshot  # type: ignore[union-attr]
+    first.close()
+
+    second = build_application(
+        settings,
+        provider=ApplicationProvider([make_candle()]),
+        clock=FixedClock(),
+        sleeper=NoWaitSleeper(),
+    )
+    assert second.paper_portfolio.snapshot == first_snapshot  # type: ignore[union-attr]
+    assert second.recovery_result is not None
+    assert second.coordinator is not None
+    assert second.coordinator.status.lifecycle.value == "RUNNING"
+    second.close()
+
+
+def test_application_config_mismatch_fails_before_runtime_subscription(tmp_path) -> None:
+    database = tmp_path / "mismatch.sqlite3"
+    first = build_application(
+        make_settings(
+            paper_trading_enabled=True,
+            persistence_enabled=True,
+            sqlite_path=database,
+        ),
+        provider=ApplicationProvider([make_candle()]),
+        clock=FixedClock(),
+        sleeper=NoWaitSleeper(),
+    )
+    first.close()
+    provider = ApplicationProvider([make_candle()])
+    with pytest.raises(PaperTradingConfigurationError, match="recovery"):
+        build_application(
+            make_settings(
+                paper_trading_enabled=True,
+                persistence_enabled=True,
+                sqlite_path=database,
+                paper_initial_quote_balance=Decimal(9999),
+            ),
+            provider=provider,
+            clock=FixedClock(),
+            sleeper=NoWaitSleeper(),
+        )
+    assert provider.close_calls == 1
+
+
+def test_second_application_writer_is_rejected_before_polling(tmp_path) -> None:
+    database = tmp_path / "writer.sqlite3"
+    settings = make_settings(
+        paper_trading_enabled=True,
+        persistence_enabled=True,
+        sqlite_path=database,
+        sqlite_busy_timeout_ms=1,
+    )
+    first = build_application(
+        settings,
+        provider=ApplicationProvider([make_candle()]),
+        clock=FixedClock(),
+        sleeper=NoWaitSleeper(),
+    )
+    second_provider = ApplicationProvider([make_candle()])
+    with pytest.raises(PersistenceWriterConflictError):
+        build_application(
+            settings,
+            provider=second_provider,
+            clock=FixedClock(),
+            sleeper=NoWaitSleeper(),
+        )
+    assert second_provider.close_calls == 1
+    first.close()
 
 
 def test_shadow_unsubscribe_failure_keeps_state_explicit_and_still_closes_provider(

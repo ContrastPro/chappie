@@ -304,14 +304,15 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 
 #### M3.14 Runtime Recovery Integration
 
-Статус: **next**.
+Статус: **implementation completed; final review pending** (2026-08-09).
 
-- Подключить Paper Cycle Unit of Work, startup recovery, Portfolio restore, durable
-  idempotency и composition lifecycle до подписки coordinator.
+- Подключены durable Paper Cycle transaction, startup recovery, Portfolio restore,
+  restart-stable decision/command identity, commit-before-memory synchronization,
+  checkpoint lifecycle и composition ordering до подписки coordinator.
 
 #### M3.15 Crash and Restart Safety Review
 
-Статус: **pending**.
+Статус: **next**.
 
 - Подтвердить failpoints до/после commit, exact restart reconstruction, corruption
   handling, locking и отсутствие duplicate Fill.

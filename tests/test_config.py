@@ -25,6 +25,11 @@ def test_market_data_configuration_defaults() -> None:
     assert settings.trading_mode == "paper"
     assert settings.shadow_decisions_enabled is False
     assert settings.paper_trading_enabled is False
+    assert settings.persistence_enabled is False
+    assert settings.persistence_backend == "sqlite"
+    assert settings.sqlite_path == Path("data/chappie-paper.sqlite3")
+    assert settings.sqlite_busy_timeout_ms == 5000
+    assert settings.portfolio_checkpoint_interval_transitions == 100
     assert settings.decision_coordinator_history_limit == 1000
     assert settings.decision_coordinator_dedup_capacity == 10000
     assert settings.shadow_history_limit == 1000
@@ -127,8 +132,19 @@ def test_invalid_shadow_configuration(overrides: dict[str, object]) -> None:
         {"risk_max_order_notional": Decimal(2), "risk_max_position_notional": Decimal(1)},
         {"risk_max_slippage_bps": Decimal(-1)},
         {"paper_fee_rate": 0.1},
+        {"paper_trading_enabled": True, "persistence_enabled": False},
+        {"sqlite_busy_timeout_ms": 0},
+        {"portfolio_checkpoint_interval_transitions": 0},
+        {"paper_portfolio_id": " "},
+        {"sqlite_path": ""},
     ],
 )
 def test_invalid_paper_runtime_configuration(overrides: dict[str, object]) -> None:
     with pytest.raises((ValidationError, TypeError)):
         make_settings(**overrides)
+
+
+def test_shadow_only_does_not_require_persistence() -> None:
+    settings = make_settings(shadow_decisions_enabled=True, persistence_enabled=False)
+    assert settings.paper_trading_enabled is False
+    assert settings.persistence_enabled is False

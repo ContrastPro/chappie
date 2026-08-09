@@ -14,13 +14,16 @@ from app.portfolio.exceptions import (
     InvalidPortfolioTimestampError,
     PortfolioAssetMismatchError,
     PortfolioInvariantError,
+    PortfolioRestoreError,
     PortfolioStreamMismatchError,
+    PortfolioTransitionConflictError,
     PositionRequiredError,
 )
 from app.portfolio.models import (
     ZERO,
     PortfolioConfig,
     PortfolioSnapshot,
+    PortfolioTransitionPreview,
     Position,
     precise_add,
     precise_divide,
@@ -64,6 +67,44 @@ class Portfolio:
             applied_fill_count=0,
         )
 
+    @classmethod
+    def restore(
+        cls,
+        config: PortfolioConfig,
+        state: PortfolioSnapshot,
+        *,
+        recent_fills: tuple[Fill, ...] = (),
+    ) -> "Portfolio":
+        """Restore an aggregate from a fully materialized, already validated state."""
+        if not isinstance(config, PortfolioConfig):
+            raise PortfolioRestoreError("config must be a PortfolioConfig")
+        if not isinstance(state, PortfolioSnapshot):
+            raise PortfolioRestoreError("state must be a PortfolioSnapshot")
+        if (
+            state.portfolio_id != config.portfolio_id
+            or state.stream_key != config.stream_key
+            or state.base_asset != config.base_asset
+            or state.quote_asset != config.quote_asset
+        ):
+            raise PortfolioRestoreError("restored state is incompatible with Portfolio config")
+        if state.initial_equity != config.initial_quote_balance:
+            raise PortfolioRestoreError("restored initial equity conflicts with Portfolio config")
+        if not isinstance(recent_fills, tuple) or any(
+            not isinstance(fill, Fill) for fill in recent_fills
+        ):
+            raise PortfolioRestoreError("recent_fills must be a tuple of Fill values")
+        if len({fill.fill_id for fill in recent_fills}) != len(recent_fills):
+            raise PortfolioRestoreError("recent_fills must not contain duplicate IDs")
+        restored = cls(config)
+        registry: OrderedDict[str, Fill] = OrderedDict()
+        for fill in recent_fills[-config.applied_fill_id_capacity :]:
+            if fill.stream_key != config.stream_key:
+                raise PortfolioRestoreError("recent Fill stream conflicts with Portfolio config")
+            registry[fill.fill_id] = fill
+        restored._snapshot = replace(state)
+        restored._applied_fills = registry
+        return restored
+
     @property
     def snapshot(self) -> PortfolioSnapshot:
         return replace(self._snapshot)
@@ -99,7 +140,7 @@ class Portfolio:
                     received=fill.filled_at_ms,
                 )
             )
-        self._validate_fill(fill)
+        self._validate_fill(fill, current)
 
         if fill.side is FillSide.BUY:
             staged = self._apply_buy(current, fill, mark)
@@ -113,6 +154,97 @@ class Portfolio:
         self._snapshot = staged
         self._applied_fills = staged_registry
         return self.snapshot
+
+    def preview_mark_to_market(
+        self,
+        mark_price: Decimal,
+        as_of_ms: int,
+        correlation_id: str | None = None,
+        *,
+        base_state: PortfolioSnapshot | None = None,
+    ) -> PortfolioTransitionPreview:
+        current = self._preview_base(base_state)
+        mark = self._validate_mark(mark_price)
+        if isinstance(as_of_ms, bool) or not isinstance(as_of_ms, int) or as_of_ms < 0:
+            raise InvalidPortfolioTimestampError("as_of_ms must be a non-negative integer")
+        if as_of_ms < current.as_of_ms:
+            raise InvalidPortfolioTimestampError("mark timestamp regresses portfolio time")
+        if correlation_id is not None and (
+            not isinstance(correlation_id, str) or not correlation_id.strip()
+        ):
+            raise PortfolioInvariantError("correlation_id must be a non-empty string")
+        unchanged = (
+            current.as_of_ms == as_of_ms
+            and current.correlation_id == correlation_id
+            and (current.position is None or current.position.last_mark_price == mark)
+        )
+        after = (
+            current
+            if unchanged
+            else self._mark_snapshot(
+                current, mark, as_of_ms, correlation_id, version=current.version + 1
+            )
+        )
+        return PortfolioTransitionPreview(current, after)
+
+    def preview_fill(
+        self,
+        fill: Fill,
+        mark_price: Decimal,
+        *,
+        base_state: PortfolioSnapshot | None = None,
+    ) -> PortfolioTransitionPreview:
+        if not isinstance(fill, Fill):
+            raise PortfolioInvariantError("fill must be a Fill")
+        current = self._preview_base(base_state)
+        if fill.filled_at_ms < current.as_of_ms:
+            raise InvalidPortfolioTimestampError("fill timestamp regresses portfolio time")
+        mark = self._validate_mark(mark_price)
+        self._validate_fill(fill, current)
+        after = (
+            self._apply_buy(current, fill, mark)
+            if fill.side is FillSide.BUY
+            else self._apply_sell(current, fill, mark)
+        )
+        return PortfolioTransitionPreview(current, after, fill)
+
+    def apply_committed_transition(
+        self, transition: PortfolioTransitionPreview
+    ) -> PortfolioSnapshot:
+        """Synchronize memory only after the caller has durably committed transition."""
+        if not isinstance(transition, PortfolioTransitionPreview):
+            raise PortfolioTransitionConflictError(
+                "transition must be a PortfolioTransitionPreview"
+            )
+        current = self._snapshot
+        if current == transition.after:
+            return self.snapshot
+        if current != transition.before:
+            raise PortfolioTransitionConflictError(
+                "committed transition does not extend current Portfolio state"
+            )
+        registry = self._applied_fills.copy()
+        if transition.fill is not None:
+            fill = transition.fill
+            if not isinstance(fill, Fill):
+                raise PortfolioTransitionConflictError("transition Fill is invalid")
+            existing = registry.get(fill.fill_id)
+            if existing is not None and existing != fill:
+                raise PortfolioTransitionConflictError("committed Fill conflicts with registry")
+            registry[fill.fill_id] = fill
+            if len(registry) > self._config.applied_fill_id_capacity:
+                registry.popitem(last=False)
+        self._snapshot = replace(transition.after)
+        self._applied_fills = registry
+        return self.snapshot
+
+    def _preview_base(self, state: PortfolioSnapshot | None) -> PortfolioSnapshot:
+        current = self._snapshot if state is None else state
+        if not isinstance(current, PortfolioSnapshot):
+            raise PortfolioInvariantError("base_state must be PortfolioSnapshot")
+        if current.portfolio_id != self._config.portfolio_id:
+            raise PortfolioInvariantError("base_state portfolio does not match aggregate")
+        return replace(current)
 
     def mark_to_market(
         self,
@@ -160,7 +292,7 @@ class Portfolio:
             raise InvalidPortfolioMarkPriceError("mark_price must be a positive finite Decimal")
         return value
 
-    def _validate_fill(self, fill: Fill) -> None:
+    def _validate_fill(self, fill: Fill, current: PortfolioSnapshot) -> None:
         rules = self._config.instrument_rules
         if fill.stream_key != self._config.stream_key:
             raise PortfolioStreamMismatchError(
@@ -201,8 +333,8 @@ class Portfolio:
         dust_liquidation = (
             fill.side is FillSide.SELL
             and fill.metadata.get("dust_liquidation") is True
-            and self._snapshot.position is not None
-            and fill.quantity == self._snapshot.position.quantity
+            and current.position is not None
+            and fill.quantity == current.position.quantity
         )
         if fill.quantity < rules.min_quantity and not dust_liquidation:
             raise FillRuleViolationError(

@@ -288,3 +288,25 @@ class PortfolioConfig:
             or self.applied_fill_id_capacity <= 0
         ):
             raise PortfolioConfigurationError("applied_fill_id_capacity must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class PortfolioTransitionPreview:
+    """Pure prospective aggregate transition; applying it is an explicit later step."""
+
+    before: PortfolioSnapshot
+    after: PortfolioSnapshot
+    fill: object | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.before, PortfolioSnapshot) or not isinstance(
+            self.after, PortfolioSnapshot
+        ):
+            raise PortfolioInvariantError("transition states must be PortfolioSnapshot values")
+        if self.after.portfolio_id != self.before.portfolio_id:
+            raise PortfolioInvariantError("transition portfolio identity must not change")
+        if self.after.stream_key != self.before.stream_key:
+            raise PortfolioInvariantError("transition stream must not change")
+        increment = 0 if self.after == self.before else 1
+        if self.after.version != self.before.version + increment:
+            raise PortfolioInvariantError("effective transition must increment version once")

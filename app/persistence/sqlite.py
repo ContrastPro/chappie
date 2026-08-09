@@ -22,6 +22,7 @@ from app.persistence.exceptions import (
 )
 from app.persistence.models import (
     CycleOutcome,
+    DurableDecisionState,
     InitialPortfolioRecord,
     PersistenceStatus,
     PersistentCommandRecord,
@@ -408,15 +409,24 @@ class SQLiteTradingPersistence:
             self._connection.row_factory = sqlite3.Row
             self._configure()
             self._migrate()
+            if config.exclusive_writer:
+                self._acquire_runtime_ownership()
         except (
             PersistenceConnectionError,
             PersistenceMigrationError,
             PersistenceSchemaError,
+            PersistenceWriterConflictError,
         ):
             if hasattr(self, "_connection"):
                 self._connection.close()
             raise
         except (OSError, sqlite3.Error) as error:
+            if hasattr(self, "_connection"):
+                self._connection.close()
+            if config.exclusive_writer and "locked" in str(error).lower():
+                raise PersistenceWriterConflictError(
+                    "another application owns the paper persistence database"
+                ) from error
             raise PersistenceConnectionError("failed to open SQLite persistence") from error
 
     def _require_open(self) -> None:
@@ -474,6 +484,21 @@ class SQLiteTradingPersistence:
             except sqlite3.Error:
                 pass
             raise PersistenceMigrationError("SQLite migration failed") from error
+
+    def _acquire_runtime_ownership(self) -> None:
+        """Acquire a process-lifetime SQLite exclusive lock for application runtime."""
+        try:
+            mode = self._connection.execute("PRAGMA locking_mode=EXCLUSIVE").fetchone()[0]
+            if str(mode).lower() != "exclusive":
+                raise PersistenceWriterConflictError("exclusive writer mode unavailable")
+            self._connection.execute("BEGIN IMMEDIATE")
+            self._connection.execute("SELECT COUNT(*) FROM schema_migrations").fetchone()
+            self._connection.commit()
+        except sqlite3.Error as error:
+            self._connection.rollback()
+            raise PersistenceWriterConflictError(
+                "another application owns the paper persistence database"
+            ) from error
 
     def begin_cycle(self) -> SQLitePaperCycleTransaction:
         self._require_open()
@@ -765,6 +790,106 @@ class SQLiteTradingPersistence:
             model_version=row["model_version"],
         )
 
+    def load_terminal_decision(self, stable_decision_key: str) -> DurableDecisionState | None:
+        self._require_open()
+        row = self._connection.execute(
+            "SELECT decision_slot_key,terminal_outcome FROM paper_decisions "
+            "WHERE stable_decision_key=?",
+            (stable_decision_key,),
+        ).fetchone()
+        if row is None or row[1] is None:
+            return None
+        journal_seq = self._connection.execute(
+            "SELECT COALESCE(MAX(journal_seq),0) FROM journal_entries WHERE stable_decision_key=?",
+            (stable_decision_key,),
+        ).fetchone()[0]
+        return DurableDecisionState(
+            stable_decision_key,
+            row[0],
+            CycleOutcome(row[1]),
+            int(journal_seq),
+        )
+
+    def create_checkpoint(self, state: PortfolioState, journal_seq: int) -> bool:
+        self._require_open()
+        if state.version == 0 or journal_seq <= 0:
+            return False
+        if self._transaction_active:
+            raise PersistenceTransactionError("checkpoint is forbidden during cycle transaction")
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            current = self.load_current(state.portfolio_id)
+            if current != state:
+                raise PersistenceConflictError("checkpoint state is not portfolio_current")
+            existing = self._connection.execute(
+                "SELECT state_digest,last_journal_seq FROM portfolio_checkpoints "
+                "WHERE portfolio_id=? AND portfolio_version=?",
+                (state.portfolio_id, state.version),
+            ).fetchone()
+            if existing is not None:
+                if tuple(existing) != (state.digest, journal_seq):
+                    raise PersistenceConflictError("checkpoint conflicts with existing version")
+                self._connection.rollback()
+                return False
+            self._connection.execute(
+                "INSERT INTO portfolio_checkpoints VALUES(?,?,?,?,?,?)",
+                (
+                    state.portfolio_id,
+                    state.version,
+                    state.canonical_payload,
+                    state.digest,
+                    journal_seq,
+                    "portfolio-checkpoint/v1",
+                ),
+            )
+            self._connection.commit()
+            return True
+        except PersistenceConflictError:
+            self._connection.rollback()
+            raise
+        except sqlite3.Error as error:
+            self._connection.rollback()
+            raise PersistenceTransactionError("checkpoint creation failed") from error
+
+    def rebuild_portfolio_current(self, state: PortfolioState, journal_seq: int) -> None:
+        """Repair only a missing materialized projection from verified authority."""
+        self._require_open()
+        if self._transaction_active:
+            raise PersistenceTransactionError("projection repair cannot run in cycle transaction")
+        try:
+            self._connection.execute("BEGIN IMMEDIATE")
+            if (
+                self._connection.execute(
+                    "SELECT 1 FROM portfolio_current WHERE portfolio_id=?", (state.portfolio_id,)
+                ).fetchone()
+                is not None
+            ):
+                raise PersistenceConflictError("existing portfolio_current is never auto-repaired")
+            row = self._connection.execute(
+                "SELECT portfolio_version_after,after_state_digest FROM journal_entries "
+                "WHERE journal_seq=? AND portfolio_id=?",
+                (journal_seq, state.portfolio_id),
+            ).fetchone()
+            if row is None or tuple(row) != (state.version, state.digest):
+                raise PersistenceConflictError("repair state is not authoritative journal head")
+            self._connection.execute(
+                "INSERT INTO portfolio_current VALUES(?,?,?,?,?)",
+                (
+                    state.portfolio_id,
+                    state.version,
+                    state.canonical_payload,
+                    state.digest,
+                    journal_seq,
+                ),
+            )
+            self._connection.commit()
+        except PersistenceConflictError:
+            self._connection.rollback()
+            raise
+        except sqlite3.Error as error:
+            self._connection.rollback()
+            raise PersistenceTransactionError("portfolio_current rebuild failed") from error
+
     def recover(
         self,
         portfolio_id: str,
@@ -802,6 +927,9 @@ class SQLiteTradingPersistence:
         latest = self._connection.execute(
             "SELECT MAX(portfolio_version) FROM portfolio_current"
         ).fetchone()[0]
+        checkpoint = self._connection.execute(
+            "SELECT MAX(portfolio_version) FROM portfolio_checkpoints"
+        ).fetchone()[0]
         return PersistenceStatus(
             opened=not self._closed,
             schema_version=self.config.expected_schema_version,
@@ -810,6 +938,7 @@ class SQLiteTradingPersistence:
             foreign_keys=bool(self._connection.execute("PRAGMA foreign_keys").fetchone()[0]),
             last_journal_seq=last,
             latest_portfolio_version=latest,
+            latest_checkpoint_version=checkpoint,
             database_path=self._database_path,
         )
 

@@ -33,6 +33,14 @@ from app.paper.models import (
     PaperTradingStage,
 )
 from app.paper.observer import LoggingPaperTradingObserver, PaperTradingObserver
+from app.persistence.models import InitialPortfolioRecord, SQLitePersistenceConfig
+from app.persistence.runtime import (
+    DurablePaperCycleStore,
+    DurablePaperRuntimeConfig,
+    snapshot_to_state,
+    state_to_snapshot,
+)
+from app.persistence.sqlite import SQLiteTradingPersistence
 from app.portfolio.models import InstrumentRules, PortfolioConfig
 from app.portfolio.portfolio import Portfolio
 from app.risk.manager import RiskManager
@@ -141,6 +149,23 @@ class CorruptApplyPortfolio(Portfolio):
         return replace(result, version=result.version + 1)
 
 
+class BrokenCommittedSyncPortfolio(Portfolio):
+    def apply_committed_transition(self, transition: object) -> object:
+        raise RuntimeError("committed sync unavailable")
+
+
+class CommitFailingPersistence(SQLiteTradingPersistence):
+    def begin_cycle(self):  # type: ignore[no-untyped-def]
+        transaction = super().begin_cycle()
+
+        def fail_commit() -> None:
+            transaction.rollback()
+            raise RuntimeError("injected commit failure")
+
+        transaction.commit = fail_commit  # type: ignore[method-assign]
+        return transaction
+
+
 def rules() -> InstrumentRules:
     return InstrumentRules(
         stream_key=KEY,
@@ -157,16 +182,18 @@ def rules() -> InstrumentRules:
 
 
 def portfolio(kind: type[Portfolio] = Portfolio) -> Portfolio:
-    return kind(
-        PortfolioConfig(
-            portfolio_id="portfolio-1",
-            stream_key=KEY,
-            base_asset="BTC",
-            quote_asset="USDT",
-            initial_base_balance=D(0),
-            initial_quote_balance=D("10000"),
-            instrument_rules=rules(),
-        )
+    return kind(portfolio_config())
+
+
+def portfolio_config() -> PortfolioConfig:
+    return PortfolioConfig(
+        portfolio_id="portfolio-1",
+        stream_key=KEY,
+        base_asset="BTC",
+        quote_asset="USDT",
+        initial_base_balance=D(0),
+        initial_quote_balance=D("10000"),
+        instrument_rules=rules(),
     )
 
 
@@ -309,6 +336,7 @@ def engine(
     execution: object | None = None,
     config: PaperTradingEngineConfig | None = None,
     cycle_ids: Ids | None = None,
+    durable_store: DurablePaperCycleStore | None = None,
 ) -> PaperTradingEngine:
     account = account or portfolio()
     risk_ids = Ids("risk")
@@ -328,6 +356,27 @@ def engine(
         cycle_ids or Ids("cycle"),
         observer or Observer(),
         monotonic_clock=lambda: 1.0,
+        durable_store=durable_store,
+    )
+
+
+def durable_store(
+    adapter: SQLiteTradingPersistence, checkpoint_interval: int = 100
+) -> DurablePaperCycleStore:
+    return DurablePaperCycleStore(
+        adapter,
+        DurablePaperRuntimeConfig(
+            exchange="binance",
+            strategy_config_fingerprint="a" * 64,
+            planner_name="planner",
+            planner_version="1",
+            planner_config_fingerprint="b" * 64,
+            snapshot_policy_fingerprint="c" * 64,
+            risk_policy_fingerprint="d" * 64,
+            instrument_rules_fingerprint="e" * 64,
+            execution_config_fingerprint="f" * 64,
+            checkpoint_interval_transitions=checkpoint_interval,
+        ),
     )
 
 
@@ -1112,6 +1161,229 @@ def test_corrupt_execution_and_applied_portfolio_are_typed() -> None:
     with pytest.raises(PaperTradingPortfolioError):
         corrupt_portfolio.process(decision(snapshot, PipelineOutcome.INTENT_CREATED), snapshot)
     assert corrupt_portfolio.status.health is PaperTradingEngineHealth.DEGRADED
+
+
+def test_durable_full_restart_reuses_terminal_sell_without_second_fill(tmp_path) -> None:
+    database = tmp_path / "paper.sqlite3"
+    account_a = portfolio()
+    adapter_a = SQLiteTradingPersistence(SQLitePersistenceConfig(database))
+    adapter_a.initialize_portfolio(
+        InitialPortfolioRecord(snapshot_to_state(account_a.snapshot), "9" * 64, 0)
+    )
+    execution_ids = Ids("execution")
+    fill_ids = Ids("fill")
+    execution = PaperExecutionProvider(PaperExecutionConfig(), rules(), execution_ids, fill_ids)
+    runtime_a = engine(
+        account=account_a,
+        execution=execution,
+        durable_store=durable_store(adapter_a),
+    )
+    buy_market = market(1, "50000.00")
+    buy = runtime_a.process(decision(buy_market, PipelineOutcome.INTENT_CREATED), buy_market)
+    hold_market = market(2, "55000.00")
+    hold = runtime_a.process(decision(hold_market), hold_market)
+    sell_market = market(3, "60000.00")
+    sell_decision = decision(
+        sell_market,
+        PipelineOutcome.INTENT_CREATED,
+        action=OrderIntentAction.EXIT_LONG,
+        exposure="0",
+    )
+    sell = runtime_a.process(sell_decision, sell_market)
+    assert buy.durable_committed is hold.durable_committed is sell.durable_committed is True
+    assert sell.portfolio_after.position is None
+    committed = sell.portfolio_after
+    adapter_a.close()
+
+    adapter_b = SQLiteTradingPersistence(SQLitePersistenceConfig(database))
+    recovery = adapter_b.recover("portfolio-1", expected_config_fingerprint="9" * 64)
+    assert recovery.portfolio_state is not None
+    account_b = Portfolio.restore(portfolio_config(), state_to_snapshot(recovery.portfolio_state))
+    runtime_b = engine(
+        account=account_b,
+        execution=execution,
+        durable_store=durable_store(adapter_b),
+    )
+    replay = runtime_b.process(sell_decision, sell_market)
+    assert replay.outcome is PaperTradingCycleOutcome.DURABLE_REPLAY
+    assert replay.recovered_existing is True
+    assert replay.portfolio_after == committed
+    assert execution_ids.calls == 2
+    assert fill_ids.calls == 2
+    assert len(adapter_b.load_transitions("portfolio-1")) == 5
+    new_market = market(4, "61000.00")
+    continued = runtime_b.process(decision(new_market), new_market)
+    assert continued.durable_committed is True
+    assert continued.portfolio_after.version == committed.version + 1
+    adapter_b.close()
+
+
+def test_durable_hold_persists_valuation_and_restores_exactly(tmp_path) -> None:
+    database = tmp_path / "hold.sqlite3"
+    account = portfolio()
+    adapter = SQLiteTradingPersistence(SQLitePersistenceConfig(database))
+    adapter.initialize_portfolio(
+        InitialPortfolioRecord(snapshot_to_state(account.snapshot), "9" * 64, 0)
+    )
+    runtime = engine(account=account, durable_store=durable_store(adapter))
+    result = runtime.process(decision(market()), market())
+    assert result.outcome is PaperTradingCycleOutcome.NO_INTENT
+    assert result.durable_committed is True
+    adapter.close()
+
+    reopened = SQLiteTradingPersistence(SQLitePersistenceConfig(database))
+    recovered = reopened.recover("portfolio-1", expected_config_fingerprint="9" * 64)
+    assert recovered.portfolio_state is not None
+    assert state_to_snapshot(recovered.portfolio_state) == result.portfolio_after
+    reopened.close()
+
+
+def test_durable_decision_slot_correction_fails_closed_without_mutation(tmp_path) -> None:
+    adapter = SQLiteTradingPersistence(SQLitePersistenceConfig(tmp_path / "slot.sqlite3"))
+    account = portfolio()
+    adapter.initialize_portfolio(
+        InitialPortfolioRecord(snapshot_to_state(account.snapshot), "9" * 64, 0)
+    )
+    runtime = engine(account=account, durable_store=durable_store(adapter))
+    original_market = market()
+    runtime.process(decision(original_market), original_market)
+    before = account.snapshot
+    corrected_candle = replace(original_market.closed_candles[0], close=D("49999"))
+    corrected = replace(
+        original_market,
+        closed_candles=(corrected_candle,),
+        latest_closed_candle=corrected_candle,
+    )
+    corrected_decision = replace(decision(corrected), pipeline_run_id="pipeline-corrected")
+    with pytest.raises(PaperTradingPortfolioError, match="durable"):
+        runtime.process(corrected_decision, corrected)
+    assert account.snapshot == before
+    assert runtime.status.health is PaperTradingEngineHealth.DEGRADED
+    adapter.close()
+
+
+def test_durable_commit_failure_leaves_memory_and_database_uncommitted(tmp_path) -> None:
+    database = tmp_path / "commit-failure.sqlite3"
+    account = portfolio()
+    adapter = CommitFailingPersistence(SQLitePersistenceConfig(database))
+    adapter.initialize_portfolio(
+        InitialPortfolioRecord(snapshot_to_state(account.snapshot), "9" * 64, 0)
+    )
+    runtime = engine(account=account, durable_store=durable_store(adapter))
+    before = account.snapshot
+    snapshot = market_at_1000()
+    source = decision(snapshot, PipelineOutcome.INTENT_CREATED)
+    with pytest.raises(PaperTradingPortfolioError, match="commit"):
+        runtime.process(source, snapshot)
+    assert account.snapshot == before
+    assert (
+        adapter.load_terminal_decision(
+            durable_store(adapter).identity(source, snapshot).stable_decision_key
+        )
+        is None
+    )
+    adapter.close()
+
+    reopened = SQLiteTradingPersistence(SQLitePersistenceConfig(database))
+    recovered = reopened.recover("portfolio-1", expected_config_fingerprint="9" * 64)
+    assert recovered.portfolio_state == snapshot_to_state(before)
+    reopened.close()
+
+
+def test_post_commit_sync_failure_requires_restart_and_never_reexecutes(tmp_path) -> None:
+    database = tmp_path / "post-commit.sqlite3"
+    account = BrokenCommittedSyncPortfolio(portfolio_config())
+    adapter = SQLiteTradingPersistence(SQLitePersistenceConfig(database))
+    adapter.initialize_portfolio(
+        InitialPortfolioRecord(snapshot_to_state(account.snapshot), "9" * 64, 0)
+    )
+    execution_ids = Ids("execution")
+    fill_ids = Ids("fill")
+    execution = PaperExecutionProvider(PaperExecutionConfig(), rules(), execution_ids, fill_ids)
+    runtime = engine(
+        account=account,
+        execution=execution,
+        durable_store=durable_store(adapter),
+    )
+    before = account.snapshot
+    snapshot = market_at_1000()
+    source = decision(snapshot, PipelineOutcome.INTENT_CREATED)
+    with pytest.raises(PaperTradingPortfolioError, match="synchronization"):
+        runtime.process(source, snapshot)
+    assert account.snapshot == before
+    assert runtime.status.health is PaperTradingEngineHealth.DEGRADED
+    recovered = adapter.recover("portfolio-1", expected_config_fingerprint="9" * 64)
+    assert recovered.portfolio_state is not None
+    assert recovered.portfolio_state.version == 2
+    adapter.close()
+
+    reopened = SQLiteTradingPersistence(SQLitePersistenceConfig(database))
+    recovered = reopened.recover("portfolio-1", expected_config_fingerprint="9" * 64)
+    restored = Portfolio.restore(
+        portfolio_config(),
+        state_to_snapshot(recovered.portfolio_state),  # type: ignore[arg-type]
+    )
+    runtime_b = engine(
+        account=restored,
+        execution=execution,
+        durable_store=durable_store(reopened),
+    )
+    replay = runtime_b.process(source, snapshot)
+    assert replay.outcome is PaperTradingCycleOutcome.DURABLE_REPLAY
+    assert execution_ids.calls == 1
+    assert fill_ids.calls == 1
+    reopened.close()
+
+
+def test_observer_failure_after_durable_commit_does_not_allow_retrade(tmp_path) -> None:
+    database = tmp_path / "observer.sqlite3"
+    account = portfolio()
+    adapter = SQLiteTradingPersistence(SQLitePersistenceConfig(database))
+    adapter.initialize_portfolio(
+        InitialPortfolioRecord(snapshot_to_state(account.snapshot), "9" * 64, 0)
+    )
+    snapshot = market_at_1000()
+    source = decision(snapshot, PipelineOutcome.INTENT_CREATED)
+    result = engine(
+        account=account,
+        observer=Observer(RuntimeError("observer down")),
+        durable_store=durable_store(adapter),
+    ).process(source, snapshot)
+    assert result.durable_committed is True
+    assert result.observation_status is PaperTradingObservationStatus.OBSERVATION_FAILED
+    assert adapter.load_terminal_decision(result.stable_decision_key) is not None  # type: ignore[arg-type]
+    adapter.close()
+
+
+def test_durable_store_guards_identity_and_checkpoint_failures(tmp_path) -> None:
+    config_value = DurablePaperRuntimeConfig(
+        exchange="binance",
+        strategy_config_fingerprint="a" * 64,
+        planner_name="planner",
+        planner_version="1",
+        planner_config_fingerprint="b" * 64,
+        snapshot_policy_fingerprint="c" * 64,
+        risk_policy_fingerprint="d" * 64,
+        instrument_rules_fingerprint="e" * 64,
+        execution_config_fingerprint="f" * 64,
+    )
+    with pytest.raises(TypeError, match="persistence"):
+        DurablePaperCycleStore(object(), config_value)  # type: ignore[arg-type]
+    adapter = SQLiteTradingPersistence(SQLitePersistenceConfig(tmp_path / "guards.sqlite3"))
+    with pytest.raises(TypeError, match="config"):
+        DurablePaperCycleStore(adapter, object())  # type: ignore[arg-type]
+    store = durable_store(adapter, checkpoint_interval=1)
+    empty_market = replace(
+        market(),
+        closed_candles=(),
+        latest_closed_candle=None,
+    )
+    with pytest.raises(ValueError, match="closed candle"):
+        store.identity(decision(market()), empty_market)
+    assert store.maybe_checkpoint(portfolio().snapshot, 0) is False
+    adapter.close()
+    valued = portfolio().preview_mark_to_market(D("100"), 1).after
+    assert store.maybe_checkpoint(valued, 1) is False
 
 
 @pytest.mark.parametrize(

@@ -17,7 +17,9 @@ from app.portfolio.exceptions import (
     PortfolioAssetMismatchError,
     PortfolioConfigurationError,
     PortfolioInvariantError,
+    PortfolioRestoreError,
     PortfolioStreamMismatchError,
+    PortfolioTransitionConflictError,
     PositionRequiredError,
 )
 from app.portfolio.models import (
@@ -125,6 +127,79 @@ def test_instrument_rules_defaults_rounding_and_immutability() -> None:
     assert value.round_price_down(D("100.01")) == D("100.01")
     with pytest.raises(FrozenInstanceError):
         value.price_tick = D("1")  # type: ignore[misc]
+
+
+def test_preview_restore_and_committed_transition_are_explicit_and_atomic() -> None:
+    account = Portfolio(config())
+    before = account.snapshot
+    valuation = account.preview_mark_to_market(D("100"), 1, "cycle-1")
+    assert account.snapshot == before
+    assert valuation.before == before
+    assert valuation.after.version == 1
+    assert account.apply_committed_transition(valuation) == valuation.after
+    assert account.apply_committed_transition(valuation) == valuation.after
+
+    restored = Portfolio.restore(config(), account.snapshot)
+    assert restored.snapshot == account.snapshot
+    conflicting = Portfolio(config()).preview_mark_to_market(D("101"), 2)
+    with pytest.raises(PortfolioTransitionConflictError):
+        restored.apply_committed_transition(conflicting)
+    assert restored.snapshot == account.snapshot
+
+
+def test_restore_rejects_config_identity_and_initial_equity_mismatch() -> None:
+    snapshot = Portfolio(config()).snapshot
+    with pytest.raises(PortfolioRestoreError):
+        Portfolio.restore(config(portfolio_id="other"), snapshot)
+    with pytest.raises(PortfolioRestoreError):
+        Portfolio.restore(config(initial_quote_balance=D("9999")), snapshot)
+
+
+def test_restore_and_preview_reject_invalid_external_state() -> None:
+    account = Portfolio(config())
+    snapshot = account.snapshot
+    with pytest.raises(PortfolioRestoreError):
+        Portfolio.restore(object(), snapshot)  # type: ignore[arg-type]
+    with pytest.raises(PortfolioRestoreError):
+        Portfolio.restore(config(), object())  # type: ignore[arg-type]
+    with pytest.raises(PortfolioRestoreError):
+        Portfolio.restore(config(), snapshot, recent_fills=[object()])  # type: ignore[arg-type]
+    sample = fill("restore", FillSide.BUY, "0.1", "100", "0.01")
+    with pytest.raises(PortfolioRestoreError, match="duplicate"):
+        Portfolio.restore(config(), snapshot, recent_fills=(sample, sample))
+    wrong_stream = replace(sample, stream_key=OTHER_KEY)
+    with pytest.raises(PortfolioRestoreError, match="stream"):
+        Portfolio.restore(config(), snapshot, recent_fills=(wrong_stream,))
+
+    with pytest.raises(InvalidPortfolioTimestampError):
+        account.preview_mark_to_market(D("100"), True)  # type: ignore[arg-type]
+    with pytest.raises(PortfolioInvariantError, match="correlation"):
+        account.preview_mark_to_market(D("100"), 1, " ")
+    with pytest.raises(PortfolioInvariantError, match="base_state"):
+        account.preview_mark_to_market(D("100"), 1, base_state=object())  # type: ignore[arg-type]
+    wrong_identity = replace(snapshot, portfolio_id="other")
+    with pytest.raises(PortfolioInvariantError, match="does not match"):
+        account.preview_mark_to_market(D("100"), 1, base_state=wrong_identity)
+    with pytest.raises(PortfolioInvariantError, match="Fill"):
+        account.preview_fill(object(), D("100"))  # type: ignore[arg-type]
+
+
+def test_preview_fill_registry_and_transition_conflicts_are_guarded() -> None:
+    small = Portfolio(config(applied_fill_id_capacity=1))
+    first = fill("first", FillSide.BUY, "0.1", "100", "0.01", timestamp=1)
+    preview = small.preview_fill(first, D("100"))
+    assert small.snapshot.version == 0
+    small.apply_committed_transition(preview)
+    second = fill("second", FillSide.BUY, "0.1", "100", "0.01", timestamp=2)
+    small.apply_committed_transition(small.preview_fill(second, D("100")))
+    assert small.snapshot.applied_fill_count == 2
+    with pytest.raises(PortfolioTransitionConflictError):
+        small.apply_committed_transition(object())  # type: ignore[arg-type]
+
+    current = small.snapshot
+    stale = replace(first, filled_at_ms=0)
+    with pytest.raises(InvalidPortfolioTimestampError):
+        small.preview_fill(stale, D("100"), base_state=current)
 
 
 @pytest.mark.parametrize(

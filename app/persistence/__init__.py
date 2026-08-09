@@ -28,6 +28,7 @@ from app.persistence.keys import (
 )
 from app.persistence.models import (
     CycleOutcome,
+    DurableDecisionState,
     InitialPortfolioRecord,
     PersistentCommandRecord,
     PersistentDecisionRecord,
@@ -46,6 +47,7 @@ from app.persistence.sqlite import SQLiteTradingPersistence
 __all__ = [
     "CycleOutcome",
     "DurableCommandKeyInput",
+    "DurableDecisionState",
     "EmaStrategyFingerprintInput",
     "InitialPortfolioRecord",
     "InstrumentRulesFingerprintInput",

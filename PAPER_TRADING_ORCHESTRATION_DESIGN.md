@@ -639,4 +639,18 @@ is resolved only after M3.13–M3.14 implementation. The normative design is
 - M3.13: Persistence Core and SQLite adapter.
 - M3.14: runtime recovery integration.
 - M3.15: crash/restart safety review.
+
+## 23. M3.14 durable runtime implementation
+
+PaperTradingEngine сохраняет один business flow и получает optional
+`DurablePaperCycleStore`. Direct unit/offline mode остаётся явно non-durable; application
+paper mode всегда использует durable store. В durable mode valuation и Fill сначала
+вычисляются через pure Portfolio previews, затем атомарно сохраняются, и только после
+COMMIT aggregate синхронизируется через `apply_committed_transition()`.
+
+Terminal durable duplicate возвращает `DURABLE_REPLAY` со stable decision/slot key,
+journal sequence и исходным terminal outcome в audit linkage. Он не запускает Risk или
+Execution. Observer следует за COMMIT и memory sync; observer failure не меняет durable
+outcome. Commit failure оставляет memory неизменной, а sync failure после commit
+переводит engine в `DEGRADED` и требует restart recovery.
 - M3.16: Stage 3 completion evidence and controlled paper smoke review.

@@ -40,6 +40,37 @@ from app.paper import (
     PaperTradingEngineConfig,
     UUIDPaperTradingCycleIdFactory,
 )
+from app.paper.exceptions import PaperTradingConfigurationError
+from app.persistence.canonical import canonical_sha256
+from app.persistence.keys import (
+    EmaStrategyFingerprintInput,
+    InstrumentRulesFingerprintInput,
+    PaperExecutionFingerprintInput,
+    PlannerFingerprintInput,
+    RiskPolicyFingerprintInput,
+    SnapshotPolicyFingerprintInput,
+    fingerprint_ema_strategy,
+    fingerprint_instrument_rules,
+    fingerprint_paper_execution,
+    fingerprint_planner,
+    fingerprint_risk_policy,
+    fingerprint_snapshot_policy,
+)
+from app.persistence.models import (
+    InitialPortfolioRecord,
+    PersistenceStatus,
+    RecoveryResult,
+    RecoveryStatus,
+    SQLitePersistenceConfig,
+)
+from app.persistence.ports import TradingPersistence
+from app.persistence.runtime import (
+    DurablePaperCycleStore,
+    DurablePaperRuntimeConfig,
+    snapshot_to_state,
+    state_to_snapshot,
+)
+from app.persistence.sqlite import SQLiteTradingPersistence
 from app.portfolio import InstrumentRules, Portfolio, PortfolioConfig
 from app.risk import PortfolioRiskPolicy, RiskManager, UUIDRiskDecisionIdFactory
 from app.shadow import (
@@ -112,6 +143,12 @@ class StageOneStatusReport:
     paper_portfolio_version: int | None = None
     paper_last_outcome: str | None = None
     paper_last_fill_id: str | None = None
+    persistence_enabled: bool = False
+    persistence_backend: str | None = None
+    persistence_schema_version: int | None = None
+    recovery_status: str | None = None
+    persistence_last_journal_seq: int = 0
+    persistence_checkpoint_version: int | None = None
 
 
 @dataclass(slots=True)
@@ -129,7 +166,10 @@ class ChappieTraderApplication:
     shadow_consumer: ShadowDecisionConsumer | None = None
     paper_engine: PaperTradingEngine | None = None
     paper_portfolio: Portfolio | None = None
+    persistence: TradingPersistence | None = None
+    recovery_result: RecoveryResult | None = None
     _provider_closed: bool = False
+    _last_persistence_status: PersistenceStatus | None = None
 
     def close(self) -> None:
         """Idempotently release resources owned by the composition root."""
@@ -141,7 +181,24 @@ class ChappieTraderApplication:
             if self.coordinator is not None:
                 self.coordinator.stop()
         finally:
-            self.provider.close()
+            try:
+                if self.persistence is not None:
+                    if self.paper_portfolio is not None:
+                        status = self.persistence.status
+                        if status.last_journal_seq > 0:
+                            try:
+                                self.persistence.create_checkpoint(
+                                    snapshot_to_state(self.paper_portfolio.snapshot),
+                                    status.last_journal_seq,
+                                )
+                            except Exception:
+                                logging.getLogger("Persistence").exception(
+                                    "Final Portfolio checkpoint failed"
+                                )
+                    self._last_persistence_status = self.persistence.status
+                    self.persistence.close()
+            finally:
+                self.provider.close()
 
     def status_report(self) -> StageOneStatusReport:
         status = self.engine.status
@@ -159,6 +216,13 @@ class ChappieTraderApplication:
         shadow = self.shadow_consumer.status if self.shadow_consumer is not None else None
         paper = self.paper_engine.status if self.paper_engine is not None else None
         portfolio = self.paper_portfolio.snapshot if self.paper_portfolio is not None else None
+        persistence_status = (
+            self._last_persistence_status
+            if self._last_persistence_status is not None
+            else self.persistence.status
+            if self.persistence is not None
+            else None
+        )
         return StageOneStatusReport(
             lifecycle_state=status.lifecycle_state,
             completed_cycles=status.completed_cycles,
@@ -232,6 +296,20 @@ class ChappieTraderApplication:
                 if self.paper_engine is not None and self.paper_engine.last_result is not None
                 else None
             ),
+            persistence_enabled=self.persistence is not None,
+            persistence_backend=(self.settings.persistence_backend if persistence_status else None),
+            persistence_schema_version=(
+                persistence_status.schema_version if persistence_status else None
+            ),
+            recovery_status=(
+                self.recovery_result.status.value if self.recovery_result is not None else None
+            ),
+            persistence_last_journal_seq=(
+                persistence_status.last_journal_seq if persistence_status else 0
+            ),
+            persistence_checkpoint_version=(
+                persistence_status.latest_checkpoint_version if persistence_status else None
+            ),
         )
 
 
@@ -246,6 +324,7 @@ def build_application(
     correlation_id_factory: CorrelationIdFactory | None = None,
     event_logger: logging.Logger | None = None,
     shadow_logger: logging.Logger | None = None,
+    persistence: TradingPersistence | None = None,
 ) -> ChappieTraderApplication:
     """Create and wire the complete Stage 1 market-data application."""
 
@@ -289,13 +368,17 @@ def build_application(
     shadow_consumer = None
     paper_engine = None
     paper_portfolio = None
+    persistence_adapter = None
+    recovery_result = None
     if settings.shadow_decisions_enabled or settings.paper_trading_enabled:
+        strategy_config = EmaCrossoverConfig(settings.ema_fast_window, settings.ema_slow_window)
         strategy = EmaCrossoverStrategy(
-            EmaCrossoverConfig(settings.ema_fast_window, settings.ema_slow_window),
+            strategy_config,
             UUIDSignalIdFactory(),
         )
+        planner_config = LongOnlyIntentPlannerConfig(settings.long_target_exposure)
         planner = LongOnlyIntentPlanner(
-            LongOnlyIntentPlannerConfig(settings.long_target_exposure),
+            planner_config,
             UUIDIntentIdFactory(),
         )
         pipeline = TradingDecisionPipeline(strategy, planner, UUIDPipelineRunIdFactory())
@@ -318,37 +401,179 @@ def build_application(
                 quote_asset_precision=settings.instrument_quote_precision,
                 rules_version="binance-spot-btcusdt/1",
             )
-            paper_portfolio = Portfolio(
-                PortfolioConfig(
-                    portfolio_id=settings.paper_portfolio_id,
-                    stream_key=stream_key,
-                    base_asset="BTC",
-                    quote_asset="USDT",
-                    initial_base_balance=Decimal(0),
-                    initial_quote_balance=settings.paper_initial_quote_balance,
-                    instrument_rules=rules,
-                    applied_fill_id_capacity=settings.portfolio_fill_dedup_capacity,
+            portfolio_config = PortfolioConfig(
+                portfolio_id=settings.paper_portfolio_id,
+                stream_key=stream_key,
+                base_asset="BTC",
+                quote_asset="USDT",
+                initial_base_balance=Decimal(0),
+                initial_quote_balance=settings.paper_initial_quote_balance,
+                instrument_rules=rules,
+                applied_fill_id_capacity=settings.portfolio_fill_dedup_capacity,
+            )
+            initial_portfolio = Portfolio(portfolio_config)
+            instrument_fingerprint = fingerprint_instrument_rules(
+                InstrumentRulesFingerprintInput(
+                    symbol=stream_key.symbol,
+                    interval=stream_key.interval,
+                    base_asset=rules.base_asset,
+                    quote_asset=rules.quote_asset,
+                    price_tick=rules.price_tick,
+                    quantity_step=rules.quantity_step,
+                    min_quantity=rules.min_quantity,
+                    min_notional=rules.min_notional,
+                    base_asset_precision=rules.base_asset_precision,
+                    quote_asset_precision=rules.quote_asset_precision,
+                    rules_version=rules.rules_version,
                 )
             )
+            portfolio_fingerprint = canonical_sha256(
+                {
+                    "portfolio_id": portfolio_config.portfolio_id,
+                    "symbol": stream_key.symbol,
+                    "interval": stream_key.interval,
+                    "base_asset": portfolio_config.base_asset,
+                    "quote_asset": portfolio_config.quote_asset,
+                    "initial_equity": portfolio_config.initial_quote_balance,
+                    "instrument_rules_fingerprint": instrument_fingerprint,
+                },
+                algorithm_version="paper-portfolio-config/v1",
+            )
+            try:
+                persistence_adapter = persistence or SQLiteTradingPersistence(
+                    SQLitePersistenceConfig(
+                        settings.sqlite_path,
+                        busy_timeout_ms=settings.sqlite_busy_timeout_ms,
+                        checkpoint_interval_transitions=(
+                            settings.portfolio_checkpoint_interval_transitions
+                        ),
+                        exclusive_writer=True,
+                    )
+                )
+            except Exception:
+                market_provider.close()
+                raise
+            if persistence_adapter.load_initial(settings.paper_portfolio_id) is None:
+                persistence_adapter.initialize_portfolio(
+                    InitialPortfolioRecord(
+                        snapshot_to_state(initial_portfolio.snapshot),
+                        portfolio_fingerprint,
+                        production_clock.now_ms(),
+                    )
+                )
+            recovery_result = persistence_adapter.recover(
+                settings.paper_portfolio_id,
+                expected_stream_key=stream_key,
+                expected_config_fingerprint=portfolio_fingerprint,
+            )
+            if (
+                recovery_result.status is RecoveryStatus.RECOVERY_REQUIRED
+                or recovery_result.portfolio_state is None
+            ):
+                persistence_adapter.close()
+                market_provider.close()
+                raise PaperTradingConfigurationError(
+                    "paper persistence recovery failed: " + "; ".join(recovery_result.diagnostics)
+                )
+            if (
+                recovery_result.status is RecoveryStatus.RECOVERED
+                and persistence_adapter.load_current(settings.paper_portfolio_id) is None
+            ):
+                persistence_adapter.rebuild_portfolio_current(
+                    recovery_result.portfolio_state,
+                    recovery_result.last_journal_seq,
+                )
+            persistence_status = persistence_adapter.status
+            logging.getLogger("Persistence").info(
+                "Persistence startup backend=sqlite path=%s schema=%s recovery=%s "
+                "portfolio_id=%s version=%s equity=%s journal_seq=%s checkpoint=%s replayed=%s",
+                persistence_status.database_path,
+                persistence_status.schema_version,
+                recovery_result.status.value,
+                settings.paper_portfolio_id,
+                recovery_result.portfolio_state.version,
+                recovery_result.portfolio_state.current_equity,
+                recovery_result.last_journal_seq,
+                recovery_result.checkpoint_version,
+                recovery_result.replayed_transitions,
+            )
+            paper_portfolio = Portfolio.restore(
+                portfolio_config, state_to_snapshot(recovery_result.portfolio_state)
+            )
+            risk_policy = PortfolioRiskPolicy(
+                max_order_notional=settings.risk_max_order_notional,
+                max_position_notional=settings.risk_max_position_notional,
+                max_target_exposure=settings.long_target_exposure,
+                max_fee_rate=settings.risk_max_fee_rate,
+                max_slippage_bps=settings.risk_max_slippage_bps,
+            )
             risk_manager = RiskManager(
-                PortfolioRiskPolicy(
-                    max_order_notional=settings.risk_max_order_notional,
-                    max_position_notional=settings.risk_max_position_notional,
-                    max_target_exposure=settings.long_target_exposure,
-                    max_fee_rate=settings.risk_max_fee_rate,
-                    max_slippage_bps=settings.risk_max_slippage_bps,
-                ),
+                risk_policy,
                 rules,
                 UUIDRiskDecisionIdFactory(),
             )
+            execution_config = PaperExecutionConfig(
+                fee_rate=settings.paper_fee_rate,
+                latency_ms=settings.paper_execution_latency_ms,
+            )
             execution = PaperExecutionProvider(
-                PaperExecutionConfig(
-                    fee_rate=settings.paper_fee_rate,
-                    latency_ms=settings.paper_execution_latency_ms,
-                ),
+                execution_config,
                 rules,
                 UUIDExecutionIdFactory(),
                 UUIDFillIdFactory(),
+            )
+            durable_store = DurablePaperCycleStore(
+                persistence_adapter,
+                DurablePaperRuntimeConfig(
+                    exchange=settings.exchange_name,
+                    strategy_config_fingerprint=fingerprint_ema_strategy(
+                        EmaStrategyFingerprintInput(
+                            strategy_config.fast_window,
+                            strategy_config.slow_window,
+                            strategy_config.strategy_name,
+                            strategy_config.strategy_version,
+                        )
+                    ),
+                    planner_name=planner_config.planner_name,
+                    planner_version=planner_config.planner_version,
+                    planner_config_fingerprint=fingerprint_planner(
+                        PlannerFingerprintInput(
+                            planner_config.long_target_exposure,
+                            planner_config.planner_name,
+                            planner_config.planner_version,
+                        )
+                    ),
+                    snapshot_policy_fingerprint=fingerprint_snapshot_policy(
+                        SnapshotPolicyFingerprintInput(
+                            settings.snapshot_stale_after_ms, "market-snapshot/1"
+                        )
+                    ),
+                    risk_policy_fingerprint=fingerprint_risk_policy(
+                        RiskPolicyFingerprintInput(
+                            risk_policy.max_order_notional,
+                            risk_policy.max_position_notional,
+                            risk_policy.max_target_exposure,
+                            risk_policy.min_cash_reserve,
+                            risk_policy.max_fee_rate,
+                            risk_policy.max_slippage_bps,
+                            risk_policy.reject_stale_market,
+                            risk_policy.policy_name,
+                            risk_policy.policy_version,
+                        )
+                    ),
+                    instrument_rules_fingerprint=instrument_fingerprint,
+                    execution_config_fingerprint=fingerprint_paper_execution(
+                        PaperExecutionFingerprintInput(
+                            execution_config.fee_rate,
+                            execution_config.latency_ms,
+                            execution_config.provider_name,
+                            execution_config.provider_version,
+                        )
+                    ),
+                    checkpoint_interval_transitions=(
+                        settings.portfolio_checkpoint_interval_transitions
+                    ),
+                ),
             )
             paper_engine = PaperTradingEngine(
                 PaperTradingEngineConfig(dedup_capacity=settings.paper_dedup_capacity),
@@ -358,6 +583,7 @@ def build_application(
                 UUIDPaperTradingCycleIdFactory(),
                 LoggingPaperTradingObserver(),
                 production_clock.monotonic,
+                durable_store,
             )
         coordinator = TradingDecisionCoordinator(
             market_cache,
@@ -386,6 +612,8 @@ def build_application(
         shadow_consumer=shadow_consumer,
         paper_engine=paper_engine,
         paper_portfolio=paper_portfolio,
+        persistence=persistence_adapter,
+        recovery_result=recovery_result,
     )
 
 
@@ -462,6 +690,18 @@ def log_stage_one_status(
         report.paper_portfolio_version,
         report.paper_last_outcome,
         report.paper_last_fill_id,
+    )
+    logger.info(
+        "Persistence enabled=%s backend=%s schema=%s recovery=%s portfolio_version=%s "
+        "journal_seq=%s checkpoint_version=%s paper_health=%s",
+        report.persistence_enabled,
+        report.persistence_backend,
+        report.persistence_schema_version,
+        report.recovery_status,
+        report.paper_portfolio_version,
+        report.persistence_last_journal_seq,
+        report.persistence_checkpoint_version,
+        report.paper_health,
     )
 
 

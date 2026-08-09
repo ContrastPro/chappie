@@ -36,6 +36,11 @@ class Settings(BaseSettings):
 
     shadow_decisions_enabled: bool = False
     paper_trading_enabled: bool = False
+    persistence_enabled: bool = False
+    persistence_backend: Literal["sqlite"] = "sqlite"
+    sqlite_path: Path = Path("data/chappie-paper.sqlite3")
+    sqlite_busy_timeout_ms: int = Field(default=5000, gt=0)
+    portfolio_checkpoint_interval_transitions: int = Field(default=100, gt=0)
     decision_coordinator_history_limit: int = Field(default=1000, gt=0)
     decision_coordinator_dedup_capacity: int = Field(default=10000, gt=0)
     shadow_history_limit: int = Field(default=1000, gt=0)
@@ -74,6 +79,16 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_market_data_configuration(self) -> "Settings":
+        if self.paper_trading_enabled and not self.persistence_enabled:
+            raise ValueError("paper_trading_enabled requires persistence_enabled")
+        if not self.paper_portfolio_id.strip():
+            raise ValueError("paper_portfolio_id must be non-empty")
+        if (
+            not str(self.sqlite_path).strip()
+            or self.sqlite_path.exists()
+            and self.sqlite_path.is_dir()
+        ):
+            raise ValueError("sqlite_path must identify a database file")
         if self.polling_bootstrap_limit > self.market_cache_capacity:
             raise ValueError("polling_bootstrap_limit must not exceed market_cache_capacity")
         if self.shadow_history_limit > self.market_cache_capacity:

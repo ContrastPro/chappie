@@ -122,6 +122,47 @@ def initialize(adapter: SQLiteTradingPersistence) -> None:
     )
 
 
+def test_exclusive_runtime_writer_rejects_second_instance(tmp_path: Path) -> None:
+    database = tmp_path / "exclusive.sqlite3"
+    first = SQLiteTradingPersistence(
+        SQLitePersistenceConfig(database, busy_timeout_ms=1, exclusive_writer=True)
+    )
+    with pytest.raises(PersistenceWriterConflictError):
+        SQLiteTradingPersistence(
+            SQLitePersistenceConfig(database, busy_timeout_ms=1, exclusive_writer=True)
+        )
+    first.close()
+    reopened = SQLiteTradingPersistence(
+        SQLitePersistenceConfig(database, busy_timeout_ms=1, exclusive_writer=True)
+    )
+    reopened.close()
+
+
+def test_runtime_checkpoint_and_projection_rebuild_are_explicit() -> None:
+    adapter = SQLiteTradingPersistence(SQLitePersistenceConfig(":memory:"))
+    seq = commit_valuation(adapter)
+    assert adapter.create_checkpoint(state(), seq) is True
+    assert adapter.create_checkpoint(state(), seq) is False
+    assert adapter.status.latest_checkpoint_version == 1
+    assert adapter.create_checkpoint(initial_state(), 0) is False
+    with adapter.begin_cycle() as transaction:
+        with pytest.raises(PersistenceTransactionError, match="checkpoint"):
+            adapter.create_checkpoint(state(), seq)
+        transaction.rollback()
+    with pytest.raises(PersistenceConflictError, match="current"):
+        adapter.create_checkpoint(state(1, quote="999"), seq)
+
+    adapter._connection.execute("DELETE FROM portfolio_current WHERE portfolio_id='paper-main'")
+    adapter.rebuild_portfolio_current(state(), seq)
+    assert adapter.load_current("paper-main") == state()
+    with pytest.raises(PersistenceConflictError, match="never auto-repaired"):
+        adapter.rebuild_portfolio_current(state(), seq)
+    adapter._connection.execute("DELETE FROM portfolio_current WHERE portfolio_id='paper-main'")
+    with pytest.raises(PersistenceConflictError, match="journal head"):
+        adapter.rebuild_portfolio_current(state(), seq + 1)
+    adapter.close()
+
+
 def decision_record(*, key: str = DECISION, slot: str = SLOT, payload: str = "{}"):
     return PersistentDecisionRecord(key, slot, payload, sha256(payload.encode()).hexdigest(), 1)
 

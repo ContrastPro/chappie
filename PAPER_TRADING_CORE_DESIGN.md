@@ -475,6 +475,12 @@ domain ports, но risk/portfolio не импортируют paper adapter ил
 15. **M3.16 — Stage 3 Completion:** backtest/replay parity, controlled paper smoke,
    quality evidence и отдельный review. Testnet/live остаются закрыты.
 
+M3.14 implementation добавила additive Portfolio contracts: validated `restore`, pure
+valuation/Fill previews и atomic `apply_committed_transition`. Accounting formulas,
+Decimal semantics и instrument validation остаются в Portfolio; persistence хранит
+полные доказуемые before/after states. Application runtime выполняет durable commit до
+изменения in-memory Portfolio и до observer delivery.
+
 ## 18. Открытые вопросы
 
 1. Выбрать точную quote precision для fee и balances; не выводить её неявно из tick.

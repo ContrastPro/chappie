@@ -23,6 +23,7 @@ class PaperTradingCycleOutcome(StrEnum):
     RISK_REJECTED = "risk_rejected"
     NOT_EXECUTED = "not_executed"
     EXECUTED = "executed"
+    DURABLE_REPLAY = "durable_replay"
 
 
 class PaperTradingStage(StrEnum):
@@ -36,6 +37,7 @@ class PaperTradingStage(StrEnum):
     EXECUTION_COMPLETED = "execution_completed"
     NO_FILL = "no_fill"
     PORTFOLIO_UPDATED = "portfolio_updated"
+    DURABLE_REPLAY = "durable_replay"
 
 
 class PaperTradingObservationStatus(StrEnum):
@@ -128,6 +130,12 @@ class PaperTradingCycleResult:
     failure_category: PaperTradingFailureCategory | None = None
     failure_message: str | None = None
     metadata: ImmutableMapping = field(default_factory=lambda: MappingProxyType({}))
+    stable_decision_key: str | None = None
+    decision_slot_key: str | None = None
+    durable_command_key: str | None = None
+    durable_journal_seq: int = 0
+    durable_committed: bool = False
+    recovered_existing: bool = False
 
     def __post_init__(self) -> None:
         for name in (
@@ -192,6 +200,21 @@ class PaperTradingCycleResult:
             raise PaperTradingInvariantError("completed_stages contains invalid stage")
         if len(set(self.completed_stages)) != len(self.completed_stages):
             raise PaperTradingInvariantError("completed_stages must not contain duplicates")
+        for name in ("stable_decision_key", "decision_slot_key", "durable_command_key"):
+            value = getattr(self, name)
+            if value is not None and (
+                not isinstance(value, str)
+                or len(value) != 64
+                or any(character not in "0123456789abcdef" for character in value)
+            ):
+                raise PaperTradingInvariantError(f"{name} must be a SHA-256 digest")
+        _duration(self.durable_journal_seq, "durable_journal_seq")
+        if not isinstance(self.durable_committed, bool) or not isinstance(
+            self.recovered_existing, bool
+        ):
+            raise PaperTradingInvariantError("durable flags must be bool")
+        if self.recovered_existing and not self.durable_committed:
+            raise PaperTradingInvariantError("recovered result must be durable")
         self._validate_outcome()
         expected_stages = {
             PaperTradingCycleOutcome.NO_INTENT: (
@@ -229,6 +252,11 @@ class PaperTradingCycleResult:
                 PaperTradingStage.EXECUTION_COMPLETED,
                 PaperTradingStage.PORTFOLIO_UPDATED,
             ),
+            PaperTradingCycleOutcome.DURABLE_REPLAY: (
+                PaperTradingStage.DECISION_RECEIVED,
+                PaperTradingStage.DECISION_VALIDATED,
+                PaperTradingStage.DURABLE_REPLAY,
+            ),
         }[self.outcome]
         if self.completed_stages != expected_stages:
             raise PaperTradingInvariantError("completed_stages do not match outcome")
@@ -252,6 +280,22 @@ class PaperTradingCycleResult:
             raise PaperTradingInvariantError("metadata must be deeply immutable") from error
 
     def _validate_outcome(self) -> None:
+        if self.outcome is PaperTradingCycleOutcome.DURABLE_REPLAY:
+            if (
+                any(
+                    value is not None
+                    for value in (
+                        self.risk_decision,
+                        self.risk_decision_id,
+                        self.execution_result,
+                        self.execution_id,
+                        self.fill_id,
+                    )
+                )
+                or self.portfolio_after != self.portfolio_before
+            ):
+                raise PaperTradingInvariantError("durable replay must not contain financial work")
+            return
         if self.outcome in {
             PaperTradingCycleOutcome.NO_INTENT,
             PaperTradingCycleOutcome.PLANNER_DECLINED,

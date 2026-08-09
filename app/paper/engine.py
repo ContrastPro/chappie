@@ -30,6 +30,8 @@ from app.paper.models import (
     PaperTradingStage,
 )
 from app.paper.observer import PaperTradingObserver
+from app.persistence.models import CycleOutcome
+from app.persistence.runtime import DurableDecisionIdentity, DurablePaperCycleStore
 from app.portfolio.models import PortfolioSnapshot
 from app.portfolio.portfolio import Portfolio
 from app.risk.manager import RiskManager
@@ -51,6 +53,7 @@ class PaperTradingEngine:
         cycle_id_factory: PaperTradingCycleIdFactory,
         observer: PaperTradingObserver,
         monotonic_clock: Callable[[], float] = monotonic,
+        durable_store: DurablePaperCycleStore | None = None,
     ) -> None:
         if not isinstance(config, PaperTradingEngineConfig):
             raise PaperTradingConfigurationError("config must be PaperTradingEngineConfig")
@@ -85,6 +88,9 @@ class PaperTradingEngine:
         self._cycle_id_factory = cycle_id_factory
         self._observer = observer
         self._clock = monotonic_clock
+        if durable_store is not None and not isinstance(durable_store, DurablePaperCycleStore):
+            raise PaperTradingConfigurationError("durable_store is invalid")
+        self._durable_store = durable_store
         self._dedup: OrderedDict[str, PaperTradingCycleResult] = OrderedDict()
         self._status = PaperTradingEngineStatus()
         self._last_result: PaperTradingCycleResult | None = None
@@ -160,11 +166,63 @@ class PaperTradingEngine:
             self._fail(PaperTradingFailureCategory.DECISION_VALIDATION, error)
             raise error
         at_start = self._portfolio.snapshot
+        durable_identity: DurableDecisionIdentity | None = None
+        if self._durable_store is not None:
+            durable_identity = self._durable_store.identity(decision, market)
+            existing = self._durable_store.find_terminal(durable_identity)
+            if existing is not None:
+                replay = self._result(
+                    cycle_id,
+                    decision,
+                    at_start,
+                    at_start,
+                    at_start,
+                    None,
+                    None,
+                    PaperTradingCycleOutcome.DURABLE_REPLAY,
+                    (
+                        PaperTradingStage.DECISION_RECEIVED,
+                        PaperTradingStage.DECISION_VALIDATED,
+                        PaperTradingStage.DURABLE_REPLAY,
+                    ),
+                    0,
+                    0,
+                    0,
+                    0,
+                    self._elapsed(started),
+                    PaperTradingObservationStatus.NOT_ATTEMPTED,
+                )
+                replay = replace(
+                    replay,
+                    stable_decision_key=durable_identity.stable_decision_key,
+                    decision_slot_key=durable_identity.decision_slot_key,
+                    durable_journal_seq=existing.last_journal_seq,
+                    durable_committed=True,
+                    recovered_existing=True,
+                    metadata={
+                        **dict(replay.metadata),
+                        "original_durable_outcome": existing.terminal_outcome.value,
+                    },
+                )
+                self._store(key, replay)
+                self._status = replace(
+                    self._status,
+                    ignored_duplicates=self._status.ignored_duplicates + 1,
+                    last_portfolio_version=at_start.version,
+                )
+                return replay
         mark_started = self._now()
         try:
-            valued = self._portfolio.mark_to_market(
-                latest.close, market.as_of_ms, decision.correlation_id
-            )
+            if self._durable_store is None:
+                valuation = None
+                valued = self._portfolio.mark_to_market(
+                    latest.close, market.as_of_ms, decision.correlation_id
+                )
+            else:
+                valuation = self._portfolio.preview_mark_to_market(
+                    latest.close, market.as_of_ms, decision.correlation_id
+                )
+                valued = valuation.after
         except Exception as error:
             wrapped = PaperTradingPortfolioError("portfolio valuation failed")
             self._fail(PaperTradingFailureCategory.PORTFOLIO_VALUATION, wrapped)
@@ -244,7 +302,14 @@ class PaperTradingEngine:
                     fill = execution.fill
                     apply_started = self._now()
                     try:
-                        after = self._portfolio.apply_fill(fill, latest.close)  # type: ignore[arg-type]
+                        if self._durable_store is None:
+                            fill_transition = None
+                            after = self._portfolio.apply_fill(fill, latest.close)  # type: ignore[arg-type]
+                        else:
+                            fill_transition = self._portfolio.preview_fill(  # type: ignore[arg-type]
+                                fill, latest.close, base_state=valued
+                            )
+                            after = fill_transition.after
                         self._validate_applied(valued, after, execution)
                     except Exception as error:
                         wrapped = PaperTradingPortfolioError(
@@ -264,6 +329,45 @@ class PaperTradingEngine:
                         PaperTradingStage.PORTFOLIO_UPDATED,
                     )
                 observe = True
+        transitions = tuple(
+            transition
+            for transition in (
+                valuation,
+                locals().get("fill_transition"),
+            )
+            if transition is not None and transition.after != transition.before
+        )
+        durable_commit = None
+        if self._durable_store is not None:
+            assert durable_identity is not None
+            try:
+                durable_commit = self._durable_store.commit_cycle(
+                    identity=durable_identity,
+                    decision=decision,
+                    outcome=self._durable_outcome(outcome),
+                    transitions=transitions,
+                    risk=risk,
+                    execution=execution,
+                )
+            except Exception as error:
+                wrapped = PaperTradingPortfolioError("durable paper cycle commit failed")
+                self._status = replace(self._status, health=PaperTradingEngineHealth.DEGRADED)
+                self._fail(PaperTradingFailureCategory.PORTFOLIO_APPLY, wrapped)
+                raise wrapped from error
+        if durable_commit is not None:
+            try:
+                for transition in transitions:
+                    self._portfolio.apply_committed_transition(transition)
+            except BaseException as error:
+                wrapped = PaperTradingPortfolioError(
+                    "Portfolio synchronization failed after durable commit"
+                )
+                self._status = replace(self._status, health=PaperTradingEngineHealth.DEGRADED)
+                self._fail(PaperTradingFailureCategory.PORTFOLIO_APPLY, wrapped)
+                if isinstance(error, Exception):
+                    raise wrapped from error
+                raise
+            after = self._portfolio.snapshot
         provisional = self._result(
             cycle_id,
             decision,
@@ -281,10 +385,33 @@ class PaperTradingEngine:
             self._elapsed(started),
             PaperTradingObservationStatus.NOT_ATTEMPTED,
         )
+        if durable_commit is not None:
+            provisional = replace(
+                provisional,
+                stable_decision_key=durable_commit.identity.stable_decision_key,
+                decision_slot_key=durable_commit.identity.decision_slot_key,
+                durable_command_key=durable_commit.durable_command_key,
+                durable_journal_seq=durable_commit.last_journal_seq,
+                durable_committed=True,
+            )
         final = self._observe(provisional, observe, started)
+        if durable_commit is not None:
+            self._durable_store.maybe_checkpoint(
+                final.portfolio_after, durable_commit.last_journal_seq
+            )
         self._store(key, final)
         self._complete(final)
         return final
+
+    @staticmethod
+    def _durable_outcome(outcome: PaperTradingCycleOutcome) -> CycleOutcome:
+        return {
+            PaperTradingCycleOutcome.NO_INTENT: CycleOutcome.HOLD,
+            PaperTradingCycleOutcome.PLANNER_DECLINED: CycleOutcome.PLANNER_DECLINED,
+            PaperTradingCycleOutcome.RISK_REJECTED: CycleOutcome.RISK_REJECTED,
+            PaperTradingCycleOutcome.NOT_EXECUTED: CycleOutcome.NOT_EXECUTED,
+            PaperTradingCycleOutcome.EXECUTED: CycleOutcome.EXECUTED,
+        }[outcome]
 
     def _observe(
         self, result: PaperTradingCycleResult, enabled: bool, started: float

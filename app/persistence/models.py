@@ -55,6 +55,7 @@ class SQLitePersistenceConfig:
     busy_timeout_ms: int = 5_000
     checkpoint_interval_transitions: int = 100
     expected_schema_version: int = 1
+    exclusive_writer: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.database_path, (str, Path)) or not str(self.database_path):
@@ -69,6 +70,8 @@ class SQLitePersistenceConfig:
                 raise PersistenceConfigurationError(f"{name} must be positive")
         if self.expected_schema_version != 1:
             raise PersistenceConfigurationError("expected_schema_version must be 1")
+        if not isinstance(self.exclusive_writer, bool):
+            raise PersistenceConfigurationError("exclusive_writer must be bool")
 
 
 @dataclass(frozen=True, slots=True)
@@ -410,4 +413,20 @@ class PersistenceStatus:
     foreign_keys: bool
     last_journal_seq: int
     latest_portfolio_version: int | None
+    latest_checkpoint_version: int | None
     database_path: str
+
+
+@dataclass(frozen=True, slots=True)
+class DurableDecisionState:
+    stable_decision_key: str
+    decision_slot_key: str
+    terminal_outcome: CycleOutcome
+    last_journal_seq: int
+
+    def __post_init__(self) -> None:
+        _digest(self.stable_decision_key, "stable_decision_key")
+        _digest(self.decision_slot_key, "decision_slot_key")
+        if not isinstance(self.terminal_outcome, CycleOutcome):
+            raise PersistenceIntegrityError("terminal_outcome must be CycleOutcome")
+        _integer(self.last_journal_seq, "last_journal_seq")

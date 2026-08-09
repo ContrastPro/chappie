@@ -2,7 +2,7 @@
 
 ## 1. Purpose
 
-Статус: **design completed; M3.13 implementation completed; final safety review passed**.
+Статус: **M3.14 runtime integration implemented; final safety review pending**.
 
 Дата design review: 2026-08-08. Дата M3.13 final safety review: 2026-08-09.
 
@@ -936,3 +936,28 @@ Roadmap after M3.13 implementation:
 - M3.14 — Runtime Recovery Integration and durable Paper Unit of Work;
 - M3.15 — Crash/Restart Safety Review;
 - M3.16 — Stage 3 Completion.
+
+## 24. M3.14 runtime integration
+
+M3.14 подключает `TradingPersistence` только в application/paper orchestration layer.
+Production application требует persistence при `PAPER_TRADING_ENABLED=true`, открывает
+SQLite с process-lifetime exclusive writer ownership, проверяет schema/integrity,
+инициализирует authoritative `portfolio_roots` только для fresh database и выполняет
+recovery до создания и подписки `TradingDecisionCoordinator`.
+
+`Portfolio.restore()` валидирует полное восстановленное состояние без SQL dependency.
+Pure `preview_mark_to_market()` и `preview_fill()` вычисляют immutable transitions без
+мутации aggregate. Durable flow записывает decision, optional command/Fill, одну или
+две effective Portfolio transitions, `portfolio_current` и terminal outcome в одной
+transaction. Только COMMIT разрешает `apply_committed_transition()`; observer следует
+после успешной memory synchronization.
+
+Stable decision identity хеширует фактический ordered `MarketSnapshot.closed_candles`.
+Terminal duplicate после restart возвращает typed durable replay без Risk/Execution.
+Decision-slot correction, configuration mismatch, writer conflict, commit ambiguity и
+post-commit sync failure блокируют paper path fail-closed; shadow isolation сохраняется.
+
+Checkpoints остаются optimization: interval и shutdown checkpoints не входят в
+authoritative financial transaction. Missing `portfolio_current` rebuild выполняется
+явно только из verified journal head; conflicting projection автоматически не
+ремонтируется. M3.15 сохраняет отдельный crash/restart torture-review scope.
