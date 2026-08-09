@@ -23,6 +23,13 @@ import app.strategies
 import app.application
 import app.agent
 import app.core
+import app.coordination
+import app.execution
+import app.paper
+import app.persistence
+import app.portfolio
+import app.risk
+import app.shadow
 print('All public imports passed')
 """.strip()
 
@@ -88,12 +95,17 @@ CHECKED_COMPONENTS = (
     "IntentPlanner and LongOnlyIntentPlanner",
     "TradingDecisionPipeline and DecisionPipelineResult",
     "offline market-to-decision compatibility flow",
+    "TradingDecisionCoordinator shared Strategy evaluation",
+    "RiskManager and deterministic PaperExecutionProvider",
+    "durable PaperTradingEngine and atomic committed Portfolio synchronization",
+    "SQLite journal, checkpoints, recovery and writer exclusion",
+    "application startup recovery and shutdown resource lifecycle",
 )
 
 KNOWN_GAPS = (
     "No configured static type checker (mypy/pyright); add in a separate milestone.",
     "pytest-random-order is not installed, so randomized-order execution was not run.",
-    "TradingDecisionPipeline is intentionally not connected to production runtime.",
+    "No durable OHLCV store or live exchange reconciliation exists.",
 )
 
 

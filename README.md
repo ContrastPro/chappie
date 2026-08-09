@@ -138,3 +138,10 @@ recovery, durable paper transactions, restart-stable identities, commit-before-m
 synchronization and checkpoint lifecycle. The M3.15 crash/restart safety review passed;
 its failpoint matrix and operational limits are recorded in
 [`M3_15_CRASH_RESTART_REPORT.md`](M3_15_CRASH_RESTART_REPORT.md). Live execution is absent.
+
+M3.16 completed Stage 3 with a controlled two-process public Binance data smoke using
+one ignored SQLite database. Recovery restored the exact durable head and a new candle
+advanced Portfolio and journal versions from `0 -> 1 -> 2`; both decisions were HOLD,
+so no real-smoke Fill occurred. Deterministic automated suites cover executable
+BUY/SELL restart and duplicate-Fill behavior. Keep the database together with any
+SQLite-owned WAL/SHM files while it is active; observer delivery remains best-effort.

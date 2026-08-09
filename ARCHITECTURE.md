@@ -629,7 +629,12 @@ M3.15 завершил crash/restart review durable paper boundary. Financial cy
 rollback-before-COMMIT или authoritative-commit-after-COMMIT; post-commit memory sync
 атомарен для полного transition batch. Новый process восстанавливает Portfolio из root +
 journal/checkpoint и suppress-ит duplicate Risk/Execution через stable durable identity.
-Stage 3 остаётся незавершённым до M3.16; private exchange execution отсутствует.
+M3.16 завершил Stage 3 controlled two-run public-data restart smoke на одной SQLite DB:
+recovery восстановил exact durable head, новые shared shadow/paper HOLD decisions
+продвинули Portfolio/journal `0 -> 1 -> 2`, оба shutdown завершились с exit code 0.
+Real BUY/SELL в smoke не происходил; executable restart behavior и duplicate-Fill
+защита подтверждены deterministic automated suites. Private exchange execution
+отсутствует.
 
 ## 17. Future Chappie Integration
 

@@ -176,7 +176,7 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 
 ## Этап 3. Backtesting и paper trading
 
-Статус: **in progress**.
+Статус: **completed** (2026-08-09).
 
 ### Цель
 
@@ -320,9 +320,13 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 
 #### M3.16 Stage 3 completion
 
-Статус: **next**.
+Статус: **completed** (2026-08-09).
 
-- Подтвердить backtest/paper parity, controlled smoke-run и критерии качества.
+- Automated audit и controlled two-run public-data restart smoke на одной SQLite DB
+  подтвердили durable runtime continuity, shared shadow/paper decision delivery и
+  progression Portfolio/journal `0 -> 1 -> 2` без duplicate financial mutation.
+- Smoke наблюдал только HOLD; BUY/SELL restart safety подтверждена deterministic
+  automated suites, а не real public-data execution.
 
 ### Планируемые результаты
 
@@ -351,6 +355,8 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 - Реальное биржевое исполнение.
 
 ## Этап 4. Risk hardening и биржевое execution
+
+Статус: **next**.
 
 ### Цель
 

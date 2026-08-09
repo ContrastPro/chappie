@@ -975,3 +975,18 @@ Post-commit memory synchronization применяет весь valuation+Fill ba
 и checkpoint failures остаются non-financial. Полная matrix, corruption proofs и
 ограничения backup freshness/database deletion перечислены в
 `M3_15_CRASH_RESTART_REPORT.md`.
+
+## 26. M3.16 Stage 3 completion
+
+Controlled two-run public Binance data smoke использовал одну ignored SQLite database.
+Run 1 начал с Portfolio/journal version `0/0`, durable-recorded новый shared HOLD cycle
+как `1/1` и завершился cleanly. Run 2 восстановил exact `1/1` с `recovery=CLEAN`, затем
+новый post-restart shared HOLD cycle продвинул состояние до `2/2` и также завершился
+cleanly. Оба shared pipeline результата были доставлены shadow и paper consumers.
+
+Smoke не создавал BUY/SELL, command или Fill: balances, trade count и `last_fill_id`
+остались неизменны. Executable restart/dedup guarantees подтверждены automated
+deterministic crash suites, а не real smoke. Сохраняются ограничения: нет durable OHLCV
+store, external installation identity manifest, доказательства global backup freshness,
+exactly-once observer delivery, live execution или exchange reconciliation. WAL/SHM
+остаются SQLite-owned и не должны изменяться вручную при активной database.
