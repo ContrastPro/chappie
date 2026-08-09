@@ -471,9 +471,11 @@ PaperTradingEngine реализован и прошёл final safety review в M
 14. Portfolio атомарно и идемпотентно применяет Fill; execution не меняет его напрямую.
 15. PaperTradingEngine по утверждённому M3.8 контракту формирует единый immutable cycle result и compact
     observer record; HOLD и declined cycles обновляют только valuation.
-16. В текущем M3.11 runtime audit/result остаются in-memory и в logs. Целевая
-    M3.13–M3.14 persistence boundary записывает decision claim, valuation, risk,
-    execution, Fill и Portfolio transition в один authoritative durable journal.
+16. В текущем M3.11 runtime audit/result остаются in-memory и в logs. M3.13 изолированно
+    реализовал persistence ports, canonical keys, append-only journal/checkpoints,
+    SQLite adapter и recovery/reconciliation. M3.14 подключит эту boundary к runtime и
+    будет записывать decision claim, valuation, risk, execution, Fill и Portfolio
+    transition в одной authoritative transaction.
 
 Для paper-only dust liquidation Portfolio допускает исключение из minimum quantity/
 notional только для SELL всей текущей позиции с явным immutable Fill marker. Это не
@@ -511,8 +513,7 @@ Live-режим должен быть запрещён по умолчанию �
 
 ### Durable paper persistence boundary
 
-M3.12 design и final design review утверждают направление, но не меняют runtime
-behavior:
+M3.12 design и M3.13 isolated implementation не меняют runtime behavior:
 
 ```text
 CandleClosed
@@ -534,6 +535,24 @@ approved Risk, policy/rules и execution configuration. Decision claim, command,
 valuation, Portfolio transition/current projection и terminal cycle commit-ятся в
 одной application-level transaction. Domain, Risk, Portfolio, Strategy и Paper
 Execution не зависят от SQLite.
+
+Реализованный `app.persistence` разделён на SQLite-independent canonical/models/keys/
+ports/recovery core и единственный SQLite adapter с embedded checksummed migration.
+Schema v1 запрещает financial `REAL`, обеспечивает stable decision/slot/command/Fill/
+Portfolio-version uniqueness, append-only journal и materialized `portfolio_current`.
+`BEGIN IMMEDIATE`, WAL, FULL synchronous mode и foreign keys задают single-writer
+financial boundary. Изолированный recovery возвращает только CLEAN, RECOVERED или
+fail-closed RECOVERY_REQUIRED; создание runtime Portfolio и startup ordering остаются
+M3.14.
+
+M3.13 final safety review подтвердил explicit Portfolio genesis root (version 0 +
+configuration fingerprint), full root-to-current journal validation, no-op terminal
+cycles без fake version increment и несколько gap-free effective transitions в одной
+cycle transaction. Materialized `portfolio_current` может быть read-only reconstructed
+при отсутствии, но существующее disagreement не ремонтируется автоматически.
+Checkpoint остаётся только optimization и не позволяет пропустить corrupt historical
+journal. SQLite connection lifecycle детерминирован; backup запрещён во время active
+financial transaction и использует online backup с явно закрываемым destination.
 
 После restart bounded coordinator/paper/fill caches остаются только fast-path. Startup
 обязан открыть storage, проверить schema/integrity, восстановить Portfolio через

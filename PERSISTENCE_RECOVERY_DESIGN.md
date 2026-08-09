@@ -2,9 +2,9 @@
 
 ## 1. Purpose
 
-Статус: **design completed; final design review passed; implementation pending**.
+Статус: **design completed; M3.13 implementation completed; final safety review passed**.
 
-Дата design/review: 2026-08-08. Milestone: M3.12.
+Дата design review: 2026-08-08. Дата M3.13 final safety review: 2026-08-09.
 
 Документ определяет production-grade persistence boundary для синхронного paper
 runtime Chappie Trader. Его цель — доказуемо восстановить финансовое состояние после
@@ -567,7 +567,9 @@ SQLite `REAL` запрещён для финансовых значений. И�
 TEXT plus validation:
 
 - zero canonicalized to `"0"` (включая negative zero);
-- non-zero — normalized plain base-10 notation без exponent и leading `+`;
+- non-zero — normalized base-10 notation без leading `+`; обычные значения используют
+  plain notation, а pathological exponent, который потребовал бы строку длиннее 4096
+  символов, — bounded canonical scientific notation;
 - trailing zeros не имеют экономической identity и удаляются; instrument precision
   хранится отдельно в rules/version;
 - NaN/Infinity запрещены;
@@ -872,20 +874,65 @@ app/persistence/
   ports.py          # Protocols, no SQLite
   models.py         # immutable durable records/keys
   exceptions.py     # typed storage/recovery errors
-  keys.py           # canonical serialization and SHA-256 identities
+  canonical.py      # canonical Decimal/JSON serialization and SHA-256 helper
+  keys.py           # stable decision, slot, configuration and command identities
   recovery.py       # adapter-independent recovery/reconciliation
-  service.py        # paper Unit of Work orchestration
   sqlite.py         # only SQLite adapter/imports
+  migrations/       # embedded ordered and checksummed SQL resources
 ```
 
 `app.persistence` must not import Binance/polling/strategy implementations. Domain
 packages must not import persistence. `application.py` is the composition root allowed
 to select the concrete adapter.
 
-Roadmap after this design:
+### M3.13 implementation status
+
+Изолированно реализованы immutable persistence records, runtime-checkable ports,
+canonical finite Decimal/JSON encoding, versioned stable decision/slot/command keys,
+SQLite schema v1 и transactional migration runner. `SQLiteTradingPersistence`
+применяет WAL, `synchronous=FULL`, foreign keys, busy timeout и `BEGIN IMMEDIATE`;
+financial transaction автоматически rollback-ится без явного terminal commit.
+
+Schema обеспечивает PK/UNIQUE для stable decision, semantic decision slot, durable
+command, Fill и `(portfolio_id, version_after)`. Journal защищён от UPDATE/DELETE
+database triggers; `portfolio_current` и append-only checkpoints обновляются в той же
+cycle transaction. RecoveryCoordinator проверяет database integrity, state digests,
+gap-free version/digest chain и exact current projection; сомнительное состояние
+возвращает `RECOVERY_REQUIRED` без usable PortfolioState. Online backup использует
+`sqlite3.Connection.backup()`. Runtime, application startup, PaperTradingEngine и
+TradingDecisionCoordinator намеренно не подключены до M3.14.
+
+### M3.13 final safety review
+
+Final review добавил authoritative `portfolio_roots`: initial PortfolioState version 0,
+state digest и configuration fingerprint сохраняются явно и задают genesis digest для
+полного journal replay. Новый arbitrary initial balance после появления lineage не
+принимается. Missing `portfolio_current` может быть read-only reconstructed из root +
+journal как `RECOVERED`; disagreement существующей projection остаётся
+`RECOVERY_REQUIRED` и автоматически не исправляется.
+
+Cycle transaction допускает no-op HOLD/PLANNER_DECLINED/RISK_REJECTED/NOT_EXECUTED без
+ложного Portfolio version increment. Для effective valuation + Fill поддерживаются две
+gap-free transitions в одной transaction (`N -> N+1 -> N+2`); `portfolio_current`
+обязан совпадать с последней transition и journal sequence. `EXECUTED` требует command,
+Fill и Portfolio transition; остальные outcomes применяют строгую command/Fill policy.
+
+Checkpoint никогда не скрывает повреждение раннего journal: recovery валидирует полную
+root-to-current version/digest chain, затем использует newest valid checkpoint только
+для определения replay suffix. Corrupt checkpoints пропускаются с bounded diagnostic;
+если все checkpoints invalid, полный authoritative journal replay от root допустим.
+
+SQLite resources закрываются детерминированно. В частности, backup destination
+использует explicit `closing()` (обычный sqlite context manager закрывает transaction,
+но не connection), constructor закрывает connection при configuration/migration error,
+а operations после close и backup внутри active financial transaction typed-rejected.
+Canonical Decimal использует bounded scientific notation только для pathological
+exponents; semantic Decimal scale не влияет на fingerprints.
+
+Roadmap after M3.13 implementation:
 
 - M3.12 — design (this document);
-- M3.13 — Persistence Core, canonical keys, journal/checkpoint ports and SQLite adapter;
+- M3.13 — implementation completed; final safety review passed;
 - M3.14 — Runtime Recovery Integration and durable Paper Unit of Work;
 - M3.15 — Crash/Restart Safety Review;
 - M3.16 — Stage 3 Completion.

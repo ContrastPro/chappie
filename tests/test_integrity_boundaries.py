@@ -221,6 +221,63 @@ def test_paper_engine_architecture_boundaries() -> None:
         ), f"{path} crosses a paper architecture boundary"
 
 
+def test_persistence_architecture_boundaries() -> None:
+    adapter_files = {
+        Path("app/persistence/sqlite.py"),
+    }
+    persistence_files = set(Path("app/persistence").glob("*.py"))
+    assert persistence_files
+    for path in persistence_files:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        imports = {
+            node.module
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module is not None
+        }
+        imports.update(
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        )
+        if path not in adapter_files:
+            assert "sqlite3" not in imports, f"{path} imports SQLite outside the adapter"
+        forbidden = {
+            "app.application",
+            "app.main",
+            "app.market.binance_provider",
+            "app.market.polling",
+            "app.paper.engine",
+            "app.coordination.trading",
+            "httpx",
+        }
+        assert not any(
+            imported == blocked or imported.startswith(f"{blocked}.")
+            for imported in imports
+            for blocked in forbidden
+        ), f"{path} crosses a persistence architecture boundary"
+
+    sqlite_forbidden_roots = (
+        "app/portfolio",
+        "app/risk",
+        "app/execution",
+        "app/trading",
+        "app/shadow",
+        "app/coordination",
+        "app/market",
+    )
+    for root in sqlite_forbidden_roots:
+        for path in Path(root).glob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            imports = {
+                alias.name
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Import)
+                for alias in node.names
+            }
+            assert "sqlite3" not in imports, f"{path} must not import sqlite3"
+
+
 def event_values() -> dict[str, object]:
     return {
         "event_id": "event-1",
