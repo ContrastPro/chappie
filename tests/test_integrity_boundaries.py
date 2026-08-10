@@ -278,6 +278,50 @@ def test_persistence_architecture_boundaries() -> None:
             assert "sqlite3" not in imports, f"{path} must not import sqlite3"
 
 
+def test_exchange_execution_architecture_boundaries() -> None:
+    forbidden = {
+        "aiohttp",
+        "httpx",
+        "requests",
+        "socket",
+        "sqlite3",
+        "urllib",
+        "app.application",
+        "app.main",
+        "app.persistence",
+        "app.market.binance_provider",
+        "app.market.polling",
+        "app.execution.paper",
+        "app.paper",
+    }
+    exchange_files = sorted(Path("app/exchange_execution").glob("*.py"))
+    assert exchange_files
+    for path in exchange_files:
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        imports = {
+            node.module
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module is not None
+        }
+        imports.update(
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        )
+        assert not any(
+            imported == blocked or imported.startswith(f"{blocked}.")
+            for imported in imports
+            for blocked in forbidden
+        ), f"{path} crosses an exchange execution architecture boundary"
+        calls = {
+            node.func.attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        }
+        assert not ({"now", "utcnow", "time", "monotonic"} & calls)
+
+
 def event_values() -> dict[str, object]:
     return {
         "event_id": "event-1",

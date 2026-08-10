@@ -8,10 +8,21 @@
 - Initial implementation target: **Binance Spot Testnet only**.
 - M4.2 review date: 2026-08-09.
 - Basis: completed Stage 3 durable paper runtime and accepted ADR-055–ADR-062.
+- M4.3 implementation status: **completed; final domain safety review passed**.
 
 M4.1/M4.2 change documentation only. They do not add production code, migrations, private
 API calls, credentials, testnet execution, live execution, or permission to trade.
 Successful Stage 4 testnet work will not authorize live trading.
+
+M4.3 implements only the infrastructure-neutral `app/exchange_execution` domain and
+ports: immutable commands/orders/trades/events, pure lifecycle and aggregation rules,
+deterministic client IDs, transport/query DTOs, pending exposure, execution sessions,
+kill-switch state and an opaque process-local capability. It adds no adapter, signing,
+private call, migration, coordinator, reconciliation service or Portfolio mutation.
+The final review confirms that ACK cumulative fields remain order-state observations
+only and never create a trade, Fill, commission, price or settlement. Exact duplicate
+trade payloads are idempotent in aggregation; a conflicting payload under the same
+scoped trade identity fails closed.
 
 ## 2. Safety objective
 
@@ -262,6 +273,11 @@ HTTP 4xx is Case C only when a maintained, tested error classification proves no
 acceptance; uncertainty is Case B. A crash after the attempt marker is always Case B,
 even if it may have occurred before the socket write.
 
+Case A never creates a new durable command or client identity. M4.5/M4.6 may retry only
+the exact persisted command with the same client ID after all current gates are
+revalidated. Timeout, HTTP 5xx, reset, lost response and unknown transmission are typed
+Case B categories and always require reconciliation.
+
 ## 9. Durable transaction phases
 
 Network I/O is never performed inside a SQLite transaction.
@@ -457,6 +473,11 @@ reconciliation generation and control generation. It performs no network I/O. Ph
 atomically reserves worst-case quote for BUY or base quantity for SELL using compare-
 and-set versions; any non-terminal order rejects another decision.
 
+Pending exposure explicitly carries original, executed and remaining base quantity in
+addition to remaining quote/base reservations and notional. The invariant is
+`original = executed + remaining`; after a partial fill M4.4 therefore consumes only
+the remaining reservation rather than ambiguously retaining the full original amount.
+
 ### 13.2 Runtime/exchange safety controls
 
 These remain outside the pure RiskManager:
@@ -503,6 +524,9 @@ Disarming also issues only a process-local submission capability bound to the cu
 reconciliation/control generations. Restart destroys that capability and requires fresh
 operator startup authorization even when the durable switch is disarmed. LIVE cannot
 obtain this capability.
+The capability is non-serializable and non-copyable. Submission additionally requires
+TESTNET, matching reconciliation/control generations, Risk approval and a safe pending-
+order control; clearing the kill switch alone is insufficient.
 
 ## 15. Binance Testnet adapter boundary
 

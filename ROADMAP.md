@@ -356,7 +356,7 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 
 ## Этап 4. Risk hardening и биржевое execution
 
-Статус: **in progress — final design approved, implementation not started**.
+Статус: **in progress — M4.3 completed; M4.4 next**.
 
 ### Цель
 
@@ -384,12 +384,20 @@ recovery и изолированным testnet execution до отдельног
 
 #### M4.3 Exchange Order Domain and Ports
 
-Статус: **next**.
+Статус: **completed; final domain safety review passed**.
 
-- Реализовать immutable order/trade/control models и adapter-independent gateway/query
-  ports в точном соответствии с утверждённым M4.2 contract.
+- Реализованы immutable command/order/trade/event/control/session models, pure lifecycle,
+  deterministic client order ID, aggregation/settlement helpers, pending exposure,
+  process-local capability и adapter-independent gateway/account-reader ports.
+- Не добавлены private API, signing, migration v2, runtime wiring, reconciliation service,
+  Risk hardening, Portfolio extension, cancellation command или LIVE capability.
+- Final review подтвердил ACK-not-Fill, exhaustive lifecycle/reconciliation matrix,
+  immutable scoped identity, idempotent exact trade duplicates, fail-closed conflicts,
+  explicit partial-fill remaining exposure и generation-bound process capability.
 
 #### M4.4 Risk Hardening
+
+Статус: **next**.
 
 - Добавить deterministic session/pending exposure limits и runtime safety controls без
   I/O внутри RiskManager.

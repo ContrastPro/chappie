@@ -73,7 +73,8 @@ app/
   agent/          Координация жизненного цикла агента
   core/           Настройки и логирование
   database/       Зарезервировано для персистентности
-  execution/      Зарезервировано для исполнения сделок
+  exchange_execution/ Infrastructure-neutral TESTNET order domain и ports
+  execution/      Детерминированное paper execution
   market/         Модели, контракт и Binance-адаптер
   risk/           Зарезервировано для риск-менеджмента
   strategies/     Зарезервировано для торговых стратегий
@@ -406,6 +407,19 @@ stateful `ExchangeExecutionCoordinator` работает через side-effect
 commit-ятся до submission; acknowledgement не считается Fill; только durable
 exchange-reported trades создают Portfolio transitions. Один order допускает несколько
 partial Fill. Binance signing, errors и payloads остаются infrastructure-only.
+
+M4.3 реализует эту границу в `app/exchange_execution` без network/persistence/runtime
+wiring. Пакет содержит immutable command/order/trade/event models, approved lifecycle,
+transport ambiguity и query-result types, deterministic `ctt1t-` client identity,
+trade/pending-exposure aggregation, settlement classification, durable session/kill-
+switch models, opaque process-local submission capability и runtime-checkable submit/
+account-reader ports. Ни один port не создаёт durable identity; LIVE не представлен как
+поддерживаемая execution environment.
+M4.3 final domain safety review подтвердил: ACK не создаёт Fill/Trade, ambiguous
+transport всегда ведёт к reconciliation, exact duplicate trade идемпотентен, conflicting
+duplicate fail-closed, partial-fill reservation хранит original/executed/remaining, а
+submission требует реальный non-serializable generation-bound capability вместе со
+всеми control/Risk gates.
 
 ### `portfolio`
 
