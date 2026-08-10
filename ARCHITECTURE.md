@@ -400,6 +400,13 @@ Testnet и live adapters требуют отдельных design review и до
 и configured deterministic latency без clock, sleep или random. Подробный контракт
 описан в `PAPER_EXECUTION_PROVIDER_DESIGN.md`.
 
+M4.1–M4.2 сохраняют paper provider без изменений и утверждают отдельный TESTNET contract:
+stateful `ExchangeExecutionCoordinator` работает через side-effect
+`ExchangeOrderGateway` и read-only `ExchangeAccountReader`. Order command/client ID
+commit-ятся до submission; acknowledgement не считается Fill; только durable
+exchange-reported trades создают Portfolio transitions. Один order допускает несколько
+partial Fill. Binance signing, errors и payloads остаются infrastructure-only.
+
 ### `portfolio`
 
 Является единственным авторитетным источником balances, позиции, cost basis,
@@ -490,9 +497,14 @@ notional только для SELL всей текущей позиции с яв
 - `testnet` — реальные API-вызовы в тестовой среде биржи;
 - `live` — реальное исполнение с капиталом.
 
-Переход между режимами должен менять инфраструктурные адаптеры, но не бизнес-правила стратегии и риска.
+Переход между режимами должен менять инфраструктурные адаптеры, но не бизнес-правила
+стратегии и риска. PAPER и TESTNET являются взаимоисключающими financial consumers;
+shadow может сопровождать любой из них.
 
-Live-режим должен быть запрещён по умолчанию и требовать явного подтверждения, валидной конфигурации и прохождения эксплуатационных критериев.
+Initial Stage 4 implementation должна unconditionally отклонять LIVE до создания
+private client. Будущий live-режим потребует отдельной build/config capability,
+credential namespace, endpoint allowlist, явного подтверждения и live-readiness review;
+одного ordinary mode flag недостаточно.
 
 ## 12. Надёжность и безопасность
 
@@ -635,6 +647,20 @@ recovery восстановил exact durable head, новые shared shadow/pap
 Real BUY/SELL в smoke не происходил; executable restart behavior и duplicate-Fill
 защита подтверждены deterministic automated suites. Private exchange execution
 отсутствует.
+
+M4.1 design и M4.2 final safety review отделяют exchange execution от immediate-fill paper semantics. Первый
+target — только Binance Spot Testnet: отдельный stateful order coordinator сохраняет
+Risk-approved command и deterministic client order ID до network side effect, а
+exchange-reported partial trades применяются к Portfolio отдельными durable,
+idempotent transitions. Ambiguous submission запрещает blind retry и требует query по
+stable client ID. Startup reconciliation и durable kill switch gate-ят новые
+submissions. PAPER, TESTNET и LIVE являются разными capabilities; initial Stage 4
+unconditionally отвергает LIVE до отдельного live-readiness review. Transport outcome
+не является exchange truth; после ambiguous submit automatic resubmit запрещён, а
+отсутствие strong proof-of-absence требует fail-closed operator resolution. Initial
+scope — MARKET BUY/SELL `BTCUSDT`, base quantity, один non-terminal order, без cancel.
+Полный утверждённый design:
+`EXCHANGE_EXECUTION_DESIGN.md`, ADR-055–ADR-062.
 
 ## 17. Future Chappie Integration
 

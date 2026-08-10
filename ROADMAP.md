@@ -356,18 +356,84 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 
 ## Этап 4. Risk hardening и биржевое execution
 
-Статус: **next**.
+Статус: **in progress — final design approved, implementation not started**.
 
 ### Цель
 
 Расширить проверенный paper-контур эксплуатационными risk controls, durable
 recovery и изолированным testnet execution до отдельного допуска live.
 
+#### M4.1 Exchange Execution Architecture Design
+
+Статус: **completed** (2026-08-09).
+
+- Спроектированы отдельный TESTNET execution contour, durable multi-state order
+  lifecycle, pre-submit client identity, partial-fill accounting boundary,
+  reconciliation gate, kill switch и fail-closed LIVE isolation.
+- ADR-055–ADR-062 и полный контракт зафиксированы в
+  `EXCHANGE_EXECUTION_DESIGN.md`. Production code, private API и migration SQL не
+  добавлены.
+
+#### M4.2 Final Design and Safety Review
+
+Статус: **completed — final safety review passed** (2026-08-09).
+
+- Закрыты open questions M4.1; проверены official Binance Spot/Testnet contracts,
+  transport/exchange-truth boundary, ambiguous cases A–F, accounting, crash matrix,
+  additive migration и LIVE isolation. ADR-055–ADR-062 приняты.
+
+#### M4.3 Exchange Order Domain and Ports
+
+Статус: **next**.
+
+- Реализовать immutable order/trade/control models и adapter-independent gateway/query
+  ports в точном соответствии с утверждённым M4.2 contract.
+
+#### M4.4 Risk Hardening
+
+- Добавить deterministic session/pending exposure limits и runtime safety controls без
+  I/O внутри RiskManager.
+
+#### M4.5 Binance Testnet Adapter
+
+- Реализовать изолированный private Testnet adapter, signing/redaction, endpoint
+  allowlist и contract tests. LIVE остаётся unsupported.
+
+#### M4.6 Durable Order Lifecycle
+
+- Реализовать conceptual schema v2, pre-submit command/attempt transactions, durable
+  order events, exchange trades и Portfolio settlement.
+
+#### M4.7 Exchange Reconciliation
+
+- Реализовать startup/runtime reconciliation, cursors, balance/open-order comparison и
+  fail-closed conflict handling.
+
+#### M4.8 Runtime Testnet Integration
+
+- Подключить TESTNET consumer после recovery/reconciliation gate; сохранить shared
+  decision path и независимый shadow mode.
+
+#### M4.9 Crash/Restart/Duplicate-Order Safety Review
+
+- Проверить ambiguous submit, partial fills, cancellations, writer exclusion, lost
+  acknowledgements и exact-once Portfolio application per exchange trade.
+
+#### M4.10 Controlled Binance Testnet Smoke
+
+- После отдельного разрешения выполнить bounded BUY/SELL/restart/cancellation smoke
+  только на Testnet с проверкой endpoint и отсутствия secret leakage.
+
+#### M4.11 Stage 4 Completion
+
+- Свести automated и controlled Testnet evidence. Завершение Stage 4 не разрешает LIVE;
+  live-readiness остаётся отдельным будущим review.
+
 ### Планируемые результаты
 
 - Укреплён порт `ExecutionProvider` для stateful exchange lifecycle.
 - Расширен централизованный Risk Manager поверх проверенного Stage 3 core.
-- К базовым лимитам добавлены дневной убыток, просадка и kill switch.
+- К базовым лимитам добавлены session loss, просадка и kill switch.
 - Реализованы kill switch и запрет торговли на устаревших данных.
 - Добавлены идемпотентные client order IDs и защита от повторной отправки.
 - Определена state machine ордера.

@@ -1,0 +1,748 @@
+# Exchange Execution Architecture Design
+
+## 1. Status and scope
+
+- Milestone: M4.1 Exchange Execution Architecture Design.
+- Status: **final design; M4.2 safety review passed**.
+- Date: 2026-08-09.
+- Initial implementation target: **Binance Spot Testnet only**.
+- M4.2 review date: 2026-08-09.
+- Basis: completed Stage 3 durable paper runtime and accepted ADR-055–ADR-062.
+
+M4.1/M4.2 change documentation only. They do not add production code, migrations, private
+API calls, credentials, testnet execution, live execution, or permission to trade.
+Successful Stage 4 testnet work will not authorize live trading.
+
+## 2. Safety objective
+
+Stage 4 may add exchange execution only if it preserves or strengthens these Stage 3
+guarantees:
+
+- one shared Strategy result feeds all enabled consumers;
+- every executable intent passes deterministic Risk;
+- durable identity does not depend on runtime UUIDs;
+- financial Decimal values round-trip exactly;
+- a Fill is never applied to Portfolio twice;
+- recovery and conflicts fail closed;
+- business facts commit before in-memory publication and observation;
+- one process owns the financial writer;
+- secrets never enter domain state, persistence, logs, or observer payloads.
+
+The execution modes are distinct capabilities:
+
+| Mode | Execution authority | Network side effect | Stage 4 status |
+|---|---|---|---|
+| PAPER | local deterministic provider | none | existing, supported |
+| TESTNET | Binance Spot Testnet | private testnet orders only | initial Stage 4 target |
+| LIVE | real Binance account | real-capital orders | unsupported and fail-closed |
+
+Changing one ordinary feature flag must never enable LIVE. Strategy and market-data
+configuration grant no execution authority.
+
+## 3. Existing boundary and required separation
+
+The existing `PaperExecutionProvider.execute(RiskDecision)` calculates one immediate,
+full local Fill. `PaperTradingEngine` can therefore preview valuation and Fill, commit
+all facts in one SQLite transaction, then atomically publish Portfolio memory.
+
+Exchange execution has different semantics: submission is a remote side effect,
+acknowledgement may be lost, an order can remain open, and zero or many exchange trades
+can arrive later. `PaperExecutionResult`, `PaperExecutionStatus`, and the assumption
+`one command = at most one Fill` must not be reused for exchange orders.
+
+Stage 4 adds a sibling application service, provisionally
+`ExchangeExecutionCoordinator`, as the testnet consumer of the existing shared
+`DecisionPipelineResult`. It owns Risk invocation, durable order orchestration and
+reconciliation. It does not own Strategy, Portfolio arithmetic, HTTP/signing, SQLite,
+or Binance payloads.
+
+```text
+CandleClosed
+  -> TradingDecisionCoordinator
+  -> one DecisionPipelineResult
+     -> shadow consumer (optional)
+     -> paper engine (PAPER only)
+     -> ExchangeExecutionCoordinator (TESTNET only)
+          -> RiskManager
+          -> durable pre-submit command/order
+          -> ExchangeOrderGateway
+          -> exchange observations and trades
+          -> durable Portfolio transitions
+```
+
+PAPER and TESTNET are mutually exclusive financial consumers for one runtime. Shadow
+may accompany either. LIVE has no composition path in the initial implementation.
+
+## 4. Ownership and dependency direction
+
+Proposed packages and ownership:
+
+```text
+app/exchange/                 domain/application-neutral exchange models and ports
+app/exchange/orchestration.py state machine and command orchestration
+app/exchange/reconciliation.py startup/runtime reconciliation service
+app/infrastructure/binance/   private testnet HTTP, signing, response translation
+app/persistence/              generic durable records/ports and SQLite adapter
+app/application.py            mode validation, construction and lifecycle ordering
+```
+
+Infrastructure adapters depend inward on ports and models. Domain/application code
+must not import `httpx`, Binance SDK types, API error codes, signature concepts,
+endpoint paths, or Pydantic Settings.
+
+The existing public market-data adapter remains separately configured. Its base URL,
+successful polling, or exchange name cannot authorize private execution.
+
+## 5. Order domain model
+
+### 5.1 Durable identity and facts
+
+An `ExchangeOrder` is a durable local aggregate with at least:
+
+- `durable_command_key` and stable `client_order_id`;
+- execution environment (`TESTNET` only initially), venue and account fingerprint;
+- symbol, side, order type, time-in-force and approved quantity/price parameters;
+- Risk policy, instrument rules and execution configuration fingerprints;
+- local lifecycle state and monotonic state version;
+- optional exchange order ID;
+- exchange-reported original/executed/cumulative quote quantities;
+- created, submission-attempt, exchange-update and locally-observed timestamps;
+- last authoritative event sequence/digest and reconciliation requirement.
+
+Runtime `intent_id`, `risk_decision_id`, pipeline IDs and correlation IDs remain audit
+links, not durable exchange identity.
+
+### 5.2 Lifecycle
+
+Proposed local states:
+
+```text
+PREPARED
+  -> SUBMITTING
+     -> ACKNOWLEDGED
+        -> PARTIALLY_FILLED
+           -> FILLED
+        -> CANCELED
+        -> REJECTED
+        -> EXPIRED
+     -> RECONCILIATION_REQUIRED
+
+ACKNOWLEDGED | PARTIALLY_FILLED
+  -> FILLED | EXPIRED | RECONCILIATION_REQUIRED
+```
+
+- `PREPARED`: command, client ID and exact request semantics are durably committed;
+  no transmission attempt is recorded.
+- `SUBMITTING`: a durable attempt marker is committed before network transmission.
+- `ACKNOWLEDGED`: the exchange confirms the order identity; it may have zero fills.
+- `PARTIALLY_FILLED`: at least one authoritative trade exists and leaves quantity open.
+- `FILLED`, `CANCELED`, `REJECTED`, `EXPIRED`: exchange-confirmed terminal states, but
+  become locally settled only after all reported trades and Portfolio transitions commit.
+- `RECONCILIATION_REQUIRED`: local knowledge is ambiguous or conflicts with exchange
+  observations. It is non-terminal and forbids submission/retry.
+
+`UNKNOWN` is not used as a second vague state name; the explicit
+`RECONCILIATION_REQUIRED` state carries the fail-closed meaning. All states and every
+transition are durable. Terminal rows are immutable except for later append-only
+evidence proving missing trades, which must reopen reconciliation rather than silently
+editing history.
+
+Initial implementation has no cancellation command because it submits MARKET orders
+only. `CANCEL_PENDING` and `CANCELED` remain recognized exchange evidence/future states,
+not callable M4.3–M4.10 operations. Exchange status regression, impossible cumulative quantities, or
+conflicting terminal outcomes require reconciliation; they are not auto-normalized.
+
+### 5.3 Synchronous operations over asynchronous reality
+
+Application calls may remain synchronous initially, but no call promises terminal
+execution. `submit` returns one observation, not a Fill. Subsequent polling or startup
+reconciliation advances the aggregate. Network timeout is an observation failure, not
+proof that the order does not exist.
+
+## 6. Minimal exchange ports
+
+M4.1 proposes two infrastructure ports rather than one paper-like `execute()` method:
+
+```text
+ExchangeOrderGateway
+  submit(prepared_order) -> OrderObservation
+
+ExchangeAccountReader
+  find_order(client_order_id, exchange_order_id?) -> OrderObservation | NotFound
+  list_open_orders(symbol) -> tuple[OrderObservation, ...]
+  list_orders(symbol, bounded_window) -> tuple[OrderObservation, ...]
+  list_trades(symbol, cursor?) -> TradePage
+  get_balances() -> BalanceSnapshot
+  get_instrument_rules(symbol) -> ExchangeInstrumentRules
+```
+
+`ExchangeOrderGateway` initially owns the single submission side effect. Cancellation
+is deliberately excluded from the first MARKET-only implementation; adding it requires
+its own durable attempt identity and ambiguous-cancel review. `ExchangeAccountReader` is read-only and is
+used by reconciliation. `ExecutionReconciler` is an application service, not an
+infrastructure port. Splitting submit/query makes it impossible to mistake a failed
+submit response for an absent order and permits read-only reconciliation while the kill
+switch blocks new submissions.
+
+Port inputs and outputs use project-owned immutable models with `Decimal` and typed
+enums. The Binance adapter translates REST payloads and error codes at the boundary.
+
+## 7. Stable client order identity
+
+The client order ID is known and persisted before any network call:
+
+```text
+material = canonical("exchange-client-order/v1", {
+  environment: "testnet",
+  venue: "binance-spot",
+  account_fingerprint: <non-secret provisioned identifier>,
+  durable_command_key: <SHA-256 durable command key>
+})
+digest = SHA-256(material)
+client_order_id = "ctt1t-" + lower_rfc4648_base32(digest, no_padding)[0:26]
+```
+
+The resulting 32-character ID uses the conservative ASCII subset `[a-z0-9-]`, is
+restart-stable and contains 130 digest bits. Official Spot FIX documentation specifies
+`^[a-zA-Z0-9-_]{1,36}$`; the REST new-order table defines the field as STRING but does
+not separately publish a charset/maximum. This format is within the documented Spot
+subset and remains subject to an explicit `POST /api/v3/order/test` adapter contract
+test before any real Testnet submission. Database uniqueness plus payload-digest comparison detects
+the already-improbable truncation collision and fails closed.
+For `n` commands, the birthday approximation is `n(n-1) / 2^131`; even at one billion
+commands it is about `3.7e-22` (roughly `2^-71`). The account fingerprint is a
+provisioned non-secret random identifier, not a hash or substring of an API key.
+
+The `durable_command_key` remains the semantic execution authorization. It must include
+the stable decision key, approved Risk parameters, policy/rules fingerprints, TESTNET
+execution environment, venue, account fingerprint, order type/time-in-force, and
+adapter semantic version. Neither API credentials nor random runtime IDs participate.
+
+The same persisted client ID is used for submission, timeout recovery, querying and
+trade reconciliation. It is never regenerated after uncertainty.
+
+## 8. Critical ambiguous-submit policy
+
+Normative rule:
+
+```text
+commit SUBMITTING
+-> transmit request
+-> timeout / disconnect / response parse failure
+-> commit RECONCILIATION_REQUIRED
+-> query by the same client_order_id
+-> ingest authoritative order/trades or remain blocked
+```
+
+There is no blind resubmission from `SUBMITTING` or `RECONCILIATION_REQUIRED`. HTTP
+timeout, connection reset, 5xx, malformed response, and process death after transmission
+are all ambiguous. Even a local `NotFound` response is not immediately proof of absence:
+the documented API is asynchronous and query data may come from memory or database.
+Binance exposes no strong proof-of-absence primitive. Repeated negative queries by the
+same client ID, plus bounded `myTrades`, open-order and order-history coverage, improve
+diagnosis but never authorize automatic resubmission or a new client ID. Exhaustion
+requires audited operator resolution while submission remains blocked.
+
+Only `PREPARED` with no durable attempt marker is eligible for first submission. The
+transition to `SUBMITTING` and attempt record commits before invoking the gateway.
+
+Exact outcome classification:
+
+| Case | Evidence and durable result | Retry/reconciliation rule |
+|---|---|---|
+| A | Adapter proves the request was not transmitted; remain/recover `PREPARED` and append `ATTEMPT_NOT_TRANSMITTED` | Revalidate and retry with the **same** client ID; reconciliation is not required |
+| B | Request may have been transmitted but no valid response exists; `RECONCILIATION_REQUIRED` | Never resubmit; query the same client ID and reconcile |
+| C | Reviewed Binance response proves rejection before acceptance; `REJECTED` | No retry of this command; a later decision requires a new command |
+| D | Valid acknowledgement; `ACKNOWLEDGED` | Never retry submission; order/trade reconciliation is mandatory |
+| E | Query finds the order | Append normalized evidence, ingest trades and advance state; never resubmit |
+| F | Query returns not found | Stay `RECONCILIATION_REQUIRED`; broaden bounded coverage, then require operator resolution |
+
+Timeouts, socket resets, response parse failures, `-1007`, and HTTP 5xx are Case B.
+HTTP 4xx is Case C only when a maintained, tested error classification proves non-
+acceptance; uncertainty is Case B. A crash after the attempt marker is always Case B,
+even if it may have occurred before the socket write.
+
+## 9. Durable transaction phases
+
+Network I/O is never performed inside a SQLite transaction.
+
+### Phase A — authorize and prepare
+
+One local transaction:
+
+1. claim stable decision and verify no terminal/competing command;
+2. persist Risk approval and exact immutable order request semantics;
+3. derive and persist `durable_command_key` and `client_order_id`;
+4. create order state `PREPARED` and append its event;
+5. reserve pending order exposure used by runtime safety controls;
+6. commit.
+
+No exchange side effect exists before this commit.
+
+### Phase B — mark attempt
+
+One short local transaction changes `PREPARED -> SUBMITTING`, appends a numbered
+submission-attempt event and commits. Only then may the gateway transmit.
+
+### Network phase
+
+The adapter submits the exact prepared request with the persisted client ID. It returns
+a typed observation or typed definite/ambiguous failure. No adapter response mutates
+Portfolio directly.
+
+### Phase C — record transport outcome
+
+One transaction appends the transport response/failure and either a normalized ACK,
+reviewed definite rejection, or ambiguity transition. Transport attempts are diagnostic
+facts; they are not authoritative order/trade truth.
+
+### Phase D — reconcile and settle
+
+One local transaction:
+
+1. append the raw-normalized observation digest and validated lifecycle event;
+2. bind the unique exchange order ID when present;
+3. insert every new exchange trade under durable uniqueness constraints;
+4. preview one Portfolio transition per newly accepted trade;
+5. append journal transitions and update `portfolio_current`;
+6. update order cumulative facts/status and release/adjust pending exposure;
+7. commit.
+
+Only after commit are the complete Portfolio transition batch and order projection
+published in memory. Observers run afterward. A failed commit leaves prior local state;
+post-commit memory failure degrades exchange execution and requires restart recovery.
+
+Valuation-only candle cycles may retain the Stage 3 transaction pattern, but must not
+mark an outstanding exchange command terminal merely because the market decision ended.
+
+## 10. Initial execution and accounting scope
+
+The first implementation is Binance Spot Testnet, `BTCUSDT`, long-only, and MARKET BUY
+or SELL only. Both sides use base-asset `quantity`; `quoteOrderQty`, price,
+`timeInForce`, limit/order-list/SOR/cancel-replace and cancellation commands are out of
+scope. The adapter explicitly requests `newOrderRespType=ACK`; ACK proves identity, not
+execution or settlement. Dynamic `exchangeInfo` filters, including market quantity,
+notional, position and order-count filters, are versioned Risk inputs.
+
+## 11. Exchange Fill authority and Portfolio boundary
+
+Binance-reported trades are the only authority for TESTNET execution economics. Local
+reference price, acknowledgement fields and cumulative quantities cannot manufacture a
+Fill. One order may have zero, one or many trades.
+
+Each normalized `ExchangeTrade` contains:
+
+- venue, account fingerprint, symbol and exchange order ID;
+- stable client order ID and durable command key;
+- exchange trade ID (the primary venue execution identity);
+- side, exact quantity, price and quote quantity;
+- commission amount and commission asset;
+- exchange trade timestamp and maker/liquidity metadata when available;
+- canonical source payload digest and adapter model version.
+
+The local Portfolio Fill ID is deterministic from venue/account/symbol/exchange trade
+ID, not random. `UNIQUE(venue, account_fingerprint, symbol, exchange_trade_id)` and
+`UNIQUE(fill_id)` prevent duplicate ingestion and application. Cumulative order
+quantity must equal the sum of accepted trade quantities at a defined reconciliation
+cut; it is a cross-check, not a substitute for trades.
+
+Existing Portfolio accounting accepts fees only in the quote asset and requires one
+Fill per accounting mutation. Therefore initial testnet settlement supports only facts
+that can be represented exactly:
+
+- quote-asset commission: supported by existing formulas after model adaptation;
+- base-asset commission: unsupported until net acquired/sold quantity and cost-basis
+  semantics are explicitly extended;
+- third-asset commission such as BNB: unsupported until multi-asset balances and fee
+  valuation are designed.
+
+An unsupported fee asset is persisted as exchange evidence, activates the kill switch,
+sets reconciliation required, and blocks Portfolio application and new submissions. It
+must never be silently converted to quote, rounded away, or omitted.
+
+Partial fills are applied individually in exchange trade order. A restart between
+trades recovers the last committed Portfolio journal head and resumes querying. A
+duplicate trade produces no new Portfolio version; a conflicting duplicate fails closed.
+
+Exchange records commit independently of Portfolio applicability. A base- or third-
+asset commission therefore cannot erase exchange truth: the trade is durable, its
+settlement record is blocked, and execution fails closed. Binance is authoritative for
+account balances, orders and trades; Portfolio remains the deterministic managed
+subledger/projection.
+
+The initial lineage uses a dedicated Testnet account/key and only BTC/USDT. Manual
+orders, transfers and account resets are forbidden during a lineage. Its root comes
+from reconciled exchange `free + locked` balances, never arbitrary configuration.
+Unexplained differences from settled balances plus reservations/in-flight effects block
+execution. A Testnet reset starts a new explicitly audited lineage; it is not repaired
+automatically.
+
+## 12. Reconciliation model
+
+### 12.1 Startup gate
+
+Before the coordinator may subscribe for TESTNET submissions:
+
+1. open storage and obtain exclusive writer ownership;
+2. verify schema, digests and Portfolio journal exactly as Stage 3;
+3. recover orders, controls, reconciliation cursors and pending exposure;
+4. load all non-terminal and reconciliation-required local orders;
+5. query each by stable client ID and exchange ID when known;
+6. query open orders, recent trades and balances using bounded paginated cursors;
+7. ingest missing order events and trades in durable settlement transactions;
+8. compare exchange balances, local Portfolio and pending/open-order exposure;
+9. require zero unexplained conflicts;
+10. mark a durable reconciliation generation successful;
+11. require an explicit operator submission capability for that generation;
+12. only then construct/enable the side-effect gateway and subscribe the consumer.
+
+Market ingestion and shadow analysis may start independently. TESTNET readiness remains
+false until this gate completes. Failure does not fall back to an empty Portfolio.
+
+### 12.2 Runtime reconciliation
+
+Reconciliation runs synchronously immediately after ACK or ambiguity, while an order is
+non-terminal under bounded polling/backoff, before a conflicting order, periodically on
+a monotonic cadence with durable cursor, after rate-limit recovery, and before shutdown.
+It is serialized with order settlement through the single-writer application boundary.
+Polling cursors and the coverage window are durable so restart cannot silently skip
+trades.
+
+### 12.3 Fail-closed conflicts
+
+The following require `RECONCILIATION_REQUIRED`, block new submissions and normally
+activate the kill switch:
+
+- exchange order exists but local acknowledgement is missing (ingest only after exact
+  client ID/request matching);
+- local acknowledged order cannot be found by all valid query paths;
+- exchange cumulative quantity differs from accepted trade totals beyond a documented
+  observation window;
+- unknown exchange order or trade for the configured account/symbol;
+- duplicate client ID or exchange ID with conflicting semantics;
+- unsupported commission asset or impossible arithmetic;
+- local/exchange status regression or conflicting terminal state;
+- exchange rules changed after Risk approval;
+- balances do not reconcile with local settled state plus explicitly modeled holds;
+- pagination/cursor coverage is incomplete.
+
+Automatic ingestion is allowed only for exact, explainable, idempotent missing facts.
+Unexplained financial conflicts are never deleted, rewritten or heuristically repaired.
+
+## 13. Risk hardening
+
+### 13.1 Deterministic pre-trade Risk
+
+Keep the existing pure `RiskManager` responsibilities and extend its immutable inputs
+and policy only where the result remains deterministic:
+
+- existing max order/position notional and target exposure;
+- existing minimum cash reserve, fee/slippage envelope and stale-market rejection;
+- exchange-sourced versioned filters (step/tick/minimums and applicable maximums);
+- available settled balances minus reserved pending/open-order exposure;
+- maximum cumulative submitted notional, executed turnover and submission count;
+- maximum realised loss, drawdown and consecutive execution failures;
+- explicit permitted symbol, side, order type and time-in-force;
+- maximum aggregate pending order and position notional.
+
+Limits belong to a durable operator-started execution session anchored to Binance server
+time in UTC; they never reset automatically at a calendar boundary. A new session is
+allowed only with no unresolved/non-terminal conflict. Numeric thresholds are mandatory
+configuration before Testnet use. `max_open_orders=1` and
+`max_inflight_submissions=1` are fixed initially.
+
+Risk receives an immutable `ExecutionRiskContext`: Portfolio version, reconciled balance
+snapshot/version, active reservations, pending BUY quote, pending SELL base, counters,
+reconciliation generation and control generation. It performs no network I/O. Phase A
+atomically reserves worst-case quote for BUY or base quantity for SELL using compare-
+and-set versions; any non-terminal order rejects another decision.
+
+### 13.2 Runtime/exchange safety controls
+
+These remain outside the pure RiskManager:
+
+- execution mode and endpoint allowlisting;
+- credential availability/scope validation without persisting secrets;
+- startup reconciliation readiness;
+- kill-switch state;
+- writer ownership and order-operation serialization;
+- rate limits, recvWindow, clock synchronization and retry classification;
+- balance/open-order reconciliation;
+- ambiguous-submit classification and reconciliation handling;
+- adapter health and circuit breaking.
+
+Risk approval expires if market freshness, rules version, Portfolio version, reservation
+version, reconciliation generation or control generation changes before preparation.
+Preparation must compare-and-set these versions rather than submitting stale approval.
+
+## 14. Kill switch
+
+The execution kill switch is a durable application control with state, generation,
+reason code, actor/source and timestamp. Safe default for a new TESTNET lineage is
+`ACTIVE`; enabling submissions requires an explicit operator action after successful
+reconciliation. Restart preserves `ACTIVE` and never clears it from configuration alone.
+
+When active:
+
+- new Risk-to-command preparation and order submission are forbidden;
+- reconciliation and read-only queries remain allowed;
+- ingestion and settlement of already executed trades remain mandatory;
+- recognized orders/trades continue to be queried, ingested and settled;
+- shadow continues;
+- PAPER behavior is separate and is not implicitly stopped unless a distinct global
+  analytical/paper control says so.
+
+Automatic activation occurs on reconciliation conflict, ambiguous unsupported state,
+unsupported fee asset, balance mismatch, stale private-account view, writer loss,
+repeated adapter safety failure, or breached hard loss/drawdown limit. Clearing requires
+an audited operator command naming the exact Testnet account/database fingerprint,
+expected generation and explicit Testnet acknowledgement, after successful current
+reconciliation and zero conflicts. An environment value cannot clear it.
+
+Disarming also issues only a process-local submission capability bound to the current
+reconciliation/control generations. Restart destroys that capability and requires fresh
+operator startup authorization even when the durable switch is disarmed. LIVE cannot
+obtain this capability.
+
+## 15. Binance Testnet adapter boundary
+
+The future adapter owns only infrastructure concerns:
+
+- Testnet REST base URL and strict endpoint allowlist;
+- API-key header and HMAC signing;
+- server-time offset, timestamp and bounded `recvWindow`;
+- request serialization and Binance error/rate-limit classification;
+- response schema validation and translation to project-owned models;
+- pagination and request identifiers;
+- redaction at exception and logging boundaries.
+
+Credentials use dedicated names such as `BINANCE_TESTNET_API_KEY` and
+`BINANCE_TESTNET_SECRET_KEY`. They are wrapped/redacted configuration values and passed
+only to the adapter. Secret values, signatures and full signed URLs are forbidden in
+logs, exceptions, persistence, metadata, observers, diagnostics and test fixtures.
+
+API keys should have testnet Spot trading permissions only and no withdrawal permission.
+The public-data adapter and its URL remain independent.
+
+## 16. Configuration safety
+
+Proposed conceptual configuration:
+
+```text
+EXECUTION_MODE=paper | testnet | live
+EXCHANGE_EXECUTION_ENABLED=false
+BINANCE_TESTNET_BASE_URL=<compile-time/default allowlisted URL>
+BINANCE_TESTNET_API_KEY=<secret>
+BINANCE_TESTNET_SECRET_KEY=<secret>
+EXECUTION_KILL_SWITCH_DEFAULT_ACTIVE=true
+```
+
+Validation rules:
+
+- default mode is PAPER and exchange execution is disabled;
+- TESTNET requires `EXECUTION_MODE=testnet`, the separate enable flag, dedicated
+  credentials, persistence, exact testnet endpoint allowlist and durable reconciliation;
+- paper and testnet financial consumers cannot both be enabled;
+- public market URL/keys never satisfy private execution requirements;
+- LIVE is represented as a distinct value but initial Stage 4 code must reject it
+  unconditionally as unsupported before constructing any private client;
+- no generic `BINANCE_API_KEY` fallback is allowed for testnet credentials;
+- environment label (`development`, `production`) does not grant trading authority;
+- disabling the kill switch in environment cannot clear its durable active state.
+
+A future LIVE implementation requires a separate build capability, credential namespace,
+endpoint allowlist, configuration ceremony and explicit live-readiness ADR/review. It
+must not be unlocked by changing `EXECUTION_MODE` alone.
+
+## 17. Persistence schema v2 concept
+
+M4.1 does not create SQL. Migration v2 is proposed to add generic exchange records while
+leaving Stage 3 paper tables readable:
+
+| Table | Authority and key constraints |
+|---|---|
+| `exchange_execution_roots` | immutable environment/venue/account/database lineage, config digest and reconciled genesis balances |
+| `exchange_decisions` | one TESTNET decision claim; PK stable decision key, UNIQUE semantic slot, payload digest |
+| `exchange_commands` | exact Risk-approved command; PK 64-char durable command key, UNIQUE decision key, immutable payload digest |
+| `exchange_orders_current` | rebuildable projection; PK durable command key, UNIQUE client order ID, UNIQUE nullable `(venue, account_fingerprint, exchange_order_id)`, state version/digest |
+| `exchange_order_events` | append-only lifecycle authority; PK event sequence, UNIQUE `(durable_command_key, state_version)`, source/event digest uniqueness |
+| `exchange_submission_attempts` | append-only transport evidence; PK attempt ID, UNIQUE `(durable_command_key, attempt_number)`, transmission classification |
+| `exchange_trades` | authoritative normalized trades; PK deterministic fill ID, UNIQUE venue/account/symbol/trade ID, FK order/command, immutable economics and source digest |
+| `exchange_trade_settlements` | separate Portfolio applicability/result per trade; UNIQUE trade, nullable journal transition, blocked reason |
+| `exchange_reconciliation_runs` | generation/coverage/result records; PK run ID and immutable input/output digests |
+| `exchange_reconciliation_conflicts` | append-only unexplained conflicts linked to a run |
+| `exchange_reconciliation_cursors` | durable account/symbol/query coverage cursor and watermark |
+| `execution_control_events` / `execution_control_current` | append-only kill-switch/operator audit plus rebuildable projection |
+| `execution_sessions` / `execution_session_counters` | explicit server-time session and durable limit counters |
+| `order_reservations` | pending quote/base/notional exposure by command; UNIQUE active reservation per command |
+
+Exchange trades reference Portfolio journal entries, but unlike v1 `fills`, multiple
+trades may reference one command. Journal uniqueness remains
+`(portfolio_id, portfolio_version_after)`, and each accepted trade produces at most one
+Fill transition. All financial values remain canonical Decimal TEXT; payloads carry
+versioned digests; append-only event/trade/control rows reject UPDATE/DELETE.
+
+Migration v2 is additive: Stage 3 `paper_*`, Portfolio journal/checkpoint and migration
+v1 lineage remain byte-for-byte authoritative and readable. Exchange tables reference
+shared Portfolio identities without renaming or rewriting paper history.
+
+Authoritative order history is append-only. Each event has a monotonic local sequence,
+aggregate state version, raw exchange status, normalized safety state, canonical digest
+and unique source identity/digest. `exchange_orders_current` is rebuilt/verified from
+events; transport responses never overwrite exchange truth.
+
+Persistence recovery and exchange reconciliation are independent axes:
+`CLEAN | RECOVERED | RECOVERY_REQUIRED` for local integrity and
+`NOT_RUN | RUNNING | CLEAN | REQUIRED` for exchange truth. Local recovery success does
+not grant exchange submission readiness.
+
+## 18. Crash/restart matrix
+
+| Boundary | Durable truth after crash | Permitted recovery |
+|---|---|---|
+| Before command persistence | no command/order | recompute only from a valid decision |
+| After Phase A, before attempt marker | `PREPARED` | revalidate controls/versions, then perform first attempt |
+| After `SUBMITTING` commit, before network call | attempt is potentially ambiguous | query/reconcile; never infer safe resubmit |
+| Request transmitted, response lost | `SUBMITTING` | set/recover reconciliation-required; query stable client ID |
+| Acknowledgement received, before persistence | `SUBMITTING` | query and persist authoritative observation |
+| Exchange partial fill, before local ingestion | local order behind exchange | query trades; idempotently settle missing trade |
+| Trade persisted and committed, before memory sync | DB is authoritative | restart and restore; do not reapply/re-submit |
+| Portfolio preview before settlement commit | no local financial commit | rollback; re-read exchange trade and retry same deterministic Fill |
+| Terminal exchange state before all trades ingested | unsettled terminal observation | keep reconciliation-required until trade totals settle |
+| Terminal state fully committed | immutable settled order | duplicate observations are no-op; conflicts fail closed |
+| During reconciliation | incomplete durable session | resume from durable cursor/coverage; submissions remain blocked |
+
+The conservative rule treats an attempt marker as possible transmission even if the
+process may have died before the actual socket write. Availability is sacrificed to
+prevent duplicate orders.
+
+## 19. Lifecycle and readiness
+
+TESTNET startup order:
+
+```text
+persistence and exclusive writer lock
+-> schema v2 validation/migration and independent local recovery
+-> validate exact endpoint/credentials without private side effects
+-> restore controls/sessions/orders/cursors/reservations
+-> create read-only account client
+-> reconcile rules/server time/account/orders/trades/balances
+-> persist successful reconciliation generation
+-> explicit operator capability (only if durable switch is disarmed)
+-> construct/enable side-effect gateway
+-> subscribe exchange consumer
+```
+
+Shutdown first blocks new preparation, stops decision delivery, reconciles known
+in-flight operations within a bounded policy, persists status/cursors, closes the
+private adapter, then follows existing market/persistence cleanup. Failure to complete
+reconciliation is reported as not-ready, never as successful cancellation or settlement.
+
+Readiness has separate dimensions: market ingestion, shadow, persistence integrity,
+exchange connectivity, reconciliation, controls, and submission permission. Health does
+not imply permission to submit.
+
+Safe status exposes only `execution_mode`, process-local submission enabled/disabled,
+kill-switch state/generation, reconciliation status/generation/time, non-terminal order
+count, last client ID, normalized exchange status and failure counters. It never exposes
+keys, signatures, secret headers, signed URLs, or unnecessary raw private responses.
+
+## 20. Test strategy and Stage 4 completion criteria
+
+Before Stage 4 completion, all of the following are required:
+
+- deterministic models, client IDs and adapter translation unit tests;
+- contract tests for fake gateway/account readers and Binance Testnet adapter;
+- fake-exchange lifecycle tests for acknowledgement, rejection, partial fill and expiry;
+- multiple partial fills, duplicate/out-of-order observations and conflicting duplicates;
+- every ambiguous-submit and crash-matrix boundary;
+- restart recovery with prepared, submitting, acknowledged and partially filled orders;
+- startup/runtime reconciliation, cursor pagination and balance conflicts;
+- writer exclusion and concurrent operation serialization;
+- exact Portfolio application once per exchange trade;
+- quote-fee accounting and fail-closed base/third-asset fee tests;
+- stale market/rules, pending exposure, turnover/loss/drawdown and kill-switch tests;
+- secret-redaction and endpoint-allowlist tests;
+- proof that LIVE always fails before private client construction;
+- controlled Testnet BUY and SELL with persisted exchange trades;
+- all ambiguous cases A–F, including repeated not-found without resubmission;
+- account reset/manual activity/balance mismatch and unsupported-fee settlement blocks;
+- explicit session/counter and restart-lost submission-capability tests;
+- final crash/restart/duplicate-order safety review;
+- controlled testnet smoke with no live endpoint usage or secret leakage.
+
+No default automated test may contact Binance. Real Testnet tests require explicit
+operator invocation, bounded notional, preflight kill-switch/reconciliation checks and
+artifact review.
+
+Acceptance layers are fixed before implementation:
+
+1. pure models prove legal transitions, canonical digests, client IDs and Risk context;
+2. fake ports prove A–F classification, same-ID behavior and transport/truth separation;
+3. SQLite fault injection proves every transaction/crash boundary and projection rebuild;
+4. ambiguity suites prove timeout/5xx/reset/crash/NotFound never duplicate submission;
+5. partial-fill suites prove durable trade identity, exactly-once Portfolio settlement,
+   unsupported fees, balances, cursors and restart reconciliation;
+6. separately authorized Testnet smoke proves bounded BUY/SELL/restart behavior and
+   artifact redaction. Layers 1–5 are offline; layer 6 cannot be a default test.
+
+## 21. Live trading boundary
+
+Stage 4 completion means only that the isolated TESTNET path met its criteria. LIVE
+remains structurally unsupported. A later live-readiness review must independently
+approve operational ownership, capital/loss limits, credentials and permissions,
+alerts, reconciliation evidence, incident/cancel procedures, backup/restore, dependency
+and secret security, testnet observation sample, and an explicit bounded rollout.
+
+No testnet configuration, credential, database lineage, endpoint override or ordinary
+feature flag may be reused to opt into LIVE.
+
+Future tests must prove LIVE mode and production private hosts are rejected before
+private-client construction, no LIVE adapter/capability is registered in the Stage 4
+composition root, Testnet credentials cannot satisfy LIVE configuration, and neither
+kill-switch disarm nor endpoint override creates LIVE authority.
+
+## 22. Accepted ADRs
+
+- ADR-055: Exchange execution uses a durable multi-state order lifecycle.
+- ADR-056: Client order identity derives deterministically from durable command identity.
+- ADR-057: Ambiguous submission requires reconciliation and forbids blind resubmission.
+- ADR-058: Exchange-reported trades are authoritative execution facts.
+- ADR-059: Exchange command and client ID commit before network submission.
+- ADR-060: Startup reconciliation gates new exchange submissions.
+- ADR-061: A durable kill switch blocks submission but permits reconciliation.
+- ADR-062: TESTNET and LIVE use structurally separate configuration and credentials.
+
+ADR-055–ADR-062 passed final safety review and were accepted on 2026-08-09. Their
+normative detail is this document; M4.3 must not broaden it implicitly.
+
+## 23. Verified Binance contracts and residual preconditions
+
+Reviewed on 2026-08-09 against official Binance Spot documentation:
+
+- [REST API, signing, timing, errors, order/query/trade/account contracts](https://github.com/binance/binance-spot-api-docs/blob/master/rest-api.md)
+- [Official order-status enums](https://github.com/binance/binance-spot-api-docs/blob/master/enums.md)
+- [Official symbol/exchange filters](https://github.com/binance/binance-spot-api-docs/blob/master/filters.md)
+- [Spot Testnet scope and endpoints](https://github.com/binance/binance-spot-api-docs)
+- [Client-order-ID character/length contract published for Spot FIX](https://github.com/binance/binance-spot-api-docs/blob/master/fix-api.md)
+- [Spot API change log](https://github.com/binance/binance-spot-api-docs/blob/master/CHANGELOG.md)
+
+The REST order table does not independently state a client-ID length/charset and the API
+provides no atomic absence proof. M4.5 must validate the conservative 32-character ID
+with authenticated `POST /api/v3/order/test` before any Testnet order. Numeric risk
+thresholds, reconciliation windows/rate budget and non-secret account-fingerprint
+provisioning are mandatory operator configuration, not architecture guesses.
+
+The only private REST base allowed is exact scheme/host `https://testnet.binance.vision`
+with `/api` routes; redirects, ports, userinfo and arbitrary path/base overrides fail
+closed. `/sapi` is unavailable on Spot Testnet. Demo Mode is distinct and is forbidden.
+Signed calls use dedicated Testnet keys, `X-MBX-APIKEY`, HMAC-SHA256 parameter signing,
+server time, and a bounded `recvWindow` (Binance maximum 60,000 ms). Rate-limit 429/418
+responses honor `Retry-After` and cannot be classified as order rejection without
+authoritative order evidence.
+
+## 24. M4.2 decision
+
+M4.1 architecture design and M4.2 final safety review are complete. The design is
+approved for M4.3 domain/port implementation only. This review implemented no code,
+migration, credential, private API call, Testnet order or LIVE capability.

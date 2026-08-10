@@ -494,3 +494,83 @@
 - **Решение:** Observer вызывается только после durable business commit. Delivery status может сохраняться отдельно, но observer failure или missing delivery никогда не вызывает trade replay и не меняет business outcome.
 - **Причины:** Разделение authoritative financial state и operational observability.
 - **Последствия:** Exactly-once observer delivery не обещается; audit journal остаётся достаточным для business recovery независимо от logs/observer.
+
+## ADR-055: Exchange execution uses a durable multi-state order lifecycle
+
+- **Статус:** принято
+- **Дата принятия:** 2026-08-09 (M4.2 final design and safety review)
+- **Дата:** 2026-08-09
+- **Контекст:** Paper immediate-fill semantics не представляют acknowledgement, open order, partial fill, cancellation и ambiguous exchange state.
+- **Решение:** TESTNET order является durable aggregate со state machine `PREPARED`, `SUBMITTING`, `ACKNOWLEDGED`, `PARTIALLY_FILLED`, exchange-observed terminal states и `RECONCILIATION_REQUIRED`. Initial MARKET-only scope не предоставляет cancellation command.
+- **Причины:** Exchange execution асинхронен в реальности и должен восстанавливаться без догадок после каждого process/network boundary.
+- **Последствия:** `PaperExecutionResult` не переиспользуется; lifecycle events append-only, projection rebuildable, transport outcome не является exchange truth, status conflicts fail closed.
+
+## ADR-056: Client order identity derives from durable command identity
+
+- **Статус:** принято
+- **Дата принятия:** 2026-08-09 (M4.2 final design and safety review)
+- **Дата:** 2026-08-09
+- **Контекст:** Runtime intent/execution UUID меняются при replay и не могут безопасно идентифицировать remote order.
+- **Решение:** ID равен `ctt1t-` плюс первые 26 lowercase unpadded RFC4648 Base32 символов SHA-256 от versioned canonical TESTNET venue/account scope и `durable_command_key`; он сохраняется до submission и используется во всех query/reconciliation operations.
+- **Причины:** Один semantic authorization должен иметь одну restart-stable remote identity.
+- **Последствия:** 32-символьный ID содержит 130 hash bits; collision проверяется UNIQUE constraint/payload digest. REST contract должен быть подтверждён через `/api/v3/order/test` до первого Testnet submit.
+
+## ADR-057: Ambiguous submission requires reconciliation
+
+- **Статус:** принято
+- **Дата принятия:** 2026-08-09 (M4.2 final design and safety review)
+- **Дата:** 2026-08-09
+- **Контекст:** После передачи request timeout или process death не доказывает, что Binance не принял order.
+- **Решение:** Любой ambiguous submit переводит order в `RECONCILIATION_REQUIRED`; blind resubmission запрещён, exchange запрашивается по сохранённому client order ID.
+- **Причины:** Повторный order опаснее временной недоступности execution.
+- **Последствия:** Binance не предоставляет strong proof of absence: даже bounded повторные `NotFound` не разрешают automatic resubmit/new ID; требуется audited operator resolution.
+
+## ADR-058: Exchange-reported trades are authoritative execution facts
+
+- **Статус:** принято
+- **Дата принятия:** 2026-08-09 (M4.2 final design and safety review)
+- **Дата:** 2026-08-09
+- **Контекст:** Exchange order может иметь несколько partial fills с фактическими price, quantity и commission, которые нельзя вывести из Risk reference price или acknowledgement.
+- **Решение:** Только normalized exchange trades создают Portfolio Fill; каждый trade имеет venue/account/symbol identity и durable uniqueness. Cumulative order quantities служат reconciliation check.
+- **Причины:** Exact accounting и duplicate protection должны следовать exchange truth.
+- **Последствия:** Один command допускает много Fill; exchange truth commit-ится отдельно от Portfolio applicability. Unsupported commission asset сохраняется и блокирует settlement/new submissions.
+
+## ADR-059: Exchange command commits before network submission
+
+- **Статус:** принято
+- **Дата принятия:** 2026-08-09 (M4.2 final design and safety review)
+- **Дата:** 2026-08-09
+- **Контекст:** SQLite и Binance не могут участвовать в одной ACID transaction, но remote identity должна существовать до side effect.
+- **Решение:** Transaction A commit-ит decision, Risk authorization, command, client ID и `PREPARED`; отдельная transaction commit-ит `SUBMITTING` attempt до network; последующая transaction сохраняет observations/trades/Portfolio transitions.
+- **Причины:** Crash должен оставлять однозначное правило: first attempt только из `PREPARED`, query/reconciliation после attempt marker.
+- **Последствия:** Network I/O запрещён внутри SQLite transaction; transport attempt/response отделены от authoritative order events; availability уступает duplicate-order safety.
+
+## ADR-060: Startup reconciliation gates exchange submissions
+
+- **Статус:** принято
+- **Дата принятия:** 2026-08-09 (M4.2 final design and safety review)
+- **Дата:** 2026-08-09
+- **Контекст:** После restart локальный journal может отставать от exchange orders/trades, а новый Risk decision без сверки использует неполные balances и exposure.
+- **Решение:** TESTNET startup восстанавливает local state, сверяет все non-terminal orders, trades, balances, rules и cursors, и только успешная durable reconciliation открывает submission gate.
+- **Причины:** New execution требует доказуемого account/Portfolio baseline.
+- **Последствия:** Market ingestion/shadow могут работать отдельно; local recovery и exchange reconciliation имеют независимые статусы; conflict не сбрасывает Portfolio и блокирует orders.
+
+## ADR-061: Durable kill switch blocks submission but permits reconciliation
+
+- **Статус:** принято
+- **Дата принятия:** 2026-08-09 (M4.2 final design and safety review)
+- **Дата:** 2026-08-09
+- **Контекст:** Emergency control должен прекращать новый exchange risk, не препятствуя обнаружению и учёту уже исполненных trades.
+- **Решение:** Kill switch — durable versioned application control, default active для новой TESTNET lineage. Он запрещает prepare/submit, но разрешает query, reconciliation и settlement. Disarm требует current clean reconciliation, audited operator command и новую process-local generation-bound capability.
+- **Причины:** Остановка новых side effects не должна ослеплять recovery или терять exchange facts.
+- **Последствия:** Restart/config не очищает switch и уничтожает process-local submission capability; cancellation не входит в initial MARKET-only scope.
+
+## ADR-062: TESTNET and LIVE execution are structurally separated
+
+- **Статус:** принято
+- **Дата принятия:** 2026-08-09 (M4.2 final design and safety review)
+- **Дата:** 2026-08-09
+- **Контекст:** Один mode flag, общий credential namespace или свободный base URL создают риск случайного real-capital execution.
+- **Решение:** PAPER, TESTNET и LIVE являются разными capabilities. Initial Stage 4 поддерживает только PAPER/TESTNET, использует dedicated testnet credentials и endpoint allowlist, а LIVE unconditionally fail-closed до отдельного live-readiness review/build capability.
+- **Причины:** Stage 4 testnet success не является разрешением live.
+- **Последствия:** Public-data configuration и environment label не дают execution authority; Testnet использует exact endpoint allowlist. Будущий LIVE потребует отдельные credentials, build capability, ceremony, ADR и review.
