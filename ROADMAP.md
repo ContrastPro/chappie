@@ -356,7 +356,7 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 
 ## Этап 4. Risk hardening и биржевое execution
 
-Статус: **in progress — M4.4 completed; M4.5 next**.
+Статус: **in progress — M4.5 completed; M4.6 next**.
 
 ### Цель
 
@@ -412,12 +412,22 @@ recovery и изолированным testnet execution до отдельног
 
 #### M4.5 Binance Testnet Adapter
 
-Статус: **next**.
+Статус: **completed; final adapter safety review passed** (2026-08-11).
+
+- Реализован изолированный synchronous Binance Spot Testnet adapter с strict host
+  allowlist, injected timestamp/client/identity resolver, deterministic HMAC signing,
+  explicit timeouts и без automatic retries.
+- MockTransport tests покрывают MARKET ACK, ambiguous submit, query/trades/balances/
+  open orders/exchangeInfo, auth/rate-limit errors, secret redaction и resource ownership.
+- Runtime wiring, credentials/settings, authenticated smoke, persistence и LIVE support
+  не добавлены.
 
 - Реализовать изолированный private Testnet adapter, signing/redaction, endpoint
   allowlist и contract tests. LIVE остаётся unsupported.
 
 #### M4.6 Durable Order Lifecycle
+
+Статус: **next**.
 
 - Реализовать conceptual schema v2, pre-submit command/attempt transactions, durable
   order events, exchange trades и Portfolio settlement.

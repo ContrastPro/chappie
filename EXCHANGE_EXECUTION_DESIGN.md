@@ -771,7 +771,7 @@ normative detail is this document; M4.3 must not broaden it implicitly.
 
 ## 23. Verified Binance contracts and residual preconditions
 
-Reviewed on 2026-08-09 against official Binance Spot documentation:
+Reviewed on 2026-08-11 against official Binance Spot documentation:
 
 - [REST API, signing, timing, errors, order/query/trade/account contracts](https://github.com/binance/binance-spot-api-docs/blob/master/rest-api.md)
 - [Official order-status enums](https://github.com/binance/binance-spot-api-docs/blob/master/enums.md)
@@ -793,6 +793,37 @@ Signed calls use dedicated Testnet keys, `X-MBX-APIKEY`, HMAC-SHA256 parameter s
 server time, and a bounded `recvWindow` (Binance maximum 60,000 ms). Rate-limit 429/418
 responses honor `Retry-After` and cannot be classified as order rejection without
 authoritative order evidence.
+
+### M4.5 implementation status
+
+Status: **completed; final adapter safety review passed** (2026-08-11). Official Spot REST
+contracts were reverified on 2026-08-11. The isolated
+`app.infrastructure.binance.BinanceSpotTestnetAdapter` implements the M4.3 gateway and
+account-reader ports for the exact Testnet base URL only. It uses injected time,
+`httpx.Client` and a read-only local identity resolver; the caller owns the client.
+
+Signed parameters use ordered URL/form encoding and lowercase HMAC-SHA256. MARKET submit
+uses base `quantity`, the durable `newClientOrderId`, and ACK response type. Submit has
+no retry: timeout, connection uncertainty, HTTP 5xx, malformed/lost ACK and Binance
+`-1007` become ambiguous observations. Explicit maintained request rejections, auth,
+timestamp and rate-limit responses remain separate typed errors. Reads normalize orders,
+trades, balances, open orders and the currently representable MARKET filters without
+retaining private raw payloads. Unknown status, missing durable identity or unsupported
+filter semantics fail closed.
+
+All M4.5 verification is deterministic `httpx.MockTransport`; no DNS, authenticated
+smoke or Testnet order was attempted. Runtime settings/wiring, credentials, migration v2,
+durable lifecycle persistence, reconciliation and LIVE remain out of scope. The required
+authenticated `/api/v3/order/test` client-ID preflight remains a future controlled smoke
+precondition, not a default test.
+
+The final review additionally proved exact sign/send byte equivalence, duplicate and
+reserved-parameter rejection, no redirect forwarding, conservative ambiguity for transport,
+5xx, `-1007`, 3xx and malformed acknowledgements, and read-only adapter reuse after ambiguity.
+The caller owns client lifecycle plus proxy/TLS policy; the adapter requires the exact HTTPS
+Testnet base URL, never exposes a `verify=False` option and explicitly disables redirects on
+every call. The synchronous adapter has no thread-safety guarantee; sequential reuse is the
+reviewed contract.
 
 ## 24. M4.2 decision
 

@@ -159,6 +159,45 @@ def test_risk_architecture_boundaries() -> None:
         assert not ({"time", "time_ns", "monotonic", "now", "utcnow"} & calls)
 
 
+def test_private_binance_adapter_is_infrastructure_only() -> None:
+    forbidden_consumers = (
+        Path("app/exchange_execution"),
+        Path("app/risk"),
+        Path("app/portfolio"),
+        Path("app/trading"),
+        Path("app/persistence"),
+        Path("app/execution"),
+    )
+    for root in forbidden_consumers:
+        for path in sorted(root.glob("*.py")):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            imports = {
+                node.module
+                for node in ast.walk(tree)
+                if isinstance(node, ast.ImportFrom) and node.module is not None
+            }
+            imports.update(
+                alias.name
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Import)
+                for alias in node.names
+            )
+            assert not any(
+                name == "app.infrastructure.binance"
+                or name.startswith("app.infrastructure.binance.")
+                for name in imports
+            ), f"{path} imports the private Binance adapter"
+
+    adapter_path = Path("app/infrastructure/binance/testnet_execution.py")
+    adapter_tree = ast.parse(adapter_path.read_text(encoding="utf-8"), filename=str(adapter_path))
+    calls = {
+        node.func.attr
+        for node in ast.walk(adapter_tree)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    }
+    assert not ({"time", "time_ns", "monotonic", "now", "utcnow", "sleep"} & calls)
+
+
 def test_execution_provider_architecture_boundaries() -> None:
     forbidden = {
         "httpx",

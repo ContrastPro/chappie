@@ -390,6 +390,17 @@ M4.4 final safety review пройден: aggregation остаётся матем
 после aggregation; mixed-side remaining quantities передаются явно. Submission сверяет
 также generation самого kill switch и отклоняет cross-session assessment.
 
+M4.5 добавляет infrastructure-only `app.infrastructure.binance` adapter для Binance
+Spot Testnet. Он реализует существующие exchange gateway/account-reader ports через
+injected `httpx.Client`, timestamp provider и read-only durable identity resolver.
+Signing, private payload normalization и error mapping не проникают в domain/Risk/
+Portfolio/Persistence. Adapter принимает только `https://testnet.binance.vision`, не
+делает retries или sleeps, не владеет injected client и не подключён к runtime. M4.5
+final adapter safety review пройден 2026-08-11: redirect forwarding запрещён, signed
+representation совпадает с передаваемыми bytes, ambiguous submit не повторяется, а
+adapter остаётся пригоден для read reconciliation. Client proxy/TLS lifecycle принадлежит
+composition; synchronous adapter не заявляет thread safety.
+
 ```text
 OrderIntent + PortfolioSnapshot + MarketSnapshot
     -> Risk Manager
