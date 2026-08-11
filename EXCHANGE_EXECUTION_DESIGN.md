@@ -447,6 +447,11 @@ Unexplained financial conflicts are never deleted, rewritten or heuristically re
 
 ## 13. Risk hardening
 
+M4.4 status: **completed; final safety review passed** (2026-08-10). Реализация
+добавлена как отдельный pure `app.risk.exchange` слой поверх неизменённого Stage 3
+`RiskManager`; network, persistence, command preparation и runtime wiring не входят в
+milestone.
+
 ### 13.1 Deterministic pre-trade Risk
 
 Keep the existing pure `RiskManager` responsibilities and extend its immutable inputs
@@ -477,6 +482,30 @@ Pending exposure explicitly carries original, executed and remaining base quanti
 addition to remaining quote/base reservations and notional. The invariant is
 `original = executed + remaining`; after a partial fill M4.4 therefore consumes only
 the remaining reservation rather than ambiguously retaining the full original amount.
+
+Implemented M4.4 resource formulas are deliberately conservative:
+
+- BUY effective quote = Portfolio quote - reserved quote - configured cash reserve;
+- SELL effective base = Portfolio base - reserved base;
+- projected BUY position includes remaining pending BUY plus the candidate;
+- projected SELL position subtracts remaining pending SELL plus the candidate and may
+  never become short;
+- projected submitted notional adds candidate gross notional to session submitted;
+- projected turnover adds candidate gross notional to executed turnover.
+
+Upper notional/count boundaries permit exact equality. Failure and drawdown limits block
+at equality. Session limits never imply a calendar/day reset. Realised-loss enforcement
+is intentionally deferred because M4.3 has no unambiguous immutable session-loss
+baseline; inventing one would weaken restart determinism. Portfolio drawdown is enforced
+now. Normal financial blocks and submission-safety blocks return distinct immutable,
+ordered typed results.
+
+Final review clarified that aggregation is mathematical, not authorization: the M4.3
+helper sums any number of immutable pending records, while M4.4 blocks a new candidate
+when the aggregate order or in-flight count reaches the fixed limit. Mixed-side remaining
+quantities are explicit in the risk context. Submission also verifies the durable kill-
+switch generation itself; an old capability cannot survive a control transition. The
+financial audit embeds the exact immutable applied policy.
 
 ### 13.2 Runtime/exchange safety controls
 

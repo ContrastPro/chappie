@@ -356,7 +356,7 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 
 ## Этап 4. Risk hardening и биржевое execution
 
-Статус: **in progress — M4.3 completed; M4.4 next**.
+Статус: **in progress — M4.4 completed; M4.5 next**.
 
 ### Цель
 
@@ -397,12 +397,22 @@ recovery и изолированным testnet execution до отдельног
 
 #### M4.4 Risk Hardening
 
-Статус: **next**.
+Статус: **completed; final safety review passed** (2026-08-10).
 
-- Добавить deterministic session/pending exposure limits и runtime safety controls без
-  I/O внутри RiskManager.
+- Добавлен pure additive exchange-risk gate с deterministic session/pending exposure
+  limits, reconciled account context и отдельным submission-safety result без I/O,
+  clock или hidden state внутри Risk.
+- Реализованы conservative one-order/one-inflight policy, remaining-exposure accounting,
+  session submitted/turnover/count/failure limits, drawdown gate и generation-bound
+  reconciliation/kill-switch/capability checks. Realised-loss limit отложен до появления
+  однозначного session baseline.
+- Final review подтвердил exact BUY/SELL boundaries, partial-fill и multi-record
+  aggregation до conservative hard gate, projected position, ordered reasons,
+  kill-switch/capability generations, Decimal determinism и полную изоляцию от I/O.
 
 #### M4.5 Binance Testnet Adapter
+
+Статус: **next**.
 
 - Реализовать изолированный private Testnet adapter, signing/redaction, endpoint
   allowlist и contract tests. LIVE остаётся unsupported.

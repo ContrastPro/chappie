@@ -54,9 +54,13 @@ def candle(index: int = 0, *, duration_ms: int = 59_999) -> Candle:
 
 def test_portfolio_architecture_boundaries() -> None:
     forbidden = {
+        "aiohttp",
         "httpx",
         "random",
+        "requests",
+        "socket",
         "sqlite3",
+        "urllib",
         "app.shadow",
         "app.agent",
         "app.application",
@@ -108,9 +112,13 @@ def test_portfolio_architecture_boundaries() -> None:
 
 def test_risk_architecture_boundaries() -> None:
     forbidden = {
+        "aiohttp",
         "httpx",
         "random",
+        "requests",
+        "socket",
         "sqlite3",
+        "urllib",
         "pathlib",
         "app.shadow",
         "app.agent",
@@ -123,6 +131,7 @@ def test_risk_architecture_boundaries() -> None:
         "app.market.polling",
         "app.execution",
         "app.portfolio.portfolio",
+        "app.persistence",
     }
     for path in sorted(Path("app/risk").glob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -142,6 +151,12 @@ def test_risk_architecture_boundaries() -> None:
             for imported in imports
             for blocked in forbidden
         ), f"{path} crosses a risk architecture boundary"
+        calls = {
+            node.func.attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+        }
+        assert not ({"time", "time_ns", "monotonic", "now", "utcnow"} & calls)
 
 
 def test_execution_provider_architecture_boundaries() -> None:

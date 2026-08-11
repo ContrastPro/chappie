@@ -463,8 +463,12 @@ def test_pending_exposure_and_session_validation() -> None:
     assert sell.reserved_base_quantity == Decimal(1)
     total = aggregate_pending_exposure((buy,))
     assert total == buy
-    with pytest.raises(ExchangeSubmissionSafetyError, match="one order"):
-        aggregate_pending_exposure((buy, sell))
+    combined = aggregate_pending_exposure((buy, sell))
+    assert combined.reserved_quote_amount == Decimal(110)
+    assert combined.reserved_base_quantity == Decimal(1)
+    assert combined.pending_notional == Decimal(200)
+    assert combined.order_count == 2
+    assert combined.inflight_submission_count == 1
     with pytest.raises(ExchangeExecutionInvariantError):
         PendingExposure(reserved_quote_amount=Decimal(-1))
     with pytest.raises(ExchangeExecutionInvariantError):
@@ -951,8 +955,7 @@ def test_remaining_model_validation_boundaries() -> None:
             aggregate_trades(order(ExchangeOrderStatus.PARTIALLY_FILLED), (valid_trade,)),
             trade_count=0,
         )
-    with pytest.raises(ExchangeExecutionInvariantError, match="order_count"):
-        PendingExposure(order_count=2)
+    assert PendingExposure(order_count=2).order_count == 2
     with pytest.raises(ValueError, match="TESTNET"):
         replace(
             ExecutionSession("session", "account", 100, ExecutionSessionState.ACTIVE),

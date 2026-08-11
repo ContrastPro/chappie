@@ -466,8 +466,8 @@ class PendingExposure:
             )
         for name in ("order_count", "inflight_submission_count"):
             value = getattr(self, name)
-            if isinstance(value, bool) or not isinstance(value, int) or value not in {0, 1}:
-                raise ExchangeExecutionInvariantError(f"{name} must be 0 or 1")
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ExchangeExecutionInvariantError(f"{name} must be non-negative")
         if self.inflight_submission_count > self.order_count:
             raise ExchangeExecutionInvariantError("in-flight submissions require an order")
         normalize_decimal_fields(

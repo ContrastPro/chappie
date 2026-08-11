@@ -234,6 +234,4 @@ def aggregate_pending_exposure(values: Iterable[PendingExposure]) -> PendingExpo
         remaining = _add(remaining, exposure.remaining_base_quantity)
         orders += exposure.order_count
         inflight += exposure.inflight_submission_count
-    if orders > 1 or inflight > 1:
-        raise ExchangeSubmissionSafetyError("initial pending exposure limit is one order/attempt")
     return PendingExposure(quote, base, notional, original, executed, remaining, orders, inflight)

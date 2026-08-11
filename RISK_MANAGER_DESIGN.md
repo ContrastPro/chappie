@@ -406,6 +406,40 @@ Leverage, margin, borrow, futures и short требуют отдельного d
 
 ## 15. Итоговые гарантии реализации
 
+### M4.4 additive exchange risk hardening
+
+M4.4 не меняет Stage 3 sizing и `RiskDecision`. После него вызывается pure
+`evaluate_exchange_risk`, которому явно передаются reconciled account state,
+`PendingExposure`, `ExecutionSession` и immutable `ExchangeRiskPolicy`. Результат
+`ExchangeRiskAssessment` отделён от `ExchangeSubmissionDecision`: финансовое разрешение
+само по себе не даёт права на network submission.
+
+Effective resources учитывают remaining reservations: для BUY это quote balance минус
+reserved quote и cash reserve, для SELL — base balance минус reserved base. Projected
+BUY position включает remaining pending BUY и candidate; SELL вычитает remaining pending
+SELL и candidate и fail-closed запрещает short. Первая policy фиксирует максимум один
+non-terminal order и один in-flight submission.
+
+Session controls ограничивают cumulative submitted notional, conservative projected
+turnover, submission count и execution failure count. Это operator-started session без
+calendar/daily reset. Exact equality допустима для upper notional/count limits;
+failure-count и drawdown thresholds блокируют на equality. Realised-loss limit пока не
+реализован: существующий domain не содержит однозначного immutable session-loss baseline,
+поэтому он должен появиться отдельным reviewed contract, а не выводиться из process
+clock или неявного состояния.
+
+Submission safety требует TESTNET, approved financial assessment, cleared kill switch,
+SAFE reconciliation, совпадающие reconciliation/control generations, настоящий opaque
+process-local capability и safe pending control. Все обычные отказы представлены
+ordered typed reasons; exceptions оставлены только для повреждённых контрактов. Обе
+функции stateless, Decimal-only и не используют network, filesystem, SQLite или clock.
+
+M4.4 final safety review пройден 2026-08-10. Review отдельно доказал exact-equality
+resource/session boundaries, remaining-only partial-fill reservations, deterministic
+multi-record aggregation до one-order hard gate, source Risk outcome preservation,
+assessment/session lineage, kill-switch generation invalidation и immutable applied-policy
+audit. Stage 3 paper Risk semantics не изменены.
+
 M3.4 реализован изолированно и прошёл final safety review:
 
 1. immutable policy/reason/sizing models и typed exceptions;

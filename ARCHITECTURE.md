@@ -377,6 +377,19 @@ Risk Manager является synchronous pure domain service: он не чит�
 `OrderIntent`, `PortfolioSnapshot` и `MarketSnapshot`; результатом является только
 immutable `RiskDecision`.
 
+M4.4 добавляет второй pure слой `app.risk.exchange`, не изменяя Stage 3 `RiskManager`.
+Он принимает готовый `RiskDecision`, согласованные `PortfolioSnapshot`, reconciled
+account state, `PendingExposure`, `ExecutionSession` и immutable exchange policy.
+Financial assessment отдельно от submission authorization: обычное превышение лимита
+возвращает ordered typed reasons, а не exception. Submission safety дополнительно
+требует TESTNET, cleared kill switch, SAFE reconciliation, совпадающие generations,
+реальный process-local `SubmissionCapability` и safe pending control. Этот слой также
+не выполняет I/O, не читает clock/SQLite и не создаёт order command.
+M4.4 final safety review пройден: aggregation остаётся математически полной для
+нескольких immutable records, а conservative one-order/one-inflight запрет применяется
+после aggregation; mixed-side remaining quantities передаются явно. Submission сверяет
+также generation самого kill switch и отклоняет cross-session assessment.
+
 ```text
 OrderIntent + PortfolioSnapshot + MarketSnapshot
     -> Risk Manager
