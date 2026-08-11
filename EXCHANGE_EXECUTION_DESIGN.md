@@ -856,6 +856,44 @@ independent of the process-global Decimal context.
 
 ## 24. M4.2 decision
 
+### M4.7 implementation status
+
+Status: **completed; final reconciliation safety review passed** (2026-08-11).
+`ExchangeReconciler` зависит только от lifecycle persistence и read-only account-reader ports.
+Он queries original client ID, validates immutable lineage, uses the M4.3 lifecycle validator,
+persists normalized trades, and checks open orders, recent trade ownership, BTC/USDT balance
+scope and configured rules. NOT_FOUND never authorizes resubmission. Unknown/conflicting facts
+block SAFE; reader failures do not advance generation. Empty/PREPARED-only roots may be SAFE;
+terminal-complete orders are not repeatedly queried.
+
+Migration 003 adds digested current state and append-only cycle records without editing migration
+002. Truthful facts may commit before the final cycle; SAFE evidence and generation advance in
+one transaction. Kill switch, submission counters and turnover remain unchanged. Settlement,
+Portfolio synchronization, scheduler/runtime wiring, credentials, authenticated calls,
+cancellation and LIVE are absent. M4.8 is next; Stage 4 remains in progress and ADR-055–062
+remain accepted.
+
+An M4.7 `SAFE` generation proves only normalized exchange truth for one explicit cycle: every
+required attempted-order query completed, fetched trade totals were complete, managed open-order
+facts agreed, account-wide trade history was complete from execution-root creation through cycle
+start, requested BTC/USDT balances were valid, and effective normalized rules matched. Each new
+successful invocation is a new audited cycle and advances exactly once; exact replay of an already
+persisted run ID/payload is a no-op. Unsafe cycles append evidence but retain generation.
+
+`SAFE` does **not** mean Portfolio settlement, submission readiness, cleared kill switch, Risk
+approval, process capability, control-generation stability or LIVE authorization.
+`ExchangeReconciliationResult.submission_ready` is therefore always false in M4.7. Newly found
+trades remain PENDING settlement even when exchange truth is SAFE. M4.8 must first synchronize
+settlement, recheck local recovery and balances, bind the current reconciliation and control
+generations, confirm kill-switch/Risk gates, and only then may issue a process-local capability.
+The final M4.7 record does not freeze control generation; M4.8 must re-read it.
+
+Binance trade-history reads request the root-start horizon with the maximum bounded page. A page
+at the limit is explicitly incomplete and blocks SAFE; it is not described as full account
+history. Dedicated Testnet lineage must therefore remain within provable history or later add
+pagination/checkpoint policy. Balance validation in M4.7 proves normalized non-negative requested
+assets only: it does not prove Portfolio equality or explain locked funds.
+
 M4.1 architecture design and M4.2 final safety review are complete. The design is
 approved for M4.3 domain/port implementation only. This review implemented no code,
 migration, credential, private API call, Testnet order or LIVE capability.

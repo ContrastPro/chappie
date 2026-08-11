@@ -365,7 +365,7 @@ def test_exchange_execution_architecture_boundaries() -> None:
             for alias in node.names
         )
         effective_forbidden = forbidden - (
-            {"app.persistence"} if path.name == "durable.py" else set()
+            {"app.persistence"} if path.name in {"durable.py", "reconciliation.py"} else set()
         )
         assert not any(
             imported == blocked or imported.startswith(f"{blocked}.")

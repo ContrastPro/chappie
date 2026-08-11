@@ -22,6 +22,7 @@ from app.exchange_execution.models import (
 from app.exchange_execution.ports import (
     AccountBalance,
     ExchangeInstrumentRules,
+    ExchangeTradeHistory,
     MarketOrderSubmission,
     OrderQueryResult,
     SubmissionObservation,
@@ -287,6 +288,30 @@ class BinanceSpotTestnetAdapter:
                 raise BinanceUnsupportedContractError("open order identity is unavailable")
             orders.append(self._normalize_order_payload(value, identity, stream_key))
         return tuple(orders)
+
+    def read_trade_history(
+        self, *, stream_key: MarketStreamKey, start_at_ms: int
+    ) -> ExchangeTradeHistory:
+        self._validate_stream(stream_key)
+        if isinstance(start_at_ms, bool) or not isinstance(start_at_ms, int) or start_at_ms < 0:
+            raise BinanceConfigurationError("start_at_ms must be non-negative")
+        coverage_end_ms = self._timestamp_provider()
+        response = self._signed_get(
+            "/api/v3/myTrades",
+            [("symbol", stream_key.symbol), ("startTime", start_at_ms), ("limit", 1000)],
+        )
+        self._raise_if_error(response, self._error_payload(response))
+        payload = self._json_list(response)
+        trades: list[ExchangeTrade] = []
+        for value in payload:
+            if not isinstance(value, dict):
+                raise BinanceNormalizationError("trade entry must be an object")
+            exchange_order_id = str(self._integer(value, "orderId"))
+            identity = self._resolve_exchange_identity(exchange_order_id)
+            trades.append(self._normalize_trade(value, identity, stream_key, exchange_order_id))
+        return ExchangeTradeHistory(
+            tuple(trades), start_at_ms, coverage_end_ms, len(payload) < 1000
+        )
 
     def read_balances(self, assets: tuple[str, ...]) -> tuple[AccountBalance, ...]:
         self._ensure_open()

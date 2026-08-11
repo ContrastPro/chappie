@@ -19,6 +19,7 @@ from app.exchange_execution import (
     ExchangeOrderSide,
     ExchangeOrderStatus,
     ExchangeTrade,
+    ExchangeTradeHistory,
     ExchangeTradeIdentity,
     ExecutionEnvironment,
     ExecutionSession,
@@ -560,6 +561,11 @@ class FakeReader:
     def list_open_orders(self, *, stream_key: MarketStreamKey) -> tuple[ExchangeOrder, ...]:
         return ()
 
+    def read_trade_history(
+        self, *, stream_key: MarketStreamKey, start_at_ms: int
+    ) -> ExchangeTradeHistory:
+        return ExchangeTradeHistory((), start_at_ms, start_at_ms, True)
+
     def read_balances(self, assets: tuple[str, ...]) -> tuple[AccountBalance, ...]:
         return tuple(AccountBalance(asset, Decimal(0), Decimal(0)) for asset in assets)
 
@@ -672,6 +678,7 @@ def test_lifecycle_transition_matrix_is_exhaustive() -> None:
             ExchangeOrderStatus.ACKNOWLEDGED,
             ExchangeOrderStatus.PARTIALLY_FILLED,
             ExchangeOrderStatus.FILLED,
+            ExchangeOrderStatus.CANCELED,
             ExchangeOrderStatus.REJECTED,
             ExchangeOrderStatus.EXPIRED,
             ExchangeOrderStatus.RECONCILIATION_REQUIRED,

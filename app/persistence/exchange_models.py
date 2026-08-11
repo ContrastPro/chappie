@@ -41,6 +41,95 @@ class TradeCompletenessStatus(StrEnum):
     CONFLICT = "CONFLICT"
 
 
+class ExchangeReconciliationStatus(StrEnum):
+    REQUIRED = "REQUIRED"
+    SAFE = "SAFE"
+    FAILED = "FAILED"
+    CONFLICT = "CONFLICT"
+
+
+@dataclass(frozen=True, slots=True)
+class ExchangeReconciliationState:
+    execution_root_id: str
+    status: ExchangeReconciliationStatus
+    generation: int
+    latest_reconciliation_id: str | None
+    updated_at_ms: int
+    state_digest: str
+    model_version: str = "exchange-reconciliation-state/v1"
+
+    def __post_init__(self) -> None:
+        require_text(self.execution_root_id, "execution_root_id")
+        if not isinstance(self.status, ExchangeReconciliationStatus):
+            raise PersistenceIntegrityError("invalid exchange reconciliation status")
+        if (
+            isinstance(self.generation, bool)
+            or not isinstance(self.generation, int)
+            or self.generation < 0
+        ):
+            raise PersistenceIntegrityError("reconciliation generation must be non-negative")
+        if self.latest_reconciliation_id is not None:
+            require_text(self.latest_reconciliation_id, "latest_reconciliation_id")
+        require_timestamp(self.updated_at_ms, "updated_at_ms")
+        require_hash(self.state_digest, "state_digest")
+        if self.model_version != "exchange-reconciliation-state/v1":
+            raise PersistenceIntegrityError("unsupported reconciliation state model version")
+
+
+@dataclass(frozen=True, slots=True)
+class PersistentExchangeReconciliationRun:
+    reconciliation_id: str
+    execution_root_id: str
+    session_id: str
+    account_fingerprint: str
+    generation_before: int
+    generation_after: int
+    outcome: ExchangeReconciliationStatus
+    orders_examined: int
+    orders_advanced: int
+    trades_persisted: int
+    open_orders_examined: int
+    balances_examined: int
+    reasons: tuple[str, ...]
+    started_at_ms: int
+    completed_at_ms: int
+    model_version: str = "exchange-reconciliation-run/v1"
+
+    def __post_init__(self) -> None:
+        for name in ("reconciliation_id", "execution_root_id", "session_id"):
+            require_text(getattr(self, name), name)
+        require_account_fingerprint(self.account_fingerprint)
+        for name in (
+            "generation_before",
+            "generation_after",
+            "orders_examined",
+            "orders_advanced",
+            "trades_persisted",
+            "open_orders_examined",
+            "balances_examined",
+            "started_at_ms",
+            "completed_at_ms",
+        ):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise PersistenceIntegrityError(f"{name} must be non-negative")
+        if not isinstance(self.outcome, ExchangeReconciliationStatus):
+            raise PersistenceIntegrityError("invalid reconciliation outcome")
+        expected = self.generation_before + (self.outcome is ExchangeReconciliationStatus.SAFE)
+        if self.generation_after != expected:
+            raise PersistenceIntegrityError("reconciliation generation transition is invalid")
+        if self.completed_at_ms < self.started_at_ms:
+            raise PersistenceIntegrityError("reconciliation completion precedes start")
+        if not isinstance(self.reasons, tuple) or any(
+            not isinstance(value, str) or not value for value in self.reasons
+        ):
+            raise PersistenceIntegrityError("reconciliation reasons must be typed strings")
+        if tuple(sorted(set(self.reasons))) != self.reasons:
+            raise PersistenceIntegrityError("reconciliation reasons must be sorted and unique")
+        if self.model_version != "exchange-reconciliation-run/v1":
+            raise PersistenceIntegrityError("unsupported reconciliation run model version")
+
+
 @dataclass(frozen=True, slots=True)
 class ExchangeExecutionRoot:
     execution_root_id: str

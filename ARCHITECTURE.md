@@ -413,6 +413,22 @@ M4.6 final crash/restart safety review пройден 2026-08-11. Fresh durable 
 Attempt ordinal ограничен единицей, replay ACK/result idempotent, а root/event/projection/session
 corruption блокирует local recovery. M4.7 остаётся владельцем external reconciliation.
 
+M4.7 реализует `ExchangeReconciler` над `ExchangeLifecyclePersistence` и read-only
+`ExchangeAccountReader`, без concrete adapter, Portfolio/Risk runtime или scheduler. Truthful
+order/trade facts фиксируются отдельно; schema-v3 SAFE run и generation `N -> N+1` атомарны.
+REQUIRED/FAILED/CONFLICT сохраняют generation `N`. Local recovery и external reconciliation —
+независимые состояния. Kill switch остаётся ACTIVE, capability не выдаётся, а trade settlement
+остаётся PENDING до M4.8.
+
+`SAFE reconciliation` здесь означает только полный проверенный exchange-truth snapshot в
+заявленном history horizon. Он не равен Portfolio settlement, submission readiness, cleared kill
+switch, Risk approval или capability. M4.7 result всегда сообщает `submission_ready = false`.
+M4.8 обязан завершить settlement и заново связать reconciliation/control generations перед
+выдачей process-local capability. Account-wide trade horizon является явным контрактом reader;
+неполное bounded окно блокирует SAFE.
+M4.7 final reconciliation safety review пройден 2026-08-11; M4.8 остаётся следующим milestone,
+а Stage 4 — in progress.
+
 ```text
 OrderIntent + PortfolioSnapshot + MarketSnapshot
     -> Risk Manager

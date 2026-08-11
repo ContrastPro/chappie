@@ -484,6 +484,30 @@ def test_my_trades_rejects_cross_order_fact_and_preserves_large_ids() -> None:
         client.close()
 
 
+def test_recent_trade_history_is_read_only_account_scope() -> None:
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(
+            200,
+            json=[trade_payload(buyer=True, commission_asset="BNB", trade_id=1)],
+        )
+
+    value, client = adapter(handler, resolver=Resolver(identity()))
+    try:
+        history = value.read_trade_history(stream_key=KEY, start_at_ms=1000)
+    finally:
+        client.close()
+    assert history.trades[0].identity.exchange_order_id == "123"
+    assert history.complete is True
+    query = parse_qs(captured[0].url.query.decode())
+    assert query["symbol"] == ["BTCUSDT"]
+    assert query["startTime"] == ["1000"] and query["limit"] == ["1000"]
+    assert "orderId" not in query
+    assert captured[0].method == "GET"
+
+
 def test_balances_are_filtered_ordered_and_decimal_only() -> None:
     payload = {
         "balances": [

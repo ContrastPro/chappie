@@ -34,9 +34,12 @@ from app.persistence.exchange_models import (
     DurableExchangeOrder,
     ExchangeControlState,
     ExchangeExecutionRoot,
+    ExchangeReconciliationState,
+    ExchangeReconciliationStatus,
     ExecutionBootstrap,
     LocalExchangeRecoveryResult,
     LocalExchangeRecoveryStatus,
+    PersistentExchangeReconciliationRun,
     RestartDisposition,
     TradeCompletenessStatus,
     TradeSettlementStatus,
@@ -95,7 +98,7 @@ def _command_payload(command: ExchangeCommand) -> str:
 
 
 class SQLiteExchangePersistence:
-    """Schema-v2 exchange lifecycle persistence; synchronous and single-writer."""
+    """Schema-v2/v3 exchange persistence; synchronous and single-writer."""
 
     def __init__(
         self,
@@ -103,8 +106,10 @@ class SQLiteExchangePersistence:
         *,
         failure_injector: Callable[[str], None] | None = None,
     ) -> None:
-        if not isinstance(config, SQLitePersistenceConfig) or config.expected_schema_version != 2:
-            raise PersistenceIntegrityError("exchange persistence requires schema version 2")
+        if not isinstance(
+            config, SQLitePersistenceConfig
+        ) or config.expected_schema_version not in {2, 3}:
+            raise PersistenceIntegrityError("exchange persistence requires schema version 2 or 3")
         self._trading = SQLiteTradingPersistence(config)
         self._connection = self._trading._connection
         if failure_injector is not None and not callable(failure_injector):
@@ -150,7 +155,20 @@ class SQLiteExchangePersistence:
             if existing is not None:
                 if existing[0] != root.digest:
                     raise PersistenceConflictError("exchange execution root conflicts")
-                connection.rollback()
+                if self._trading.config.expected_schema_version >= 3:
+                    reconciliation = connection.execute(
+                        "SELECT 1 FROM exchange_reconciliation_current WHERE execution_root_id=?",
+                        (root.execution_root_id,),
+                    ).fetchone()
+                    if reconciliation is None:
+                        self._insert_initial_reconciliation_state(
+                            root.execution_root_id, root.created_at_ms
+                        )
+                        connection.commit()
+                    else:
+                        connection.rollback()
+                else:
+                    connection.rollback()
                 return self.load_bootstrap(root.execution_root_id)
             unresolved = connection.execute(
                 "SELECT 1 FROM exchange_orders WHERE terminal=0 LIMIT 1"
@@ -201,6 +219,10 @@ class SQLiteExchangePersistence:
                     control.kill_switch.model_version,
                 ),
             )
+            if self._trading.config.expected_schema_version >= 3:
+                self._insert_initial_reconciliation_state(
+                    root.execution_root_id, root.created_at_ms
+                )
             connection.commit()
             return ExecutionBootstrap(root, session, control)
         except (PersistenceConflictError, sqlite3.Error) as error:
@@ -621,6 +643,8 @@ class SQLiteExchangePersistence:
         ).fetchall()
         for root in roots:
             self.load_bootstrap(root[0])
+            if self._trading.config.expected_schema_version >= 3:
+                self.read_reconciliation_state(root[0])
         orders = self.list_orders()
         prepared = tuple(
             v
@@ -665,6 +689,246 @@ class SQLiteExchangePersistence:
         if total < order.cumulative_executed_base_quantity:
             return TradeCompletenessStatus.INCOMPLETE
         return TradeCompletenessStatus.COMPLETE
+
+    def trade_count(self, durable_command_key: str) -> int:
+        self.load_order(durable_command_key)
+        return self._connection.execute(
+            "SELECT count(*) FROM exchange_trades WHERE durable_command_key=?",
+            (durable_command_key,),
+        ).fetchone()[0]
+
+    def read_reconciliation_state(self, execution_root_id: str) -> ExchangeReconciliationState:
+        self._trading._require_open()
+        if self._trading.config.expected_schema_version < 3:
+            raise PersistenceIntegrityError("reconciliation state requires schema version 3")
+        row = self._connection.execute(
+            "SELECT * FROM exchange_reconciliation_current WHERE execution_root_id=?",
+            (execution_root_id,),
+        ).fetchone()
+        if row is None:
+            raise PersistenceIntegrityError("exchange reconciliation state is missing")
+        payload = {
+            "execution_root_id": row["execution_root_id"],
+            "status": row["status"],
+            "generation": row["generation"],
+            "latest_reconciliation_id": row["latest_reconciliation_id"],
+            "updated_at_ms": row["updated_at_ms"],
+            "model_version": row["model_version"],
+        }
+        if (
+            canonical_json(payload) != row["state_payload"]
+            or canonical_sha256(payload, algorithm_version=row["model_version"])
+            != row["state_digest"]
+        ):
+            raise PersistenceIntegrityError("exchange reconciliation state digest mismatch")
+        if row["model_version"] != "exchange-reconciliation-state/v1":
+            raise PersistenceIntegrityError("unsupported reconciliation state model version")
+        control = self.read_control_state(execution_root_id)
+        if control.reconciliation_generation != row["generation"]:
+            raise PersistenceIntegrityError("reconciliation/control generation mismatch")
+        if row["latest_reconciliation_id"] is not None:
+            self._validate_latest_reconciliation_run(row)
+        try:
+            return ExchangeReconciliationState(
+                row["execution_root_id"],
+                ExchangeReconciliationStatus(row["status"]),
+                row["generation"],
+                row["latest_reconciliation_id"],
+                row["updated_at_ms"],
+                row["state_digest"],
+                row["model_version"],
+            )
+        except (ValueError, TypeError) as error:
+            raise PersistenceIntegrityError("exchange reconciliation state is invalid") from error
+
+    def record_reconciliation_run(
+        self, record: PersistentExchangeReconciliationRun
+    ) -> ExchangeReconciliationState:
+        self._trading._require_open()
+        if not isinstance(record, PersistentExchangeReconciliationRun):
+            raise PersistenceIntegrityError("invalid reconciliation run")
+        state = self.read_reconciliation_state(record.execution_root_id)
+        result_payload = canonical_json(
+            {name: getattr(record, name) for name in record.__dataclass_fields__}
+        )
+        result_digest = canonical_sha256(result_payload, algorithm_version=record.model_version)
+        existing = self._connection.execute(
+            "SELECT result_digest FROM exchange_reconciliation_runs WHERE reconciliation_id=?",
+            (record.reconciliation_id,),
+        ).fetchone()
+        if existing is not None:
+            if existing[0] != result_digest:
+                raise PersistenceConflictError("reconciliation ID has conflicting result")
+            return self.read_reconciliation_state(record.execution_root_id)
+        if state.generation != record.generation_before:
+            raise PersistenceConflictError("reconciliation generation is stale")
+        bootstrap = self.load_bootstrap(record.execution_root_id)
+        if (
+            bootstrap.session.session_id != record.session_id
+            or bootstrap.root.account_fingerprint != record.account_fingerprint
+        ):
+            raise PersistenceConflictError("reconciliation lineage mismatch")
+        reasons_payload = canonical_json(record.reasons)
+        state_payload = {
+            "execution_root_id": record.execution_root_id,
+            "status": record.outcome,
+            "generation": record.generation_after,
+            "latest_reconciliation_id": record.reconciliation_id,
+            "updated_at_ms": record.completed_at_ms,
+            "model_version": "exchange-reconciliation-state/v1",
+        }
+        state_json = canonical_json(state_payload)
+        state_digest = canonical_sha256(
+            state_payload, algorithm_version="exchange-reconciliation-state/v1"
+        )
+        connection = self._connection
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            connection.execute(
+                "INSERT INTO exchange_reconciliation_runs VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    record.reconciliation_id,
+                    record.execution_root_id,
+                    record.session_id,
+                    record.account_fingerprint,
+                    record.generation_before,
+                    record.generation_after,
+                    record.outcome.value,
+                    record.orders_examined,
+                    record.orders_advanced,
+                    record.trades_persisted,
+                    record.open_orders_examined,
+                    record.balances_examined,
+                    reasons_payload,
+                    record.started_at_ms,
+                    record.completed_at_ms,
+                    record.model_version,
+                    result_payload,
+                    result_digest,
+                ),
+            )
+            self._hit("reconciliation_after_run")
+            cursor = connection.execute(
+                "UPDATE exchange_reconciliation_current SET status=?,generation=?,"
+                "latest_reconciliation_id=?,updated_at_ms=?,model_version=?,state_payload=?,"
+                "state_digest=? WHERE execution_root_id=? AND generation=?",
+                (
+                    record.outcome.value,
+                    record.generation_after,
+                    record.reconciliation_id,
+                    record.completed_at_ms,
+                    "exchange-reconciliation-state/v1",
+                    state_json,
+                    state_digest,
+                    record.execution_root_id,
+                    record.generation_before,
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise PersistenceConflictError("reconciliation generation race")
+            self._hit("reconciliation_after_current")
+            control_cursor = connection.execute(
+                "UPDATE exchange_control_state SET reconciliation_generation=? "
+                "WHERE execution_root_id=? AND reconciliation_generation=?",
+                (record.generation_after, record.execution_root_id, record.generation_before),
+            )
+            if control_cursor.rowcount != 1:
+                raise PersistenceConflictError("reconciliation control generation race")
+            self._hit("reconciliation_after_control")
+            self._hit("reconciliation_before_commit")
+            connection.commit()
+            self._hit("reconciliation_after_commit")
+        except PersistenceConflictError:
+            connection.rollback()
+            raise
+        except sqlite3.IntegrityError as error:
+            connection.rollback()
+            raise PersistenceConflictError("reconciliation run conflicts") from error
+        except sqlite3.Error as error:
+            connection.rollback()
+            raise PersistenceTransactionError("reconciliation transaction failed") from error
+        except Exception:
+            connection.rollback()
+            raise
+        return self.read_reconciliation_state(record.execution_root_id)
+
+    def _insert_initial_reconciliation_state(
+        self, execution_root_id: str, occurred_at_ms: int
+    ) -> None:
+        payload = {
+            "execution_root_id": execution_root_id,
+            "status": ExchangeReconciliationStatus.REQUIRED,
+            "generation": 0,
+            "latest_reconciliation_id": None,
+            "updated_at_ms": occurred_at_ms,
+            "model_version": "exchange-reconciliation-state/v1",
+        }
+        self._connection.execute(
+            "INSERT INTO exchange_reconciliation_current VALUES(?,?,?,?,?,?,?,?)",
+            (
+                execution_root_id,
+                ExchangeReconciliationStatus.REQUIRED.value,
+                0,
+                None,
+                occurred_at_ms,
+                "exchange-reconciliation-state/v1",
+                canonical_json(payload),
+                canonical_sha256(payload, algorithm_version="exchange-reconciliation-state/v1"),
+            ),
+        )
+
+    def _validate_latest_reconciliation_run(self, state_row: sqlite3.Row) -> None:
+        run = self._connection.execute(
+            "SELECT * FROM exchange_reconciliation_runs WHERE reconciliation_id=?",
+            (state_row["latest_reconciliation_id"],),
+        ).fetchone()
+        if run is None:
+            raise PersistenceIntegrityError("latest reconciliation run is missing")
+        try:
+            result_values = {
+                "reconciliation_id": run["reconciliation_id"],
+                "execution_root_id": run["execution_root_id"],
+                "session_id": run["session_id"],
+                "account_fingerprint": run["account_fingerprint"],
+                "generation_before": run["generation_before"],
+                "generation_after": run["generation_after"],
+                "outcome": run["outcome"],
+                "orders_examined": run["orders_examined"],
+                "orders_advanced": run["orders_advanced"],
+                "trades_persisted": run["trades_persisted"],
+                "open_orders_examined": run["open_orders_examined"],
+                "balances_examined": run["balances_examined"],
+                "reasons": tuple(json.loads(run["reasons_payload"])),
+                "started_at_ms": run["started_at_ms"],
+                "completed_at_ms": run["completed_at_ms"],
+                "model_version": run["model_version"],
+            }
+            expected_payload = canonical_json(result_values)
+            expected_digest = canonical_sha256(
+                expected_payload, algorithm_version=run["model_version"]
+            )
+        except Exception as error:
+            raise PersistenceIntegrityError("reconciliation run payload is invalid") from error
+        if (
+            run["model_version"] != "exchange-reconciliation-run/v1"
+            or run["result_payload"] != expected_payload
+            or run["result_digest"] != expected_digest
+            or run["execution_root_id"] != state_row["execution_root_id"]
+            or run["generation_after"] != state_row["generation"]
+            or run["outcome"] != state_row["status"]
+            or run["completed_at_ms"] != state_row["updated_at_ms"]
+        ):
+            raise PersistenceIntegrityError("latest reconciliation run/state mismatch")
+        lineage = self._connection.execute(
+            "SELECT execution_root_id,account_fingerprint FROM exchange_sessions "
+            "WHERE session_id=?",
+            (run["session_id"],),
+        ).fetchone()
+        if lineage is None or tuple(lineage) != (
+            run["execution_root_id"],
+            run["account_fingerprint"],
+        ):
+            raise PersistenceIntegrityError("reconciliation run session lineage mismatch")
 
     def read_control_state(self, execution_root_id: str) -> ExchangeControlState:
         row = self._connection.execute(

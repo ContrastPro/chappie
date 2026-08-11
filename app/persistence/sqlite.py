@@ -35,7 +35,11 @@ from app.persistence.models import (
     SQLitePersistenceConfig,
 )
 
-MIGRATION_NAMES = ("001_initial.sql", "002_exchange_execution.sql")
+MIGRATION_NAMES = (
+    "001_initial.sql",
+    "002_exchange_execution.sql",
+    "003_exchange_reconciliation.sql",
+)
 
 
 def _state_from_payload(payload: str) -> PortfolioState:

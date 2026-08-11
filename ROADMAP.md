@@ -356,7 +356,7 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 
 ## Этап 4. Risk hardening и биржевое execution
 
-Статус: **in progress — M4.6 completed; M4.7 next**.
+Статус: **in progress — M4.7 completed; final reconciliation safety review passed; M4.8 next**.
 
 ### Цель
 
@@ -440,12 +440,19 @@ recovery и изолированным testnet execution до отдельног
 
 #### M4.7 Exchange Reconciliation
 
-Статус: **next**.
+Статус: **completed; final reconciliation safety review passed** (2026-08-11).
 
-- Реализовать startup/runtime reconciliation, cursors, balance/open-order comparison и
-  fail-closed conflict handling.
+- Реализован adapter-independent `ExchangeReconciler`: stable-client-ID query, authoritative
+  order advancement, trade ingestion, ownership checks, balance/rules validation и fail-closed
+  typed outcomes. Schema v3 advances generation only for a complete SAFE cycle.
+- Portfolio settlement, runtime wiring, credentials, authenticated smoke, cancellation и LIVE
+  остаются вне M4.7.
+- M4.7 SAFE доказывает exchange truth в полном заявленном history horizon, но явно не означает
+  Portfolio settlement или submission readiness; эти дополнительные gates принадлежат M4.8.
 
 #### M4.8 Runtime Testnet Integration
+
+Статус: **next**.
 
 - Подключить TESTNET consumer после recovery/reconciliation gate; сохранить shared
   decision path и независимый shadow mode.

@@ -99,13 +99,14 @@ CHECKED_COMPONENTS = (
     "RiskManager and deterministic PaperExecutionProvider",
     "durable PaperTradingEngine and atomic committed Portfolio synchronization",
     "SQLite journal, checkpoints, recovery and writer exclusion",
+    "durable read-only exchange reconciliation and schema-v3 generation safety",
     "application startup recovery and shutdown resource lifecycle",
 )
 
 KNOWN_GAPS = (
     "No configured static type checker (mypy/pyright); add in a separate milestone.",
     "pytest-random-order is not installed, so randomized-order execution was not run.",
-    "No durable OHLCV store or live exchange reconciliation exists.",
+    "No durable OHLCV store; exchange reconciliation runtime wiring is deferred to M4.8.",
 )
 
 

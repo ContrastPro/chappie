@@ -144,6 +144,30 @@ class ExchangeInstrumentRules:
         require_text(self.rules_version, "rules_version")
 
 
+@dataclass(frozen=True, slots=True)
+class ExchangeTradeHistory:
+    trades: tuple[ExchangeTrade, ...]
+    coverage_start_ms: int
+    coverage_end_ms: int
+    complete: bool
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.trades, tuple) or any(
+            not isinstance(value, ExchangeTrade) for value in self.trades
+        ):
+            raise ExchangeExecutionInvariantError("trade history must contain ExchangeTrade values")
+        for value, name in (
+            (self.coverage_start_ms, "coverage_start_ms"),
+            (self.coverage_end_ms, "coverage_end_ms"),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ExchangeExecutionInvariantError(f"{name} must be non-negative")
+        if self.coverage_end_ms < self.coverage_start_ms:
+            raise ExchangeExecutionInvariantError("trade history coverage is reversed")
+        if not isinstance(self.complete, bool):
+            raise ExchangeExecutionInvariantError("trade history complete flag must be bool")
+
+
 @runtime_checkable
 class ExchangeOrderGateway(Protocol):
     def submit_market_order(self, request: MarketOrderSubmission) -> SubmissionObservation: ...
@@ -160,6 +184,10 @@ class ExchangeAccountReader(Protocol):
     ) -> tuple[ExchangeTrade, ...]: ...
 
     def list_open_orders(self, *, stream_key: MarketStreamKey) -> tuple[ExchangeOrder, ...]: ...
+
+    def read_trade_history(
+        self, *, stream_key: MarketStreamKey, start_at_ms: int
+    ) -> ExchangeTradeHistory: ...
 
     def read_balances(self, assets: tuple[str, ...]) -> tuple[AccountBalance, ...]: ...
 

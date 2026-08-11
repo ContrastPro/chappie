@@ -38,10 +38,16 @@ from app.exchange_execution.ports import (
     ExchangeAccountReader,
     ExchangeInstrumentRules,
     ExchangeOrderGateway,
+    ExchangeTradeHistory,
     MarketOrderSubmission,
     OrderQueryResult,
     SubmissionCapability,
     SubmissionObservation,
+)
+from app.exchange_execution.reconciliation import (
+    ExchangeReconciler,
+    ExchangeReconciliationReason,
+    ExchangeReconciliationResult,
 )
 
 __all__ = [
@@ -58,7 +64,11 @@ __all__ = [
     "ExchangeOrderGateway",
     "ExchangeOrderSide",
     "ExchangeOrderStatus",
+    "ExchangeReconciler",
+    "ExchangeReconciliationReason",
+    "ExchangeReconciliationResult",
     "ExchangeTrade",
+    "ExchangeTradeHistory",
     "ExchangeTradeIdentity",
     "ExecutionEnvironment",
     "ExecutionSession",

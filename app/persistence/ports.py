@@ -1,7 +1,9 @@
+from decimal import Decimal
 from typing import Protocol, runtime_checkable
 
 from app.exchange_execution.models import (
     ExchangeCommand,
+    ExchangeOrderEventSource,
     ExchangeOrderStatus,
     ExchangeTrade,
     ExecutionSession,
@@ -9,8 +11,11 @@ from app.exchange_execution.models import (
 from app.persistence.exchange_models import (
     DurableExchangeOrder,
     ExchangeExecutionRoot,
+    ExchangeReconciliationState,
     ExecutionBootstrap,
     LocalExchangeRecoveryResult,
+    PersistentExchangeReconciliationRun,
+    TradeCompletenessStatus,
 )
 from app.persistence.models import (
     CycleOutcome,
@@ -84,10 +89,21 @@ class ExchangeLifecyclePersistence(Protocol):
         reason_code: str,
         exchange_order_id: str | None = None,
         acknowledged_at_ms: int | None = None,
+        cumulative_executed_base_quantity: Decimal | None = None,
+        cumulative_quote_quantity: Decimal | None = None,
+        exchange_timestamp_ms: int | None = None,
+        source: ExchangeOrderEventSource = ExchangeOrderEventSource.TRANSPORT,
         count_failure: bool = False,
     ) -> DurableExchangeOrder: ...
     def persist_trades(
         self, durable_command_key: str, trades: tuple[ExchangeTrade, ...]
     ) -> tuple[ExchangeTrade, ...]: ...
     def load_order(self, durable_command_key: str) -> DurableExchangeOrder: ...
+    def list_orders(self) -> tuple[DurableExchangeOrder, ...]: ...
+    def trade_completeness(self, durable_command_key: str) -> TradeCompletenessStatus: ...
+    def trade_count(self, durable_command_key: str) -> int: ...
+    def read_reconciliation_state(self, execution_root_id: str) -> ExchangeReconciliationState: ...
+    def record_reconciliation_run(
+        self, record: PersistentExchangeReconciliationRun
+    ) -> ExchangeReconciliationState: ...
     def recover_local(self) -> LocalExchangeRecoveryResult: ...

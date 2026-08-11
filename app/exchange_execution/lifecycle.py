@@ -31,6 +31,7 @@ ALLOWED_TRANSITIONS: dict[ExchangeOrderStatus, frozenset[ExchangeOrderStatus]] =
             ExchangeOrderStatus.ACKNOWLEDGED,
             ExchangeOrderStatus.PARTIALLY_FILLED,
             ExchangeOrderStatus.FILLED,
+            ExchangeOrderStatus.CANCELED,
             ExchangeOrderStatus.REJECTED,
             ExchangeOrderStatus.EXPIRED,
             ExchangeOrderStatus.RECONCILIATION_REQUIRED,

@@ -45,6 +45,28 @@ exception. Exact preparation/ACK/trade replay не создаёт новый eve
 Filled order с неполным local trade set остаётся terminal exchange fact, но получает explicit
 INCOMPLETE trade completeness и не считается settled.
 
+### M4.7 external exchange reconciliation extension
+
+Additive migration `003_exchange_reconciliation.sql` не изменяет migration 002.
+`exchange_reconciliation_current` хранит digested REQUIRED/SAFE/FAILED/CONFLICT state;
+`exchange_reconciliation_runs` — append-only cycle authority. SAFE evidence, current state,
+control mirror и generation `N -> N+1` commit-ятся атомарно. Partial truthful order/trade facts
+могут сохраниться раньше: crash оставляет generation прежней, а следующий cycle идемпотентно
+проверяет durable truth. Trade settlement остаётся PENDING; Portfolio не изменяется.
+
+Every successful invocation is a distinct cycle: generation advances exactly `N -> N+1` once
+with its append-only run. Exact replay of the same run identity and canonical payload does not
+advance again; conflicting reuse fails. Any number of REQUIRED/FAILED/CONFLICT runs remain at N.
+Run/current/control-mirror writes share one transaction and deterministic failpoints cover every
+write plus pre/post-COMMIT ambiguity. Recovery verifies current digest/version, latest-run digest,
+root/session/account linkage, generation/outcome/time agreement and the control mirror.
+
+Exchange trade-history coverage is explicit. SAFE requires a complete interval beginning no later
+than root creation and ending no earlier than cycle start. A bounded/full page or missing horizon
+is REQUIRED, never silently accepted. This generation proves exchange-truth scope only; settlement
+and submission authority remain separate M4.8 gates.
+M4.7 final reconciliation safety review пройден 2026-08-11.
+
 ## 2. Existing crash gap
 
 M3.11 выполняет следующий flow только в памяти:
