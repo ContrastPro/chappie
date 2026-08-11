@@ -22,6 +22,29 @@ append-only trading journal (authoritative audit trail)
 Первый adapter — SQLite. Application/domain contracts не зависят от SQLite и должны
 допускать будущий PostgreSQL adapter.
 
+### M4.6 exchange lifecycle extension
+
+Stage 3 paper journal остаётся schema v1 и не изменяется. M4.6 добавляет ordered,
+transactional schema v2 для отдельной Binance Spot Testnet lineage. Exchange order events и
+trades являются append-only authorities; `exchange_orders` — проверяемая current projection.
+PREPARED означает только durable intent. Attempt row, SUBMITTING transition и session counters
+commit-ятся атомарно до будущего gateway call. После этого commit restart не может доказать,
+был ли transport, поэтому SUBMITTING и любой последующий non-terminal order исключаются из
+automatic submission и передаются будущему M4.7 reconciliation.
+
+Local SQLite integrity и external exchange reconciliation разделены. M4.6 local recovery
+проверяет root/order digests, contiguous event versions, projection status, session lineage и
+durable external IDs без Binance query. Missing/conflicting authority fail closed и не
+восстанавливается молча из current projection.
+
+M4.6 final crash/restart review подтвердил all-or-nothing PREPARED, attempt, ACK, ambiguity и
+rejection transactions через deterministic failpoints. Исключение после успешного COMMIT
+считается commit-ack ambiguity: решение принимается только по fresh SQLite state, не по in-memory
+exception. Exact preparation/ACK/trade replay не создаёт новый event/version/counter. SQL
+запрещает attempt ordinal > 1, event/trade UPDATE/DELETE и scoped client/trade collisions.
+Filled order с неполным local trade set остаётся terminal exchange fact, но получает explicit
+INCOMPLETE trade completeness и не считается settled.
+
 ## 2. Existing crash gap
 
 M3.11 выполняет следующий flow только в памяти:

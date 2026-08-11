@@ -1,3 +1,4 @@
+from app.exchange_execution.durable import DurableExchangeOrderLifecycle
 from app.exchange_execution.factories import (
     ClientOrderIdFactory,
     DeterministicClientOrderIdFactory,
@@ -47,6 +48,7 @@ __all__ = [
     "AccountBalance",
     "ClientOrderIdFactory",
     "DeterministicClientOrderIdFactory",
+    "DurableExchangeOrderLifecycle",
     "ExchangeAccountReader",
     "ExchangeCommand",
     "ExchangeInstrumentRules",

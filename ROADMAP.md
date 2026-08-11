@@ -356,7 +356,7 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 
 ## Этап 4. Risk hardening и биржевое execution
 
-Статус: **in progress — M4.5 completed; M4.6 next**.
+Статус: **in progress — M4.6 completed; M4.7 next**.
 
 ### Цель
 
@@ -427,12 +427,20 @@ recovery и изолированным testnet execution до отдельног
 
 #### M4.6 Durable Order Lifecycle
 
-Статус: **next**.
+Статус: **completed; final crash/restart safety review passed** (2026-08-11).
 
-- Реализовать conceptual schema v2, pre-submit command/attempt transactions, durable
-  order events, exchange trades и Portfolio settlement.
+- Реализованы additive schema v2, pre-submit command/attempt transactions, append-only
+  order events/trades, current projection integrity, durable session counters и kill switch.
+- Только PREPARED допускает первый submit; SUBMITTING и последующие non-terminal states
+  после restart требуют reconciliation. Trade truth сохраняется независимо от settlement;
+  Portfolio settlement отложен.
+- Final review подтвердил exact-once attempt/counters, rollback на каждой transaction
+  boundary, commit-ack ambiguity, ACK/ambiguous/rejection duplicate storms, immutable external
+  IDs, corruption detection, Decimal-context independence и v1 -> v2 compatibility.
 
 #### M4.7 Exchange Reconciliation
+
+Статус: **next**.
 
 - Реализовать startup/runtime reconciliation, cursors, balance/open-order comparison и
   fail-closed conflict handling.

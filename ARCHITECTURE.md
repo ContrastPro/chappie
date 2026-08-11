@@ -401,6 +401,18 @@ representation совпадает с передаваемыми bytes, ambiguous
 adapter остаётся пригоден для read reconciliation. Client proxy/TLS lifecycle принадлежит
 composition; synchronous adapter не заявляет thread safety.
 
+M4.6 добавляет отдельные schema-v2 `SQLiteExchangePersistence` и
+`DurableExchangeOrderLifecycle` без runtime composition. PREPARED/event commit предшествует
+любому gateway side effect; submission attempt, SUBMITTING projection/event и session counters
+атомарны. После SUBMITTING restart всегда требует reconciliation. Append-only exchange trades
+сохраняются независимо от Portfolio settlement, а durable kill switch стартует ACTIVE и меняет
+monotonic control generation только с reason/audit identity.
+
+M4.6 final crash/restart safety review пройден 2026-08-11. Fresh durable state является
+единственным арбитром после SQLite commit ambiguity; process exception не разрешает retry.
+Attempt ordinal ограничен единицей, replay ACK/result idempotent, а root/event/projection/session
+corruption блокирует local recovery. M4.7 остаётся владельцем external reconciliation.
+
 ```text
 OrderIntent + PortfolioSnapshot + MarketSnapshot
     -> Risk Manager

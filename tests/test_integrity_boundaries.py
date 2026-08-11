@@ -277,6 +277,7 @@ def test_paper_engine_architecture_boundaries() -> None:
 
 def test_persistence_architecture_boundaries() -> None:
     adapter_files = {
+        Path("app/persistence/exchange.py"),
         Path("app/persistence/sqlite.py"),
     }
     persistence_files = set(Path("app/persistence").glob("*.py"))
@@ -363,10 +364,13 @@ def test_exchange_execution_architecture_boundaries() -> None:
             if isinstance(node, ast.Import)
             for alias in node.names
         )
+        effective_forbidden = forbidden - (
+            {"app.persistence"} if path.name == "durable.py" else set()
+        )
         assert not any(
             imported == blocked or imported.startswith(f"{blocked}.")
             for imported in imports
-            for blocked in forbidden
+            for blocked in effective_forbidden
         ), f"{path} crosses an exchange execution architecture boundary"
         calls = {
             node.func.attr

@@ -1,5 +1,17 @@
 from typing import Protocol, runtime_checkable
 
+from app.exchange_execution.models import (
+    ExchangeCommand,
+    ExchangeOrderStatus,
+    ExchangeTrade,
+    ExecutionSession,
+)
+from app.persistence.exchange_models import (
+    DurableExchangeOrder,
+    ExchangeExecutionRoot,
+    ExecutionBootstrap,
+    LocalExchangeRecoveryResult,
+)
 from app.persistence.models import (
     CycleOutcome,
     DurableDecisionState,
@@ -44,3 +56,38 @@ class TradingPersistence(RecoveryView, Protocol):
     def create_checkpoint(self, state: PortfolioState, journal_seq: int) -> bool: ...
     def rebuild_portfolio_current(self, state: PortfolioState, journal_seq: int) -> None: ...
     def close(self) -> None: ...
+
+
+@runtime_checkable
+class ExchangeLifecyclePersistence(Protocol):
+    def initialize_execution(
+        self, root: ExchangeExecutionRoot, session: ExecutionSession, *, audit_identifier: str
+    ) -> ExecutionBootstrap: ...
+    def prepare_order(
+        self,
+        *,
+        execution_root_id: str,
+        session_id: str,
+        command: ExchangeCommand,
+        client_order_id: str,
+        occurred_at_ms: int,
+    ) -> DurableExchangeOrder: ...
+    def begin_submission(
+        self, durable_command_key: str, *, occurred_at_ms: int
+    ) -> DurableExchangeOrder: ...
+    def record_status(
+        self,
+        durable_command_key: str,
+        *,
+        status: ExchangeOrderStatus,
+        occurred_at_ms: int,
+        reason_code: str,
+        exchange_order_id: str | None = None,
+        acknowledged_at_ms: int | None = None,
+        count_failure: bool = False,
+    ) -> DurableExchangeOrder: ...
+    def persist_trades(
+        self, durable_command_key: str, trades: tuple[ExchangeTrade, ...]
+    ) -> tuple[ExchangeTrade, ...]: ...
+    def load_order(self, durable_command_key: str) -> DurableExchangeOrder: ...
+    def recover_local(self) -> LocalExchangeRecoveryResult: ...

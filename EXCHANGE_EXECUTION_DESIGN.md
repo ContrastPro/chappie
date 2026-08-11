@@ -609,8 +609,8 @@ must not be unlocked by changing `EXECUTION_MODE` alone.
 
 ## 17. Persistence schema v2 concept
 
-M4.1 does not create SQL. Migration v2 is proposed to add generic exchange records while
-leaving Stage 3 paper tables readable:
+M4.6 implements additive migration v2 with generic exchange records while leaving Stage 3
+paper tables readable:
 
 | Table | Authority and key constraints |
 |---|---|
@@ -824,6 +824,35 @@ The caller owns client lifecycle plus proxy/TLS policy; the adapter requires the
 Testnet base URL, never exposes a `verify=False` option and explicitly disables redirects on
 every call. The synchronous adapter has no thread-safety guarantee; sequential reuse is the
 reviewed contract.
+
+### M4.6 implementation status
+
+Status: **completed; final crash/restart safety review passed** (2026-08-11). Migration
+`002_exchange_execution.sql` adds immutable Testnet execution roots, sessions, durable
+control state, order projections, append-only order events, pre-transport submission attempts,
+authoritative exchange trades and reconciliation-record foundations without changing v1 paper
+tables. Financial values and external numeric IDs are stored as canonical TEXT.
+
+`DurableExchangeOrderLifecycle` depends only on gateway and persistence protocols. It commits
+PREPARED before any possible side effect and atomically commits the first attempt, SUBMITTING
+event/projection and session submitted counters before calling the fake gateway. Only PREPARED
+is locally eligible for first submission. SUBMITTING, ACKNOWLEDGED, PARTIALLY_FILLED and
+RECONCILIATION_REQUIRED require future M4.7 reconciliation after restart; terminal states never
+return to PREPARED. ACK does not create a trade or Portfolio Fill. Exchange trades, including
+base/BNB commission, are retained with PENDING settlement; Portfolio settlement is deliberately
+outside M4.6.
+
+Schema v2 and the lifecycle remain absent from runtime composition. Production polling stays
+paper-only, no private adapter is instantiated, and M4.6 performs no network request.
+
+The final review made preparation replay independent of the caller's later timestamp, restricts
+submission attempts to ordinal 1 at SQL level, makes exact ACK/status replay a no-op, validates
+malformed gateway observations as reconciliation-required, and revalidates root/event/order/
+session authority during local recovery. Deterministic failpoints prove rollback after each
+attempt/status write boundary. An exception after a successful SQLite COMMIT is deliberately not
+interpreted as rollback: a fresh read observes SUBMITTING or the committed terminal/result state,
+so blind resubmission remains impossible. Durable financial addition and trade summation are
+independent of the process-global Decimal context.
 
 ## 24. M4.2 decision
 

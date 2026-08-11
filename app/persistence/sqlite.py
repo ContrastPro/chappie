@@ -35,7 +35,7 @@ from app.persistence.models import (
     SQLitePersistenceConfig,
 )
 
-MIGRATION_NAME = "001_initial.sql"
+MIGRATION_NAMES = ("001_initial.sql", "002_exchange_execution.sql")
 
 
 def _state_from_payload(payload: str) -> PortfolioState:
@@ -445,11 +445,9 @@ class SQLiteTradingPersistence:
             raise PersistenceConnectionError("SQLite foreign keys were not enabled")
 
     @staticmethod
-    def _migration() -> tuple[str, str]:
+    def _migration(name: str = MIGRATION_NAMES[0]) -> tuple[str, str]:
         sql = (
-            resources.files("app.persistence.migrations")
-            .joinpath(MIGRATION_NAME)
-            .read_text(encoding="utf-8")
+            resources.files("app.persistence.migrations").joinpath(name).read_text(encoding="utf-8")
         )
         return sql, hashlib.sha256(sql.encode("utf-8")).hexdigest()
 
@@ -457,27 +455,37 @@ class SQLiteTradingPersistence:
         tables = self._connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='schema_migrations'"
         ).fetchone()
-        sql, checksum = self._migration()
+        migrations = []
+        for version, name in enumerate(MIGRATION_NAMES, start=1):
+            if version > self.config.expected_schema_version:
+                continue
+            loaded = self._migration() if version == 1 else self._migration(name)
+            migrations.append((version, name, *loaded))
+        rows: list[sqlite3.Row] = []
         if tables is not None:
             rows = self._connection.execute(
                 "SELECT version,name,checksum FROM schema_migrations ORDER BY version"
             ).fetchall()
             if rows and rows[-1][0] > self.config.expected_schema_version:
                 raise PersistenceSchemaError("database schema is newer than supported code")
+            expected = {version: (name, checksum) for version, name, _, checksum in migrations}
             for row in rows:
-                if row[0] == 1 and (row[1] != MIGRATION_NAME or row[2] != checksum):
+                contract = expected.get(row[0])
+                if contract is not None and (row[1], row[2]) != contract:
                     raise PersistenceMigrationError("migration checksum mismatch")
-            if rows:
-                return
         try:
-            escaped_name = MIGRATION_NAME.replace("'", "''")
-            script = (
-                "BEGIN IMMEDIATE;\n"
-                + sql
-                + "\nINSERT INTO schema_migrations(version,name,checksum,applied_at_ms) "
-                + f"VALUES(1,'{escaped_name}','{checksum}',0);\nCOMMIT;"
-            )
-            self._connection.executescript(script)
+            applied = {row[0] for row in rows}
+            for version, name, sql, checksum in migrations:
+                if version in applied:
+                    continue
+                escaped_name = name.replace("'", "''")
+                script = (
+                    "BEGIN IMMEDIATE;\n"
+                    + sql
+                    + "\nINSERT INTO schema_migrations(version,name,checksum,applied_at_ms) "
+                    + f"VALUES({version},'{escaped_name}','{checksum}',0);\nCOMMIT;"
+                )
+                self._connection.executescript(script)
         except sqlite3.Error as error:
             try:
                 self._connection.rollback()
