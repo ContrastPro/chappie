@@ -93,6 +93,12 @@ class PersistentExchangeReconciliationRun:
     reasons: tuple[str, ...]
     started_at_ms: int
     completed_at_ms: int
+    coverage_start_ms: int | None = None
+    coverage_end_ms: int | None = None
+    lower_bound_complete: bool = False
+    upper_bound_complete: bool = False
+    trade_scope: str = "BTCUSDT"
+    coverage_algorithm_version: str = "exchange-trade-coverage/v1"
     model_version: str = "exchange-reconciliation-run/v1"
 
     def __post_init__(self) -> None:
@@ -120,6 +126,19 @@ class PersistentExchangeReconciliationRun:
             raise PersistenceIntegrityError("reconciliation generation transition is invalid")
         if self.completed_at_ms < self.started_at_ms:
             raise PersistenceIntegrityError("reconciliation completion precedes start")
+        if (self.coverage_start_ms is None) != (self.coverage_end_ms is None):
+            raise PersistenceIntegrityError("reconciliation coverage bounds must be paired")
+        if self.coverage_start_ms is not None:
+            require_timestamp(self.coverage_start_ms, "coverage_start_ms")
+            require_timestamp(self.coverage_end_ms, "coverage_end_ms")
+            if self.coverage_end_ms < self.coverage_start_ms:
+                raise PersistenceIntegrityError("reconciliation coverage is reversed")
+        if not isinstance(self.lower_bound_complete, bool) or not isinstance(
+            self.upper_bound_complete, bool
+        ):
+            raise PersistenceIntegrityError("reconciliation coverage flags must be bool")
+        require_text(self.trade_scope, "trade_scope")
+        require_text(self.coverage_algorithm_version, "coverage_algorithm_version")
         if not isinstance(self.reasons, tuple) or any(
             not isinstance(value, str) or not value for value in self.reasons
         ):

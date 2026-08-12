@@ -103,6 +103,9 @@ class ExchangeSubmissionReason(StrEnum):
     RECONCILIATION_GENERATION_MISMATCH = "RECONCILIATION_GENERATION_MISMATCH"
     CONTROL_GENERATION_MISMATCH = "CONTROL_GENERATION_MISMATCH"
     PENDING_CONTROL_UNSAFE = "PENDING_CONTROL_UNSAFE"
+    CAPABILITY_ACCOUNT_MISMATCH = "CAPABILITY_ACCOUNT_MISMATCH"
+    CAPABILITY_SESSION_MISMATCH = "CAPABILITY_SESSION_MISMATCH"
+    CAPABILITY_ENVIRONMENT_MISMATCH = "CAPABILITY_ENVIRONMENT_MISMATCH"
 
 
 @dataclass(frozen=True, slots=True)
@@ -500,6 +503,18 @@ def evaluate_exchange_submission_safety(
     if not isinstance(capability, SubmissionCapability):
         reasons.append(ExchangeSubmissionReason.CAPABILITY_MISSING)
     else:
+        if capability.environment is not environment:
+            reasons.append(ExchangeSubmissionReason.CAPABILITY_ENVIRONMENT_MISMATCH)
+        if (
+            capability.account_fingerprint != "legacy-process-scope"
+            and capability.account_fingerprint != context.account.account_fingerprint
+        ):
+            reasons.append(ExchangeSubmissionReason.CAPABILITY_ACCOUNT_MISMATCH)
+        if (
+            capability.session_id != "legacy-session"
+            and capability.session_id != context.execution_session.session_id
+        ):
+            reasons.append(ExchangeSubmissionReason.CAPABILITY_SESSION_MISMATCH)
         if capability.reconciliation_generation != context.account.reconciliation_generation:
             reasons.append(ExchangeSubmissionReason.RECONCILIATION_GENERATION_MISMATCH)
         if (

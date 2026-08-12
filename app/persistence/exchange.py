@@ -98,7 +98,7 @@ def _command_payload(command: ExchangeCommand) -> str:
 
 
 class SQLiteExchangePersistence:
-    """Schema-v2/v3 exchange persistence; synchronous and single-writer."""
+    """Schema-v2+ exchange persistence; synchronous and single-writer."""
 
     def __init__(
         self,
@@ -108,8 +108,10 @@ class SQLiteExchangePersistence:
     ) -> None:
         if not isinstance(
             config, SQLitePersistenceConfig
-        ) or config.expected_schema_version not in {2, 3}:
-            raise PersistenceIntegrityError("exchange persistence requires schema version 2 or 3")
+        ) or config.expected_schema_version not in {2, 3, 4}:
+            raise PersistenceIntegrityError(
+                "exchange persistence requires schema version 2, 3, or 4"
+            )
         self._trading = SQLiteTradingPersistence(config)
         self._connection = self._trading._connection
         if failure_injector is not None and not callable(failure_injector):
@@ -358,7 +360,7 @@ class SQLiteExchangePersistence:
             if isinstance(error, PersistenceConflictError):
                 raise
             raise PersistenceTransactionError("order preparation failed") from error
-        except Exception:
+        except BaseException:
             connection.rollback()
             raise
 
@@ -427,7 +429,7 @@ class SQLiteExchangePersistence:
         except sqlite3.Error as error:
             connection.rollback()
             raise PersistenceTransactionError("submission attempt transaction failed") from error
-        except Exception:
+        except BaseException:
             connection.rollback()
             raise
 
@@ -492,7 +494,7 @@ class SQLiteExchangePersistence:
         except sqlite3.Error as error:
             connection.rollback()
             raise PersistenceTransactionError("order transition transaction failed") from error
-        except Exception:
+        except BaseException:
             connection.rollback()
             raise
 
@@ -747,10 +749,31 @@ class SQLiteExchangePersistence:
         self._trading._require_open()
         if not isinstance(record, PersistentExchangeReconciliationRun):
             raise PersistenceIntegrityError("invalid reconciliation run")
+        if (
+            self._trading.config.expected_schema_version >= 4
+            and record.outcome is ExchangeReconciliationStatus.SAFE
+            and (
+                record.coverage_start_ms is None
+                or not record.lower_bound_complete
+                or not record.upper_bound_complete
+            )
+        ):
+            raise PersistenceIntegrityError(
+                "schema-v4 SAFE reconciliation requires complete history coverage"
+            )
         state = self.read_reconciliation_state(record.execution_root_id)
-        result_payload = canonical_json(
-            {name: getattr(record, name) for name in record.__dataclass_fields__}
-        )
+        result_values = {name: getattr(record, name) for name in record.__dataclass_fields__}
+        if self._trading.config.expected_schema_version < 4:
+            for name in (
+                "coverage_start_ms",
+                "coverage_end_ms",
+                "lower_bound_complete",
+                "upper_bound_complete",
+                "trade_scope",
+                "coverage_algorithm_version",
+            ):
+                result_values.pop(name)
+        result_payload = canonical_json(result_values)
         result_digest = canonical_sha256(result_payload, algorithm_version=record.model_version)
         existing = self._connection.execute(
             "SELECT result_digest FROM exchange_reconciliation_runs WHERE reconciliation_id=?",
@@ -807,6 +830,44 @@ class SQLiteExchangePersistence:
                     result_digest,
                 ),
             )
+            if (
+                record.outcome is ExchangeReconciliationStatus.SAFE
+                and self._trading.config.expected_schema_version >= 4
+            ):
+                evidence = {
+                    "reconciliation_id": record.reconciliation_id,
+                    "execution_root_id": record.execution_root_id,
+                    "session_id": record.session_id,
+                    "account_fingerprint": record.account_fingerprint,
+                    "generation": record.generation_after,
+                    "coverage_start_ms": record.coverage_start_ms,
+                    "coverage_end_ms": record.coverage_end_ms,
+                    "lower_bound_complete": record.lower_bound_complete,
+                    "upper_bound_complete": record.upper_bound_complete,
+                    "trade_scope": record.trade_scope,
+                    "algorithm_version": record.coverage_algorithm_version,
+                }
+                evidence_payload = canonical_json(evidence)
+                connection.execute(
+                    "INSERT INTO exchange_reconciliation_coverage VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        record.reconciliation_id,
+                        record.execution_root_id,
+                        record.session_id,
+                        record.account_fingerprint,
+                        record.generation_after,
+                        record.coverage_start_ms,
+                        record.coverage_end_ms,
+                        int(record.lower_bound_complete),
+                        int(record.upper_bound_complete),
+                        record.trade_scope,
+                        record.coverage_algorithm_version,
+                        evidence_payload,
+                        canonical_sha256(
+                            evidence, algorithm_version=record.coverage_algorithm_version
+                        ),
+                    ),
+                )
             self._hit("reconciliation_after_run")
             cursor = connection.execute(
                 "UPDATE exchange_reconciliation_current SET status=?,generation=?,"
@@ -847,7 +908,7 @@ class SQLiteExchangePersistence:
         except sqlite3.Error as error:
             connection.rollback()
             raise PersistenceTransactionError("reconciliation transaction failed") from error
-        except Exception:
+        except BaseException:
             connection.rollback()
             raise
         return self.read_reconciliation_state(record.execution_root_id)
@@ -884,8 +945,16 @@ class SQLiteExchangePersistence:
         ).fetchone()
         if run is None:
             raise PersistenceIntegrityError("latest reconciliation run is missing")
+        coverage = (
+            self._connection.execute(
+                "SELECT * FROM exchange_reconciliation_coverage WHERE reconciliation_id=?",
+                (state_row["latest_reconciliation_id"],),
+            ).fetchone()
+            if self._trading.config.expected_schema_version >= 4
+            else None
+        )
         try:
-            result_values = {
+            column_values = {
                 "reconciliation_id": run["reconciliation_id"],
                 "execution_root_id": run["execution_root_id"],
                 "session_id": run["session_id"],
@@ -898,15 +967,31 @@ class SQLiteExchangePersistence:
                 "trades_persisted": run["trades_persisted"],
                 "open_orders_examined": run["open_orders_examined"],
                 "balances_examined": run["balances_examined"],
-                "reasons": tuple(json.loads(run["reasons_payload"])),
+                "reasons": json.loads(run["reasons_payload"]),
                 "started_at_ms": run["started_at_ms"],
                 "completed_at_ms": run["completed_at_ms"],
                 "model_version": run["model_version"],
             }
+            result_values = json.loads(run["result_payload"])
+            if any(result_values.get(name) != value for name, value in column_values.items()):
+                raise ValueError("reconciliation run columns conflict with payload")
             expected_payload = canonical_json(result_values)
             expected_digest = canonical_sha256(
                 expected_payload, algorithm_version=run["model_version"]
             )
+            if coverage is not None:
+                expected_coverage = {
+                    "coverage_start_ms": coverage["coverage_start_ms"],
+                    "coverage_end_ms": coverage["coverage_end_ms"],
+                    "lower_bound_complete": bool(coverage["lower_bound_complete"]),
+                    "upper_bound_complete": bool(coverage["upper_bound_complete"]),
+                    "trade_scope": coverage["trade_scope"],
+                    "coverage_algorithm_version": coverage["algorithm_version"],
+                }
+                if any(
+                    result_values.get(name) != value for name, value in expected_coverage.items()
+                ):
+                    raise ValueError("reconciliation coverage conflicts with run payload")
         except Exception as error:
             raise PersistenceIntegrityError("reconciliation run payload is invalid") from error
         if (

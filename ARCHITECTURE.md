@@ -743,3 +743,42 @@ Chappie
 - **Chappie Trader** отвечает за рыночные данные, стратегии, торговый риск, исполнение, позиции и аудит торговых решений.
 
 Будущая интеграция должна выполняться через явные application ports и события. Платформа сможет запрашивать состояние, аналитику и контролируемые операции, но не должна обходить внутренний Risk Manager или напрямую управлять биржевым адаптером.
+
+## M4.8 runtime Testnet integration
+
+M4.8 is completed; final safety review passed on 2026-08-12. Schema v4 adds an
+append-only exchange-trade settlement journal and a durable managed-Portfolio head. Startup is
+strictly ordered: local recovery, read-only exchange reconciliation, quote-fee settlement,
+current control reload, then readiness evaluation. Portfolio memory is synchronized only after
+the atomic SQLite commit. Any non-quote commission remains authoritative exchange truth but
+blocks settlement and new authority.
+
+Submission authority is opaque and process-local, and binds TESTNET environment, account,
+session, reconciliation generation and control generation. Any failed gate produces no
+capability. LIVE remains structurally rejected. M4.9 is next; Stage 4 remains in progress.
+
+The M4.8 completion pass removes the raw public `submit_prepared(key)` gateway path. A synchronous
+final gate rereads order, session, reconciliation/control generations, kill switch, settlement,
+pending orders/attempts, rules, Risk context and authorization freshness before issuing one
+opaque, single-use authorization for the exact durable/client identity. The coordinator delivers
+its existing snapshot and decision objects to the Testnet consumer after shadow/paper processing;
+it does not subscribe separately or reevaluate Strategy. Recovered PREPARED commands are never
+submitted by startup and require a fresh explicit gate invocation.
+Production Testnet composition is dormant in paper/shadow modes. In explicit Testnet mode the
+single shared coordinator delivers the same `MarketSnapshot` and `DecisionPipelineResult` objects
+to a concrete application service. That service performs financial Risk, exchange Risk, stable
+durable identity, PREPARED persistence and the final pre-submit gate without rerunning Strategy or
+Pipeline. Durable reconciliation coverage, not merely SAFE status, gates chronological settlement.
+The durable order store uniquely owns each decision-slot key: runtime UUID changes are ignored for
+economic identity, while corrected historical candle input fails closed as a slot conflict.
+
+Production startup distinguishes runtime availability from submission readiness. After successful
+local recovery, a blocked Testnet startup remains available as a recovery-only graph containing
+persistence, managed Portfolio, private read adapter, reconciler and settlement. It contains no
+submission capability, application service or Testnet consumer; Testnet-only startup therefore has
+no decision coordinator. A shadow consumer may continue on the shared coordinator without Testnet
+delivery. Kill-switch, reconciliation and non-terminal-order blockers are recoverable states;
+corrupt/incompatible durable state remains fatal. Recovery-only never promotes in-process: a fresh
+startup must rerun recovery, reconciliation, settlement and control checks before minting a new
+process-local capability. This contract is recorded by accepted ADR-063. M4.9 is next and not
+started; Stage 4 remains in progress.

@@ -170,6 +170,7 @@ class ExchangeReconciler:
         persisted_trades = 0
         observed_by_client: dict[str, ExchangeOrder] = {}
         failed = False
+        history = None
 
         for durable in candidates:
             local = durable.order
@@ -323,6 +324,13 @@ class ExchangeReconciler:
             tuple(value.value for value in ordered),
             started,
             completed,
+            None if history is None else history.coverage_start_ms,
+            None if history is None else history.coverage_end_ms,
+            history is not None
+            and history.complete
+            and history.coverage_start_ms <= bootstrap.root.created_at_ms,
+            history is not None and history.coverage_end_ms >= started,
+            bootstrap.root.stream_key.symbol,
         )
         durable_state = self._persistence.record_reconciliation_run(record)
         return ExchangeReconciliationResult(

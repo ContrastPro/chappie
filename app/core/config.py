@@ -3,7 +3,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -16,9 +16,9 @@ class Settings(BaseSettings):
     log_directory: Path = Path("logs")
     run_log_file: Path = Path("logs/latest_run.log")
 
-    trading_mode: Literal["paper"] = Field(
+    trading_mode: Literal["paper", "testnet", "live"] = Field(
         default="paper",
-        description="Stage 1 supports paper mode only",
+        description="Explicit execution mode; LIVE is structurally unavailable",
     )
 
     exchange_name: str = "binance"
@@ -67,8 +67,21 @@ class Settings(BaseSettings):
     risk_max_fee_rate: Decimal = Decimal("0.001")
     risk_max_slippage_bps: Decimal = Decimal(5)
 
-    binance_api_key: str | None = None
-    binance_secret_key: str | None = None
+    binance_testnet_api_key: SecretStr | None = None
+    binance_testnet_secret_key: SecretStr | None = None
+    binance_testnet_account_fingerprint: str | None = None
+    binance_testnet_base_url: str = "https://testnet.binance.vision"
+    testnet_execution_enabled: bool = False
+    testnet_execution_root_id: str = "testnet-btcusdt"
+    testnet_session_id: str = "testnet-btcusdt-session"
+    testnet_portfolio_id: str = "testnet-btcusdt-portfolio"
+    testnet_initial_quote_balance: Decimal = Decimal(10_000)
+    testnet_authorization_max_age_ms: int = Field(default=120_000, gt=0)
+    testnet_max_session_submitted_notional: Decimal = Decimal(10_000)
+    testnet_max_session_executed_turnover: Decimal = Decimal(20_000)
+    testnet_max_session_submission_count: int = Field(default=100, gt=0)
+    testnet_max_session_execution_failures: int = Field(default=5, gt=0)
+    testnet_max_drawdown: Decimal = Decimal("0.20")
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -79,10 +92,40 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_market_data_configuration(self) -> "Settings":
+        if self.trading_mode == "live":
+            raise ValueError("LIVE execution is not implemented")
+        if self.trading_mode == "testnet" and not self.testnet_execution_enabled:
+            raise ValueError("testnet mode requires testnet_execution_enabled")
+        if self.trading_mode == "testnet" and (
+            self.binance_testnet_api_key is None
+            or not self.binance_testnet_api_key.get_secret_value().strip()
+            or self.binance_testnet_secret_key is None
+            or not self.binance_testnet_secret_key.get_secret_value().strip()
+            or self.binance_testnet_account_fingerprint is None
+            or not self.binance_testnet_account_fingerprint.strip()
+        ):
+            raise ValueError("testnet mode requires dedicated credentials and account fingerprint")
+        if self.trading_mode == "testnet" and not self.persistence_enabled:
+            raise ValueError("testnet mode requires persistence_enabled")
+        if self.trading_mode == "testnet" and self.paper_trading_enabled:
+            raise ValueError("paper and testnet execution cannot be enabled together")
+        if self.trading_mode != "testnet" and self.testnet_execution_enabled:
+            raise ValueError("testnet_execution_enabled requires testnet mode")
+        if self.binance_testnet_base_url != "https://testnet.binance.vision":
+            raise ValueError("only the Binance Spot Testnet execution URL is allowed")
         if self.paper_trading_enabled and not self.persistence_enabled:
             raise ValueError("paper_trading_enabled requires persistence_enabled")
         if not self.paper_portfolio_id.strip():
             raise ValueError("paper_portfolio_id must be non-empty")
+        if any(
+            not value.strip()
+            for value in (
+                self.testnet_execution_root_id,
+                self.testnet_session_id,
+                self.testnet_portfolio_id,
+            )
+        ):
+            raise ValueError("Testnet durable lineage identifiers must be non-empty")
         if (
             not str(self.sqlite_path).strip()
             or self.sqlite_path.exists()
@@ -114,6 +157,10 @@ class Settings(BaseSettings):
             "risk_max_position_notional",
             "risk_max_fee_rate",
             "risk_max_slippage_bps",
+            "testnet_initial_quote_balance",
+            "testnet_max_session_submitted_notional",
+            "testnet_max_session_executed_turnover",
+            "testnet_max_drawdown",
         )
         if any(not getattr(self, name).is_finite() for name in decimal_fields):
             raise ValueError("paper financial settings must be finite")
@@ -126,6 +173,9 @@ class Settings(BaseSettings):
             "instrument_min_notional",
             "risk_max_order_notional",
             "risk_max_position_notional",
+            "testnet_initial_quote_balance",
+            "testnet_max_session_submitted_notional",
+            "testnet_max_session_executed_turnover",
         ):
             if getattr(self, name) <= 0:
                 raise ValueError(f"{name} must be positive")
@@ -139,6 +189,8 @@ class Settings(BaseSettings):
             raise ValueError("risk position cap must not be below order cap")
         if self.risk_max_slippage_bps < 0:
             raise ValueError("risk_max_slippage_bps must not be negative")
+        if not (Decimal(0) < self.testnet_max_drawdown < Decimal(1)):
+            raise ValueError("testnet_max_drawdown must be in (0, 1)")
         return self
 
     @field_validator(
@@ -153,6 +205,10 @@ class Settings(BaseSettings):
         "risk_max_position_notional",
         "risk_max_fee_rate",
         "risk_max_slippage_bps",
+        "testnet_initial_quote_balance",
+        "testnet_max_session_submitted_notional",
+        "testnet_max_session_executed_turnover",
+        "testnet_max_drawdown",
         mode="before",
     )
     @classmethod

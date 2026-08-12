@@ -574,3 +574,14 @@
 - **Решение:** PAPER, TESTNET и LIVE являются разными capabilities. Initial Stage 4 поддерживает только PAPER/TESTNET, использует dedicated testnet credentials и endpoint allowlist, а LIVE unconditionally fail-closed до отдельного live-readiness review/build capability.
 - **Причины:** Stage 4 testnet success не является разрешением live.
 - **Последствия:** Public-data configuration и environment label не дают execution authority; Testnet использует exact endpoint allowlist. Будущий LIVE потребует отдельные credentials, build capability, ceremony, ADR и review.
+
+## ADR-063: Blocked Testnet startup composes a recovery-only runtime
+
+- **Статус:** принято
+- **Дата принятия:** 2026-08-12 (M4.8 final acceptance review)
+- **Дата:** 2026-08-12
+- **Контекст:** Kill switch, reconciliation gap или non-terminal order должны запрещать новые submissions, но process exit одновременно отключает reconciliation, settlement и operational visibility.
+- **Решение:** Успешное local recovery создаёт доступный recovery-only Testnet graph с persistence, Portfolio, private read adapter, reconciliation и settlement. Пока readiness не `READY`, graph не содержит `SubmissionCapability`, application service или Testnet execution consumer. Testnet-only process не запускает decision coordinator; shadow может продолжить через общий coordinator без Testnet delivery. Переход в submit-capable `READY` требует нового process startup после изменения durable control/recovery state.
+- **Причины:** Submission safety и runtime availability являются независимыми состояниями; блокировка новых side effects не должна блокировать repair уже существующего durable/exchange state.
+- **Последствия:** `BLOCKED` startup является успешным degraded startup, а не исключением. Fatal local corruption, schema incompatibility и ownership failure по-прежнему завершают startup. In-process promotion запрещён, поэтому capability не может появиться из stale startup lineage.
+- **Evidence:** Full production `build_application()` process tests recreate every graph around one file-backed SQLite authority and fake remote state. They prove lost-ACK recovery, FILLED/PARTIALLY_FILLED exact-once settlement, five repeated NOT_FOUND restarts and ambiguity-persistence loss without replacement submission. M4.8 final acceptance review found no blocking recovery-only safety gap.

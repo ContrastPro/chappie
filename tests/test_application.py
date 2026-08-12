@@ -1,12 +1,29 @@
 import logging
+import socket
+import sqlite3
 from collections.abc import Callable
 from decimal import Decimal
+from types import SimpleNamespace
 
+import httpx
 import pytest
 
+import app.application as application_module
+import app.exchange_runtime.composition as production_composition
 from app.application import build_application, run_application
 from app.coordination import TradingCoordinationStateError
 from app.core.config import Settings
+from app.exchange_execution import KillSwitchState
+from app.exchange_runtime.composition import build_production_testnet_components
+from app.exchange_runtime.models import (
+    TestnetExecutionReadiness as ExecutionReadiness,
+)
+from app.exchange_runtime.models import (
+    TestnetReadinessReason as ReadinessReason,
+)
+from app.exchange_runtime.models import (
+    TestnetReadinessState as ReadinessState,
+)
 from app.market.cache import MarketStreamKey
 from app.market.events import (
     CandleClosed,
@@ -18,9 +35,20 @@ from app.market.models import Candle, CandleSnapshot, ServerTime, TickerPrice
 from app.market.polling import PollingLifecycleState
 from app.paper import PaperTradingCycleOutcome
 from app.paper.exceptions import PaperTradingConfigurationError
+from app.persistence import SQLiteExchangePersistence, SQLitePersistenceConfig
 from app.persistence.exceptions import PersistenceWriterConflictError
 
 OPEN_TIME_MS = 1_700_000_000_000
+
+
+@pytest.fixture(autouse=True)
+def forbid_external_network(monkeypatch: pytest.MonkeyPatch) -> None:
+    def blocked(*_args, **_kwargs):
+        raise AssertionError("application test attempted external network or DNS access")
+
+    monkeypatch.setattr(socket, "create_connection", blocked)
+    monkeypatch.setattr(socket, "getaddrinfo", blocked)
+    monkeypatch.setattr(socket.socket, "connect", blocked)
 
 
 def make_candle() -> Candle:
@@ -101,6 +129,380 @@ def make_settings(**overrides: object) -> Settings:
         values.setdefault("persistence_enabled", True)
         values.setdefault("sqlite_path", ":memory:")
     return Settings(_env_file=None, **values)
+
+
+def test_production_testnet_composition_recovers_blocked_then_wires_ready_coordinator(
+    tmp_path,
+) -> None:
+    path = tmp_path / "testnet.sqlite3"
+    settings = make_settings(
+        trading_mode="testnet",
+        testnet_execution_enabled=True,
+        persistence_enabled=True,
+        sqlite_path=path,
+        binance_testnet_api_key="API_KEY_SHOULD_NEVER_LEAK",
+        binance_testnet_secret_key="SECRET_SHOULD_NEVER_LEAK",
+        binance_testnet_account_fingerprint="account-production-testnet",
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payloads = {
+            "/api/v3/myTrades": [],
+            "/api/v3/openOrders": [],
+            "/api/v3/account": {
+                "balances": [
+                    {"asset": "BTC", "free": "0", "locked": "0"},
+                    {"asset": "USDT", "free": "10000", "locked": "0"},
+                ]
+            },
+            "/api/v3/exchangeInfo": {
+                "symbols": [
+                    {
+                        "symbol": "BTCUSDT",
+                        "filters": [
+                            {
+                                "filterType": "MARKET_LOT_SIZE",
+                                "minQty": "0.00001",
+                                "stepSize": "0.00001",
+                            },
+                            {
+                                "filterType": "MIN_NOTIONAL",
+                                "minNotional": "5",
+                                "applyToMarket": True,
+                            },
+                        ],
+                    }
+                ]
+            },
+        }
+        assert request.url.host == "testnet.binance.vision"
+        return httpx.Response(200, json=payloads[request.url.path])
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    recovery_only = build_production_testnet_components(
+        settings, now_ms=FixedClock().now_ms, http_client=client
+    )
+    assert recovery_only.runtime_availability == "RECOVERY_ONLY"
+    assert not recovery_only.submission_ready
+    assert recovery_only.readiness.state.value == "BLOCKED"
+    assert [reason.value for reason in recovery_only.readiness.reasons] == ["KILL_SWITCH_ACTIVE"]
+    assert recovery_only.readiness.capability is None
+    assert recovery_only.application_service is None
+    assert recovery_only.consumer is None
+    recovery_only.close()
+    blocked_provider = ApplicationProvider([make_candle()])
+    blocked_application = build_application(
+        settings,
+        provider=blocked_provider,
+        clock=FixedClock(),
+        sleeper=NoWaitSleeper(),
+        testnet_http_client=client,
+    )
+    assert blocked_application.testnet is not None
+    assert blocked_application.testnet.runtime_availability == "RECOVERY_ONLY"
+    assert blocked_application.coordinator is None
+    blocked_status = blocked_application.status_report()
+    assert blocked_status.testnet_runtime_availability == "RECOVERY_ONLY"
+    assert blocked_status.testnet_readiness == "BLOCKED"
+    assert blocked_status.testnet_readiness_reasons == ("KILL_SWITCH_ACTIVE",)
+    assert not blocked_status.testnet_submission_capability_present
+    assert blocked_status.testnet_reconciliation_status == "SAFE"
+    assert blocked_status.testnet_settlement_status == "SYNCHRONIZED"
+    assert blocked_status.testnet_non_terminal_order_count == 0
+    blocked_application.close()
+    assert blocked_provider.close_calls == 1
+    store = SQLiteExchangePersistence(SQLitePersistenceConfig(path, expected_schema_version=4))
+    store.set_kill_switch(
+        settings.testnet_execution_root_id,
+        state=KillSwitchState.CLEARED,
+        expected_generation=0,
+        reason_code="operator_test_enable",
+        audit_identifier="test",
+        occurred_at_ms=OPEN_TIME_MS,
+    )
+    store.close()
+    provider = ApplicationProvider([make_candle()])
+    application = build_application(
+        settings,
+        provider=provider,
+        clock=FixedClock(),
+        sleeper=NoWaitSleeper(),
+        testnet_http_client=client,
+    )
+    assert application.testnet is not None
+    assert application.testnet.runtime_availability == "READY"
+    assert application.testnet.submission_ready
+    assert application.testnet.readiness.state.value == "READY"
+    assert application.testnet.readiness.capability is not None
+    assert application.testnet.application_service is not None
+    assert application.testnet.consumer is not None
+    assert application.coordinator is not None
+    assert application.paper_engine is None
+    components = application.testnet
+    application.close()
+    components.close()
+    assert provider.close_calls == 1
+    assert not client.is_closed
+    client.close()
+
+
+def test_production_testnet_composition_rejects_non_testnet_mode() -> None:
+    with (
+        httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(500))) as client,
+        pytest.raises(ValueError, match="explicit Testnet mode"),
+    ):
+        build_production_testnet_components(
+            make_settings(), now_ms=FixedClock().now_ms, http_client=client
+        )
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        ReadinessReason.RECONCILIATION_UNSAFE,
+        ReadinessReason.UNRESOLVED_ORDER,
+        ReadinessReason.SETTLEMENT_PENDING,
+        ReadinessReason.SETTLEMENT_BLOCKED,
+        ReadinessReason.SESSION_INVALID,
+    ],
+)
+def test_production_application_keeps_recoverable_blockers_alive_without_submit_graph(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, reason: ReadinessReason
+) -> None:
+    settings = make_settings(
+        trading_mode="testnet",
+        testnet_execution_enabled=True,
+        persistence_enabled=True,
+        sqlite_path=tmp_path / f"blocked-{reason.value}.sqlite3",
+        binance_testnet_api_key="API_KEY_SHOULD_NEVER_LEAK",
+        binance_testnet_secret_key="SECRET_SHOULD_NEVER_LEAK",
+        binance_testnet_account_fingerprint="account-production-testnet",
+    )
+    monkeypatch.setattr(
+        production_composition.TestnetRuntimeStartup,
+        "start",
+        lambda _self, *, enabled: ExecutionReadiness(
+            ReadinessState.BLOCKED,
+            (reason,),
+            0,
+            0,
+            settings.testnet_session_id,
+        ),
+    )
+    client = httpx.Client(transport=httpx.MockTransport(lambda _: httpx.Response(500)))
+    provider = ApplicationProvider([make_candle()])
+    application = build_application(
+        settings,
+        provider=provider,
+        clock=FixedClock(),
+        sleeper=NoWaitSleeper(),
+        testnet_http_client=client,
+    )
+    assert application.testnet is not None
+    assert application.testnet.runtime_availability == "RECOVERY_ONLY"
+    assert application.testnet.application_service is None
+    assert application.testnet.consumer is None
+    assert application.coordinator is None
+    assert application.status_report().testnet_readiness_reasons == (reason.value,)
+    application.close()
+    assert provider.close_calls == 1
+    assert not client.is_closed
+    client.close()
+
+
+def test_owned_persistence_closes_when_private_http_client_construction_fails(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    api_key = "API_KEY_SHOULD_NEVER_LEAK"
+    secret = "SECRET_SHOULD_NEVER_LEAK"
+    settings = make_settings(
+        trading_mode="testnet",
+        testnet_execution_enabled=True,
+        persistence_enabled=True,
+        sqlite_path=tmp_path / "client-construction.sqlite3",
+        binance_testnet_api_key=api_key,
+        binance_testnet_secret_key=secret,
+        binance_testnet_account_fingerprint="account-production-testnet",
+    )
+    owned = SQLiteExchangePersistence(
+        SQLitePersistenceConfig(settings.sqlite_path, expected_schema_version=4)
+    )
+    monkeypatch.setattr(production_composition, "SQLiteExchangePersistence", lambda *_: owned)
+
+    def fail_client(*_args, **_kwargs):
+        raise RuntimeError("injected client construction failure")
+
+    monkeypatch.setattr(production_composition.httpx, "Client", fail_client)
+    with pytest.raises(RuntimeError, match="client construction") as captured:
+        build_production_testnet_components(settings, now_ms=FixedClock().now_ms)
+    rendered = repr(captured.value)
+    assert api_key not in rendered
+    assert secret not in rendered
+    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+        owned._connection.execute("SELECT 1")
+
+
+def test_fatal_runtime_startup_closes_all_owned_testnet_resources(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "fatal-startup.sqlite3"
+    settings = make_settings(
+        trading_mode="testnet",
+        testnet_execution_enabled=True,
+        persistence_enabled=True,
+        sqlite_path=path,
+        binance_testnet_api_key="API_KEY_SHOULD_NEVER_LEAK",
+        binance_testnet_secret_key="SECRET_SHOULD_NEVER_LEAK",
+        binance_testnet_account_fingerprint="account-production-testnet",
+    )
+    closed_clients: list[httpx.Client] = []
+    close_client = httpx.Client.close
+
+    def record_close(client: httpx.Client) -> None:
+        closed_clients.append(client)
+        close_client(client)
+
+    monkeypatch.setattr(httpx.Client, "close", record_close)
+    monkeypatch.setattr(
+        production_composition.TestnetRuntimeStartup,
+        "start",
+        lambda _self, *, enabled: (_ for _ in ()).throw(
+            RuntimeError("fatal durable recovery failure")
+        ),
+    )
+    with pytest.raises(RuntimeError, match="fatal durable recovery"):
+        build_production_testnet_components(settings, now_ms=FixedClock().now_ms)
+    assert len(closed_clients) == 1
+    assert closed_clients[0].is_closed
+    reopened = SQLiteExchangePersistence(SQLitePersistenceConfig(path, expected_schema_version=4))
+    reopened.close()
+
+
+def test_production_startup_auth_failure_enters_recovery_only_without_secret_leak(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    api_key = "API_KEY_SHOULD_NEVER_LEAK"
+    secret = "SECRET_SHOULD_NEVER_LEAK"
+    path = tmp_path / "startup-auth-failure.sqlite3"
+    settings = make_settings(
+        trading_mode="testnet",
+        testnet_execution_enabled=True,
+        persistence_enabled=True,
+        sqlite_path=path,
+        binance_testnet_api_key=api_key,
+        binance_testnet_secret_key=secret,
+        binance_testnet_account_fingerprint="account-production-testnet",
+    )
+
+    def fail_auth(_request: httpx.Request) -> httpx.Response:
+        raise RuntimeError("injected authentication/reconciliation failure")
+
+    client = httpx.Client(transport=httpx.MockTransport(fail_auth))
+    monkeypatch.setattr(
+        production_composition,
+        "httpx",
+        SimpleNamespace(Client=lambda **_kwargs: client),
+    )
+    components = build_production_testnet_components(settings, now_ms=FixedClock().now_ms)
+    rendered = repr(components.readiness)
+    assert api_key not in rendered
+    assert secret not in rendered
+    assert "signature=" not in rendered.lower()
+    assert components.runtime_availability == "RECOVERY_ONLY"
+    assert components.readiness.capability is None
+    assert components.application_service is None
+    assert components.consumer is None
+    components.close()
+    assert client.is_closed
+    reopened = SQLiteExchangePersistence(SQLitePersistenceConfig(path, expected_schema_version=4))
+    reopened.close()
+
+
+def test_full_testnet_builder_cleans_components_when_coordinator_start_fails(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "coordinator-start.sqlite3"
+    settings = make_settings(
+        trading_mode="testnet",
+        testnet_execution_enabled=True,
+        persistence_enabled=True,
+        sqlite_path=path,
+        binance_testnet_api_key="API_KEY_SHOULD_NEVER_LEAK",
+        binance_testnet_secret_key="SECRET_SHOULD_NEVER_LEAK",
+        binance_testnet_account_fingerprint="account-production-testnet",
+    )
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payloads = {
+            "/api/v3/myTrades": [],
+            "/api/v3/openOrders": [],
+            "/api/v3/account": {
+                "balances": [
+                    {"asset": "BTC", "free": "0", "locked": "0"},
+                    {"asset": "USDT", "free": "10000", "locked": "0"},
+                ]
+            },
+            "/api/v3/exchangeInfo": {
+                "symbols": [
+                    {
+                        "symbol": "BTCUSDT",
+                        "filters": [
+                            {
+                                "filterType": "MARKET_LOT_SIZE",
+                                "minQty": "0.00001",
+                                "stepSize": "0.00001",
+                            },
+                            {
+                                "filterType": "MIN_NOTIONAL",
+                                "minNotional": "5",
+                                "applyToMarket": True,
+                            },
+                        ],
+                    }
+                ]
+            },
+        }
+        return httpx.Response(200, json=payloads[request.url.path])
+
+    bootstrap_client = httpx.Client(transport=httpx.MockTransport(handler))
+    recovery_only = build_production_testnet_components(
+        settings, now_ms=FixedClock().now_ms, http_client=bootstrap_client
+    )
+    assert recovery_only.runtime_availability == "RECOVERY_ONLY"
+    recovery_only.close()
+    store = SQLiteExchangePersistence(SQLitePersistenceConfig(path, expected_schema_version=4))
+    store.set_kill_switch(
+        settings.testnet_execution_root_id,
+        state=KillSwitchState.CLEARED,
+        expected_generation=0,
+        reason_code="operator_test_enable",
+        audit_identifier="test",
+        occurred_at_ms=OPEN_TIME_MS,
+    )
+    store.close()
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    provider = ApplicationProvider([make_candle()])
+
+    def fail_start(self, dispatcher) -> None:
+        del self, dispatcher
+        raise RuntimeError("injected coordinator start failure")
+
+    monkeypatch.setattr(application_module.TradingDecisionCoordinator, "start", fail_start)
+    with pytest.raises(RuntimeError, match="coordinator start"):
+        build_application(
+            settings,
+            provider=provider,
+            clock=FixedClock(),
+            sleeper=NoWaitSleeper(),
+            testnet_http_client=client,
+        )
+    assert provider.close_calls == 1
+    assert not client.is_closed
+    reopened = SQLiteExchangePersistence(SQLitePersistenceConfig(path, expected_schema_version=4))
+    reopened.close()
+    client.close()
+    bootstrap_client.close()
 
 
 def test_composition_runs_finite_smoke_and_closes_provider_once() -> None:

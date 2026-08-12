@@ -39,6 +39,7 @@ MIGRATION_NAMES = (
     "001_initial.sql",
     "002_exchange_execution.sql",
     "003_exchange_reconciliation.sql",
+    "004_exchange_settlement.sql",
 )
 
 
@@ -93,6 +94,11 @@ def _state_from_payload(payload: str) -> PortfolioState:
         raise
     except Exception as error:
         raise PersistenceIntegrityError("invalid persisted Portfolio state") from error
+
+
+def deserialize_portfolio_state(payload: str) -> PortfolioState:
+    """Decode a canonical durable Portfolio state for sibling persistence adapters."""
+    return _state_from_payload(payload)
 
 
 class SQLitePaperCycleTransaction:

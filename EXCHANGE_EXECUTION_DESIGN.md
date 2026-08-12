@@ -794,6 +794,24 @@ server time, and a bounded `recvWindow` (Binance maximum 60,000 ms). Rate-limit 
 responses honor `Retry-After` and cannot be classified as order rejection without
 authoritative order evidence.
 
+Production composition creates that private client only in explicit Testnet mode. The composition
+root owns its SQLite adapter, private HTTP client, Binance adapter, reconciliation, settlement,
+authoritative application service and consumer; injected resources remain caller-owned. Startup
+fails closed unless reconciliation, settlement and the operator-controlled kill switch produce a
+typed READY result before capability minting and coordinator subscription.
+
+Schema v4 also persists append-only reconciliation coverage evidence. Settlement requires a
+complete lower bound at the execution-root creation time and a complete upper bound through the
+reconciliation start, with the evidence payload/digest, root, account, session and generation all
+matching. A SAFE label by itself is not settlement authority. Trade order is deterministic by
+`(traded_at_ms, exchange_trade_id)`; incomplete chronology stays PENDING.
+
+The safety-matrix pass additionally enforces one durable command per decision-slot key, so a
+corrected historical fingerprint conflicts instead of creating a second order. Identical economic
+decisions return the existing command/client ID before exchange Risk or submission. Financial Risk
+uses a non-mutating current-market valuation preview; durable Portfolio authority remains the last
+settled exchange state until an atomic settlement commits.
+
 ### M4.5 implementation status
 
 Status: **completed; final adapter safety review passed** (2026-08-11). Official Spot REST
@@ -897,3 +915,50 @@ assets only: it does not prove Portfolio equality or explain locked funds.
 M4.1 architecture design and M4.2 final safety review are complete. The design is
 approved for M4.3 domain/port implementation only. This review implemented no code,
 migration, credential, private API call, Testnet order or LIVE capability.
+
+### M4.8 implementation status
+
+Status: **completed; final safety review passed** (2026-08-12). Migration 004
+adds a durable exchange Portfolio root/current projection and append-only per-trade settlement
+records. USDT-fee trades settle exactly once through Portfolio preview, atomic journal/current/
+session-turnover commit, then memory synchronization. Other fee assets fail closed without
+inventing conversion. Runtime startup executes recovery -> reconciliation -> settlement ->
+readiness and issues authority only after re-reading current durable generations. The authority
+is TESTNET-only and binds account and session lineage. LIVE, cancellation and authenticated smoke
+remain absent; M4.9 is next and Stage 4 remains in progress.
+
+The completion pass makes the network boundary accept only a single-use `PreSubmitAuthorization`
+minted by `TestnetPreSubmitGate`. The gate performs a final durable reread and rejects stale Risk,
+capability, generations, controls, settlement, rules, session, pending exposure or order identity.
+Startup readiness is deliberately insufficient by itself. Settlement recovery now verifies the
+trade/settlement digest and identity chain, consecutive Portfolio versions/current head and exact
+session turnover before synchronizing memory. These additions passed the M4.8 final acceptance
+review.
+
+Settlement rows are now bound by foreign key to the exact durable SAFE reconciliation run and
+generation that established complete account trade-history coverage. A REQUIRED/FAILED/CONFLICT
+generation leaves all newly discovered trades PENDING; deterministic timestamp/trade-ID ordering
+is applied only after that coverage barrier is durable.
+
+Production composition treats runtime availability and submission readiness as separate axes.
+Once local durable authority is valid, an ordinary readiness blocker produces `RECOVERY_ONLY`:
+
+```text
+TESTNET runtime
+├── RECOVERY_ONLY: persistence + reconciliation + settlement + status; no capability/submit path
+└── READY:         fresh process-local capability + application service + Testnet consumer
+```
+
+Kill-switch, unresolved/non-terminal order, incomplete reconciliation and settlement blockers do
+not tear down the recovery graph. Corruption, incompatible schema/root identity, writer conflict,
+invalid Testnet configuration and LIVE remain fatal. A Testnet-only recovery graph omits the
+decision coordinator, so executable intents cannot accumulate PREPARED orders. There is no
+same-process promotion in M4.8: resolving the blocker requires a fresh startup, which repeats the
+ordered recovery checks and may mint a new generation-bound capability. ADR-063 is accepted;
+M4.9 is next and not started, while Stage 4 remains in progress.
+
+Full-graph acceptance uses fresh `build_application()` objects for every simulated process while
+sharing only the SQLite file and deterministic fake exchange. The suite proves lost ACK A/B/C,
+FILLED and PARTIALLY_FILLED settlement recovery, five consecutive ambiguous NOT_FOUND restarts,
+and a lost ambiguity-status persistence result. In every case the durable command, client ID,
+attempt and submission counters remain singular and no startup performs a replacement submit.

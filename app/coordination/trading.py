@@ -21,6 +21,7 @@ from app.coordination.models import (
     TradingDecisionCoordinatorLifecycle,
     TradingDecisionCoordinatorStatus,
 )
+from app.exchange_runtime.consumer import TestnetExecutionConsumer
 from app.market.events import CandleClosed, MarketEventDispatcher, SubscriptionToken
 from app.paper.models import PaperTradingEngineHealth
 from app.shadow.consumer import ShadowDecisionConsumer, validate_event_cache_consistency
@@ -45,6 +46,7 @@ class TradingDecisionCoordinator:
         *,
         shadow_consumer: ShadowDecisionConsumer | None = None,
         paper_engine: object | None = None,
+        testnet_consumer: TestnetExecutionConsumer | None = None,
         history_limit: int = 1000,
         dedup_capacity: int = 10000,
         monotonic_clock: Callable[[], float] = time.monotonic,
@@ -61,7 +63,7 @@ class TradingDecisionCoordinator:
             raise TradingCoordinationConfigurationError("coordination_id_factory is invalid")
         if not hasattr(snapshot_factory, "create") or not hasattr(decision_pipeline, "evaluate"):
             raise TradingCoordinationConfigurationError("snapshot/pipeline dependency is invalid")
-        if shadow_consumer is None and paper_engine is None:
+        if shadow_consumer is None and paper_engine is None and testnet_consumer is None:
             raise TradingCoordinationConfigurationError("at least one consumer is required")
         if shadow_consumer is not None and not hasattr(shadow_consumer, "consume"):
             raise TradingCoordinationConfigurationError("shadow_consumer is invalid")
@@ -69,6 +71,10 @@ class TradingDecisionCoordinator:
             not hasattr(paper_engine, "process") or not hasattr(paper_engine, "status")
         ):
             raise TradingCoordinationConfigurationError("paper_engine is invalid")
+        if testnet_consumer is not None and not isinstance(
+            testnet_consumer, TestnetExecutionConsumer
+        ):
+            raise TradingCoordinationConfigurationError("testnet_consumer is invalid")
         if not callable(monotonic_clock):
             raise TradingCoordinationConfigurationError("monotonic_clock must be callable")
         self._cache = cache_reader
@@ -78,6 +84,7 @@ class TradingDecisionCoordinator:
         self._coordination_ids = coordination_id_factory
         self._shadow = shadow_consumer
         self._paper = paper_engine
+        self._testnet = testnet_consumer
         self._history_limit = history_limit
         self._dedup_capacity = dedup_capacity
         self._clock = monotonic_clock
@@ -288,6 +295,15 @@ class TradingDecisionCoordinator:
                     paper_status = DecisionConsumerStatus.DELIVERED
                     stages.append(TradingDecisionCoordinationStage.PAPER_DELIVERED)
             paper_duration = _duration(self._clock, started)
+        if self._testnet is not None:
+            try:
+                self._testnet.consume(decision, snapshot)
+            except Exception as error:  # noqa: BLE001 - isolate private execution consumer
+                self._logger.error(
+                    "Testnet consumer failed source_event_id=%s category=%s",
+                    event.event_id,
+                    error.__class__.__name__,
+                )
         stages.append(TradingDecisionCoordinationStage.COMPLETED)
         result = TradingDecisionCoordinationResult(
             coordination_id=coordination_id,

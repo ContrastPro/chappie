@@ -109,6 +109,13 @@ class Portfolio:
     def snapshot(self) -> PortfolioSnapshot:
         return replace(self._snapshot)
 
+    def synchronize_recovered_state(self, state: PortfolioSnapshot) -> PortfolioSnapshot:
+        """Replace memory with an already validated durable snapshot during startup."""
+        restored = type(self).restore(self._config, state)
+        self._snapshot = restored._snapshot
+        self._applied_fills = restored._applied_fills
+        return self.snapshot
+
     @staticmethod
     def _fill_context(fill: Fill, reason: str, **values: object) -> str:
         details = "; ".join(f"{name}={value}" for name, value in values.items())

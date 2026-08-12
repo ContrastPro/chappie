@@ -356,7 +356,7 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 
 ## Этап 4. Risk hardening и биржевое execution
 
-Статус: **in progress — M4.7 completed; final reconciliation safety review passed; M4.8 next**.
+Статус: **in progress — M4.8 completed; final safety review passed; M4.9 next**.
 
 ### Цель
 
@@ -452,12 +452,27 @@ recovery и изолированным testnet execution до отдельног
 
 #### M4.8 Runtime Testnet Integration
 
-Статус: **next**.
+Статус: **completed; final safety review passed** (2026-08-12).
 
-- Подключить TESTNET consumer после recovery/reconciliation gate; сохранить shared
-  decision path и независимый shadow mode.
+- Добавлены schema v4, exact-once settlement exchange trades в managed Portfolio, ordered
+  recovery/reconciliation/settlement startup и fail-closed readiness capability, привязанная к
+  account/session/reconciliation/control lineage.
+- TESTNET включается только явной конфигурацией и allowlisted endpoint; LIVE отвергается.
+- Automated validation использует только fake readers/gateways и локальную SQLite, без private
+  network calls или реальных orders. Completion pass добавил opaque single-use final
+  authorization, durable TOCTOU revalidation, shared Testnet consumer delivery и полную
+  settlement recovery lineage validation; final acceptance review passed.
+- Production composition поддерживает recovery-only startup: persistence/reconciliation/settlement
+  остаются доступны при `BLOCKED`, но capability, application service, Testnet consumer и
+  Testnet-only coordinator отсутствуют. Fresh restart является единственным переходом в `READY`.
+  ADR-063 принят по результатам M4.8 final acceptance review.
+- Full-graph recovery evidence recreates production `build_application()` graphs across lost ACK,
+  FILLED/PARTIALLY_FILLED settlement, repeated NOT_FOUND and lost ambiguity-persistence cases;
+  remote submissions and durable attempts remain exactly one.
 
 #### M4.9 Crash/Restart/Duplicate-Order Safety Review
+
+Статус: **next**.
 
 - Проверить ambiguous submit, partial fills, cancellations, writer exclusion, lost
   acknowledgements и exact-once Portfolio application per exchange trade.
@@ -483,6 +498,9 @@ recovery и изолированным testnet execution до отдельног
 - Реализованы persistence и audit trail для decisions, orders и fills.
 - Реализовано восстановление и reconciliation состояния.
 - Подключён Binance testnet adapter.
+- M4.8 completed; final safety review passed. Production Testnet composition,
+  authoritative execution flow and durable reconciliation coverage horizon are implemented.
+  M4.9 is not started; Stage 4 remains in progress.
 - Проведён paper/shadow run, достаточный для сбора требуемой выборки наблюдений.
 - Собрано достаточное для допуска количество наблюдений по утверждённым критериям качества.
 

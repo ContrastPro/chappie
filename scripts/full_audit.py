@@ -25,6 +25,8 @@ import app.agent
 import app.core
 import app.coordination
 import app.execution
+import app.exchange_execution
+import app.exchange_runtime
 import app.paper
 import app.persistence
 import app.portfolio
@@ -100,13 +102,15 @@ CHECKED_COMPONENTS = (
     "durable PaperTradingEngine and atomic committed Portfolio synchronization",
     "SQLite journal, checkpoints, recovery and writer exclusion",
     "durable read-only exchange reconciliation and schema-v3 generation safety",
+    "schema-v4 exchange settlement and fail-closed Testnet runtime readiness",
     "application startup recovery and shutdown resource lifecycle",
 )
 
 KNOWN_GAPS = (
     "No configured static type checker (mypy/pyright); add in a separate milestone.",
     "pytest-random-order is not installed, so randomized-order execution was not run.",
-    "No durable OHLCV store; exchange reconciliation runtime wiring is deferred to M4.8.",
+    "No durable OHLCV store; this remains outside the M4.8 exchange runtime boundary.",
+    "Authenticated Testnet smoke is deliberately deferred to M4.10 and requires approval.",
 )
 
 

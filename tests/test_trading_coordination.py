@@ -17,6 +17,7 @@ from app.coordination import (
     TradingDecisionCoordinator,
 )
 from app.coordination.factories import UUIDCoordinationIdFactory
+from app.exchange_runtime import TestnetExecutionConsumer as ExecutionConsumer
 from app.market.cache import MarketStreamKey
 from app.market.events import (
     CandleClosed,
@@ -221,7 +222,7 @@ def event(event_id: str = "event-1", offset: int = 0) -> CandleClosed:
     )
 
 
-def coordinator(*, shadow=None, paper=None, candles=None, capacity=10):
+def coordinator(*, shadow=None, paper=None, testnet=None, candles=None, capacity=10):
     cache = CacheSpy(candles or (candle(),))
     snapshots = SnapshotFactorySpy()
     pipeline = PipelineSpy()
@@ -233,6 +234,7 @@ def coordinator(*, shadow=None, paper=None, candles=None, capacity=10):
         FixedId("coordination"),
         shadow_consumer=shadow,
         paper_engine=paper,
+        testnet_consumer=testnet,
         dedup_capacity=capacity,
     )
     return instance, cache, snapshots, pipeline
@@ -276,6 +278,23 @@ def test_shared_identity_pipeline_once_and_duplicate_same_result() -> None:
     assert shadow.calls[0][2].signal is paper.calls[0][1].signal
     assert first.shadow_status is first.paper_status is DecisionConsumerStatus.DELIVERED
     assert instance.status.ignored_duplicates == 1
+
+
+def test_shadow_and_testnet_receive_same_shared_objects_without_reevaluation() -> None:
+    shadow = ShadowSpy()
+    calls = []
+    testnet = ExecutionConsumer(lambda decision, snapshot: calls.append((decision, snapshot)))
+    items = candles_with_closes([3, 2, 1, 4])
+    source_event = replace(
+        event(offset=len(items) - 1), candle=CandleSnapshot.from_candle(items[-1])
+    )
+    instance, _, _, pipeline = coordinator(shadow=shadow, testnet=testnet, candles=items)
+    instance.start(MarketEventDispatcher())
+    result = instance.process_event(source_event)
+    assert pipeline.calls == 1
+    assert shadow.calls[0][1] is calls[0][1] is result.market_snapshot
+    assert shadow.calls[0][2] is calls[0][0] is result.decision_result
+    assert testnet.status.executed == 1
 
 
 @pytest.mark.parametrize(

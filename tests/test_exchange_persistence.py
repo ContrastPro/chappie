@@ -24,7 +24,11 @@ from app.exchange_execution import (
     TransportFailureCategory,
     TransportOutcomeKind,
 )
-from app.exchange_execution.exceptions import ExchangeOrderStateError
+from app.exchange_execution.exceptions import (
+    ExchangeOrderStateError,
+    ExchangeSubmissionSafetyError,
+)
+from app.exchange_execution.ports import PreSubmitAuthorization
 from app.market.models import MarketStreamKey
 from app.persistence import (
     ExchangeControlState,
@@ -95,6 +99,20 @@ def prepare(store: SQLiteExchangePersistence):
         command=command(),
         client_order_id=CLIENT_ID,
         occurred_at_ms=100,
+    )
+
+
+def authorization() -> PreSubmitAuthorization:
+    return PreSubmitAuthorization._issue(
+        execution_root_id=ROOT_ID,
+        session_id=SESSION_ID,
+        account_fingerprint="account-1",
+        durable_command_key=COMMAND_KEY,
+        client_order_id=CLIENT_ID,
+        risk_decision_id="risk-test",
+        rules_fingerprint="e" * 64,
+        reconciliation_generation=0,
+        control_generation=0,
     )
 
 
@@ -313,10 +331,11 @@ def test_atomic_attempt_and_outcome_persistence(tmp_path: Path, outcome, expecte
     lifecycle = DurableExchangeOrderLifecycle(
         store, gateway, timestamp_provider=iter(range(200, 210)).__next__
     )
-    result = lifecycle.submit_prepared(COMMAND_KEY)
+    result = lifecycle._submit_authorized(authorization())
     assert result.order.status is expected
     assert gateway.calls == 1
-    assert lifecycle.submit_prepared(COMMAND_KEY) == result
+    with pytest.raises(ExchangeSubmissionSafetyError):
+        lifecycle._submit_authorized(authorization())
     assert gateway.calls == 1
     session = store.load_session(SESSION_ID)
     assert session.submission_count == 1
@@ -355,7 +374,7 @@ def test_crash_after_submitting_or_ack_before_persist_never_resubmits(tmp_path: 
     gateway = AcceptedThenCrashed()
     lifecycle = DurableExchangeOrderLifecycle(store, gateway, timestamp_provider=lambda: 200)
     with pytest.raises(RuntimeError, match="process died"):
-        lifecycle.submit_prepared(COMMAND_KEY)
+        lifecycle._submit_authorized(authorization())
     assert gateway.calls == 1
     assert store.load_order(COMMAND_KEY).order.status is ExchangeOrderStatus.SUBMITTING
     store.close()
@@ -365,10 +384,8 @@ def test_crash_after_submitting_or_ack_before_persist_never_resubmits(tmp_path: 
             restarted = DurableExchangeOrderLifecycle(
                 reopened, gateway, timestamp_provider=lambda: 300
             )
-            assert (
-                restarted.submit_prepared(COMMAND_KEY).order.status
-                is ExchangeOrderStatus.SUBMITTING
-            )
+            with pytest.raises(ExchangeSubmissionSafetyError):
+                restarted._submit_authorized(authorization())
             assert gateway.calls == 1
             assert restarted.inspect_local_recovery().reconciliation_required
         finally:
@@ -726,7 +743,7 @@ def test_ambiguous_and_rejection_replays_never_repeat_attempt_or_counter(
     prepare(store)
     gateway = FakeGateway(outcome)
     lifecycle = DurableExchangeOrderLifecycle(store, gateway, timestamp_provider=lambda: 200)
-    result = lifecycle.submit_prepared(COMMAND_KEY)
+    lifecycle._submit_authorized(authorization())
     expected_failures = store.load_session(SESSION_ID).execution_failure_count
     expected_events = store._connection.execute(
         "SELECT count(*) FROM exchange_order_events"
@@ -738,7 +755,8 @@ def test_ambiguous_and_rejection_replays_never_repeat_attempt_or_counter(
             restarted = DurableExchangeOrderLifecycle(
                 reopened, gateway, timestamp_provider=lambda: 300
             )
-            assert restarted.submit_prepared(COMMAND_KEY) == result
+            with pytest.raises(ExchangeSubmissionSafetyError):
+                restarted._submit_authorized(authorization())
             assert reopened.load_session(SESSION_ID).execution_failure_count == expected_failures
             assert (
                 reopened._connection.execute(
@@ -772,7 +790,7 @@ def test_ack_returned_then_local_commit_crash_has_one_submission_across_restarts
     gateway = FakeGateway()
     lifecycle = DurableExchangeOrderLifecycle(store, gateway, timestamp_provider=lambda: 200)
     with pytest.raises(RuntimeError, match="ACK commit"):
-        lifecycle.submit_prepared(COMMAND_KEY)
+        lifecycle._submit_authorized(authorization())
     store.close()
     assert gateway.calls == 1
     for _ in range(5):
@@ -781,7 +799,9 @@ def test_ack_returned_then_local_commit_crash_has_one_submission_across_restarts
             restarted = DurableExchangeOrderLifecycle(
                 reopened, gateway, timestamp_provider=lambda: 300
             )
-            order = restarted.submit_prepared(COMMAND_KEY)
+            with pytest.raises(ExchangeSubmissionSafetyError):
+                restarted._submit_authorized(authorization())
+            order = reopened.load_order(COMMAND_KEY)
             assert order.order.status is ExchangeOrderStatus.SUBMITTING
             assert order.order.client_order_id == CLIENT_ID
             assert reopened.list_orders_requiring_reconciliation() == (order,)
@@ -802,11 +822,11 @@ def test_prepared_restart_allows_exactly_one_first_submission(tmp_path: Path) ->
         assert reopened.list_submit_eligible() == (prepared,)
         lifecycle = DurableExchangeOrderLifecycle(reopened, gateway, timestamp_provider=lambda: 200)
         assert (
-            lifecycle.submit_prepared(COMMAND_KEY).order.status is ExchangeOrderStatus.ACKNOWLEDGED
+            lifecycle._submit_authorized(authorization()).order.status
+            is ExchangeOrderStatus.ACKNOWLEDGED
         )
-        assert (
-            lifecycle.submit_prepared(COMMAND_KEY).order.status is ExchangeOrderStatus.ACKNOWLEDGED
-        )
+        with pytest.raises(ExchangeSubmissionSafetyError):
+            lifecycle._submit_authorized(authorization())
     finally:
         reopened.close()
     assert gateway.calls == 1
@@ -941,7 +961,7 @@ def test_malformed_gateway_outcomes_require_reconciliation(
     prepare(store)
     result = DurableExchangeOrderLifecycle(
         store, Gateway(), timestamp_provider=lambda: 200
-    ).submit_prepared(COMMAND_KEY)
+    )._submit_authorized(authorization())
     assert result.order.status is ExchangeOrderStatus.RECONCILIATION_REQUIRED
     assert store.load_session(SESSION_ID).execution_failure_count == 1
     store.close()

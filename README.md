@@ -7,8 +7,9 @@ events. The Stage 2 domain layer contains the deterministic EMA baseline, Intent
 Planner and Trading Decision Pipeline. An optional shadow application layer can
 evaluate that pipeline on confirmed `CandleClosed` events without placing orders.
 
-The current version does not contain order execution or live trading. It does not
-promise or guarantee income.
+The default application remains paper/public-data only. Stage 4 contains an isolated,
+disabled-by-default Binance Spot Testnet execution boundary; LIVE trading is structurally
+rejected. The project does not promise or guarantee income.
 
 ## Installation
 
@@ -28,7 +29,18 @@ Copy the example configuration and review its values:
 Copy-Item .env.example .env
 ```
 
-Stage 1 accepts only `TRADING_MODE=paper`. Binance market-data endpoints used by this application are public; API keys are not required and must not be added unless a later approved stage needs them.
+Paper mode needs no API keys. M4.8 Testnet configuration is explicit and disabled by default:
+`TRADING_MODE=testnet`, `TESTNET_EXECUTION_ENABLED=true`, dedicated
+`BINANCE_TESTNET_API_KEY`/`BINANCE_TESTNET_SECRET_KEY`, and the fixed
+`https://testnet.binance.vision` endpoint. Never commit a real `.env`; secrets are redacted and
+must not be logged or persisted. `TRADING_MODE=live` is rejected. Automated validation uses
+only fake exchange dependencies and makes no authenticated request.
+
+If Testnet recovery finds an active kill switch, unresolved/non-terminal order or unsafe
+reconciliation state, startup remains available in recovery-only mode. Persistence,
+reconciliation, settlement and status remain available, while no submission capability, execution
+service or Testnet decision consumer exists. After the durable blocker is resolved, restart the
+process to perform a fresh readiness check; recovery-only does not promote itself in-process.
 
 Important defaults:
 
@@ -145,3 +157,7 @@ advanced Portfolio and journal versions from `0 -> 1 -> 2`; both decisions were 
 so no real-smoke Fill occurred. Deterministic automated suites cover executable
 BUY/SELL restart and duplicate-Fill behavior. Keep the database together with any
 SQLite-owned WAL/SHM files while it is active; observer delivery remains best-effort.
+`BINANCE_TESTNET_ACCOUNT_FINGERPRINT` is also required as a non-secret durable account-lineage
+identifier. Testnet startup is intentionally fail-closed: an operator must have explicitly cleared
+the durable kill switch, and reconciliation plus settlement must reach typed READY before the
+shared decision coordinator subscribes.

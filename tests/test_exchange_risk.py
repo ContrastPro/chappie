@@ -585,7 +585,10 @@ def test_capability_is_authentic_process_local_and_cannot_authorize_live() -> No
         environment="LIVE",  # type: ignore[arg-type]
         pending_control_safe=True,
     )
-    assert blocked.reasons == (ExchangeSubmissionReason.UNSUPPORTED_ENVIRONMENT,)
+    assert blocked.reasons == (
+        ExchangeSubmissionReason.UNSUPPORTED_ENVIRONMENT,
+        ExchangeSubmissionReason.CAPABILITY_ENVIRONMENT_MISMATCH,
+    )
 
 
 @pytest.mark.parametrize(
@@ -720,6 +723,7 @@ def test_many_simultaneous_blockers_have_stable_nonduplicated_order() -> None:
         ExchangeSubmissionReason.KILL_SWITCH_ACTIVE,
         ExchangeSubmissionReason.CONTROL_GENERATION_MISMATCH,
         ExchangeSubmissionReason.RECONCILIATION_NOT_SAFE,
+        ExchangeSubmissionReason.CAPABILITY_ENVIRONMENT_MISMATCH,
         ExchangeSubmissionReason.RECONCILIATION_GENERATION_MISMATCH,
         ExchangeSubmissionReason.PENDING_CONTROL_UNSAFE,
     )

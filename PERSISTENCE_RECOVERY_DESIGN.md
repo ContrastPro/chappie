@@ -1035,3 +1035,21 @@ deterministic crash suites, а не real smoke. Сохраняются огра�
 store, external installation identity manifest, доказательства global backup freshness,
 exactly-once observer delivery, live execution или exchange reconciliation. WAL/SHM
 остаются SQLite-owned и не должны изменяться вручную при активной database.
+
+M4.8 schema v4 adds an exchange-specific Portfolio root/current projection and append-only
+settlement journal. Each normalized exchange trade has one durable settlement identity. A
+quote-fee transition, Portfolio head update and session turnover update commit atomically before
+memory synchronization; restart restores the committed head and suppresses replay. Unsupported
+fee assets are recorded as blocked settlement facts and never converted heuristically. M4.8 final
+safety review passed on 2026-08-12; M4.9 crash/restart/duplicate-order review is next and not
+started.
+
+The M4.8 completion pass validates every persisted settlement record against its digest and
+exchange-trade identity, rebuilds the consecutive Portfolio version/head chain, and recomputes
+session executed turnover from authoritative settled quote quantities. Any missing, corrupt or
+split-brain link raises recovery-required behavior before readiness. A recovered PREPARED order
+remains durable evidence only; startup never converts it into a network side effect.
+
+Migration 004 also binds every settlement to its authorizing SAFE reconciliation run and positive
+generation. Recovery verifies that linkage and settlement refuses financial application while
+the current reconciliation state lacks durable complete-history evidence.

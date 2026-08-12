@@ -197,7 +197,14 @@ class ExchangeAccountReader(Protocol):
 class SubmissionCapability:
     """Opaque process-local authority; deliberately non-serializable."""
 
-    __slots__ = ("_nonce", "control_generation", "reconciliation_generation")
+    __slots__ = (
+        "_nonce",
+        "account_fingerprint",
+        "control_generation",
+        "environment",
+        "reconciliation_generation",
+        "session_id",
+    )
 
     _ISSUER = object()
 
@@ -206,6 +213,9 @@ class SubmissionCapability:
         *,
         reconciliation_generation: int,
         control_generation: int,
+        account_fingerprint: str = "legacy-process-scope",
+        session_id: str = "legacy-session",
+        environment: ExecutionEnvironment = ExecutionEnvironment.TESTNET,
         _issuer: object | None = None,
     ) -> None:
         if _issuer is not self._ISSUER:
@@ -218,16 +228,30 @@ class SubmissionCapability:
                     "capability generations must be non-negative integers"
                 )
         self._nonce = object()
+        require_account_fingerprint(account_fingerprint)
+        require_text(session_id, "session_id")
+        if environment is not ExecutionEnvironment.TESTNET:
+            raise ExchangeCapabilityError("capability supports TESTNET only")
+        self.account_fingerprint = account_fingerprint
+        self.session_id = session_id
+        self.environment = environment
         self.reconciliation_generation = reconciliation_generation
         self.control_generation = control_generation
 
     @classmethod
     def _issue(
-        cls, *, reconciliation_generation: int, control_generation: int
+        cls,
+        *,
+        reconciliation_generation: int,
+        control_generation: int,
+        account_fingerprint: str = "legacy-process-scope",
+        session_id: str = "legacy-session",
     ) -> "SubmissionCapability":
         return cls(
             reconciliation_generation=reconciliation_generation,
             control_generation=control_generation,
+            account_fingerprint=account_fingerprint,
+            session_id=session_id,
             _issuer=cls._ISSUER,
         )
 
@@ -239,3 +263,83 @@ class SubmissionCapability:
 
     def __reduce__(self) -> object:
         raise TypeError("SubmissionCapability is process-local and cannot be serialized")
+
+
+class PreSubmitAuthorization:
+    """Opaque, single-use process authority for one exact prepared order."""
+
+    __slots__ = (
+        "_consumed",
+        "_nonce",
+        "account_fingerprint",
+        "client_order_id",
+        "control_generation",
+        "durable_command_key",
+        "environment",
+        "execution_root_id",
+        "reconciliation_generation",
+        "risk_decision_id",
+        "rules_fingerprint",
+        "session_id",
+    )
+    _ISSUER = object()
+
+    def __init__(
+        self,
+        *,
+        execution_root_id: str,
+        session_id: str,
+        account_fingerprint: str,
+        durable_command_key: str,
+        client_order_id: str,
+        risk_decision_id: str,
+        rules_fingerprint: str,
+        reconciliation_generation: int,
+        control_generation: int,
+        _issuer: object | None = None,
+    ) -> None:
+        if _issuer is not self._ISSUER:
+            raise ExchangeCapabilityError("pre-submit authorization requires the final gate")
+        for value, name in (
+            (execution_root_id, "execution_root_id"),
+            (session_id, "session_id"),
+            (risk_decision_id, "risk_decision_id"),
+        ):
+            require_text(value, name)
+        require_account_fingerprint(account_fingerprint)
+        require_hash(durable_command_key, "durable_command_key")
+        require_client_order_id(client_order_id)
+        require_hash(rules_fingerprint, "rules_fingerprint")
+        for value in (reconciliation_generation, control_generation):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ExchangeCapabilityError("authorization generations must be non-negative")
+        self._nonce = object()
+        self._consumed = False
+        self.execution_root_id = execution_root_id
+        self.session_id = session_id
+        self.account_fingerprint = account_fingerprint
+        self.durable_command_key = durable_command_key
+        self.client_order_id = client_order_id
+        self.risk_decision_id = risk_decision_id
+        self.rules_fingerprint = rules_fingerprint
+        self.reconciliation_generation = reconciliation_generation
+        self.control_generation = control_generation
+        self.environment = ExecutionEnvironment.TESTNET
+
+    @classmethod
+    def _issue(cls, **values: object) -> "PreSubmitAuthorization":
+        return cls(**values, _issuer=cls._ISSUER)  # type: ignore[arg-type]
+
+    def _consume(self) -> None:
+        if self._consumed:
+            raise ExchangeCapabilityError("pre-submit authorization was already consumed")
+        self._consumed = True
+
+    def __copy__(self) -> object:
+        raise TypeError("PreSubmitAuthorization cannot be copied")
+
+    def __deepcopy__(self, memo: object) -> object:
+        raise TypeError("PreSubmitAuthorization cannot be copied")
+
+    def __reduce__(self) -> object:
+        raise TypeError("PreSubmitAuthorization cannot be serialized")

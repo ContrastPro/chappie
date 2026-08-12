@@ -2,15 +2,22 @@ import logging
 from dataclasses import dataclass
 from decimal import Decimal
 
+import httpx
+
 from app.agent.trader import TraderAgent
 from app.coordination import TradingDecisionCoordinator, UUIDCoordinationIdFactory
 from app.core.config import Settings
+from app.exchange_runtime.composition import (
+    ProductionTestnetComponents,
+    build_production_testnet_components,
+)
 from app.execution import (
     PaperExecutionConfig,
     PaperExecutionProvider,
     UUIDExecutionIdFactory,
     UUIDFillIdFactory,
 )
+from app.infrastructure.binance import BinanceSpotTestnetAdapter
 from app.market.binance_provider import BinanceMarketProvider
 from app.market.cache import InMemoryMarketCache, MarketStreamKey
 from app.market.event_logging import register_market_event_logging
@@ -149,6 +156,13 @@ class StageOneStatusReport:
     recovery_status: str | None = None
     persistence_last_journal_seq: int = 0
     persistence_checkpoint_version: int | None = None
+    testnet_runtime_availability: str | None = None
+    testnet_readiness: str | None = None
+    testnet_readiness_reasons: tuple[str, ...] = ()
+    testnet_submission_capability_present: bool = False
+    testnet_reconciliation_status: str | None = None
+    testnet_settlement_status: str | None = None
+    testnet_non_terminal_order_count: int = 0
 
 
 @dataclass(slots=True)
@@ -168,6 +182,7 @@ class ChappieTraderApplication:
     paper_portfolio: Portfolio | None = None
     persistence: TradingPersistence | None = None
     recovery_result: RecoveryResult | None = None
+    testnet: ProductionTestnetComponents | None = None
     _provider_closed: bool = False
     _last_persistence_status: PersistenceStatus | None = None
 
@@ -182,6 +197,8 @@ class ChappieTraderApplication:
                 self.coordinator.stop()
         finally:
             try:
+                if self.testnet is not None:
+                    self.testnet.close()
                 if self.persistence is not None:
                     if self.paper_portfolio is not None:
                         status = self.persistence.status
@@ -310,6 +327,29 @@ class ChappieTraderApplication:
             persistence_checkpoint_version=(
                 persistence_status.latest_checkpoint_version if persistence_status else None
             ),
+            testnet_runtime_availability=(
+                self.testnet.runtime_availability if self.testnet is not None else None
+            ),
+            testnet_readiness=(
+                self.testnet.readiness.state.value if self.testnet is not None else None
+            ),
+            testnet_readiness_reasons=(
+                tuple(reason.value for reason in self.testnet.readiness.reasons)
+                if self.testnet is not None
+                else ()
+            ),
+            testnet_submission_capability_present=(
+                self.testnet.readiness.capability is not None if self.testnet is not None else False
+            ),
+            testnet_reconciliation_status=(
+                self.testnet.reconciliation_status if self.testnet is not None else None
+            ),
+            testnet_settlement_status=(
+                self.testnet.settlement_status.value if self.testnet is not None else None
+            ),
+            testnet_non_terminal_order_count=(
+                self.testnet.non_terminal_order_count if self.testnet is not None else 0
+            ),
         )
 
 
@@ -325,6 +365,9 @@ def build_application(
     event_logger: logging.Logger | None = None,
     shadow_logger: logging.Logger | None = None,
     persistence: TradingPersistence | None = None,
+    exchange_persistence=None,
+    testnet_http_client: httpx.Client | None = None,
+    testnet_adapter: BinanceSpotTestnetAdapter | None = None,
 ) -> ChappieTraderApplication:
     """Create and wire the complete Stage 1 market-data application."""
 
@@ -370,7 +413,12 @@ def build_application(
     paper_portfolio = None
     persistence_adapter = None
     recovery_result = None
-    if settings.shadow_decisions_enabled or settings.paper_trading_enabled:
+    testnet_components = None
+    if (
+        settings.shadow_decisions_enabled
+        or settings.paper_trading_enabled
+        or settings.trading_mode == "testnet"
+    ):
         strategy_config = EmaCrossoverConfig(settings.ema_fast_window, settings.ema_slow_window)
         strategy = EmaCrossoverStrategy(
             strategy_config,
@@ -585,19 +633,46 @@ def build_application(
                 production_clock.monotonic,
                 durable_store,
             )
-        coordinator = TradingDecisionCoordinator(
-            market_cache,
-            MarketSnapshotFactory(settings.snapshot_stale_after_ms),
-            pipeline,
-            UUIDSnapshotIdFactory(),
-            UUIDCoordinationIdFactory(),
-            shadow_consumer=shadow_consumer,
-            paper_engine=paper_engine,
-            history_limit=settings.decision_coordinator_history_limit,
-            dedup_capacity=settings.decision_coordinator_dedup_capacity,
-            monotonic_clock=production_clock.monotonic,
-        )
-        coordinator.start(dispatcher)
+        if settings.trading_mode == "testnet":
+            try:
+                testnet_components = build_production_testnet_components(
+                    settings,
+                    now_ms=production_clock.now_ms,
+                    persistence=exchange_persistence,
+                    http_client=testnet_http_client,
+                    adapter=testnet_adapter,
+                )
+            except BaseException:
+                if persistence_adapter is not None:
+                    persistence_adapter.close()
+                market_provider.close()
+                raise
+        testnet_consumer = testnet_components.consumer if testnet_components is not None else None
+        if shadow_consumer is not None or paper_engine is not None or testnet_consumer is not None:
+            try:
+                coordinator = TradingDecisionCoordinator(
+                    market_cache,
+                    MarketSnapshotFactory(settings.snapshot_stale_after_ms),
+                    pipeline,
+                    UUIDSnapshotIdFactory(),
+                    UUIDCoordinationIdFactory(),
+                    shadow_consumer=shadow_consumer,
+                    paper_engine=paper_engine,
+                    testnet_consumer=testnet_consumer,
+                    history_limit=settings.decision_coordinator_history_limit,
+                    dedup_capacity=settings.decision_coordinator_dedup_capacity,
+                    monotonic_clock=production_clock.monotonic,
+                )
+                coordinator.start(dispatcher)
+            except BaseException:
+                if coordinator is not None:
+                    coordinator.stop()
+                if testnet_components is not None:
+                    testnet_components.close()
+                if persistence_adapter is not None:
+                    persistence_adapter.close()
+                market_provider.close()
+                raise
     return ChappieTraderApplication(
         settings=settings,
         provider=market_provider,
@@ -614,6 +689,7 @@ def build_application(
         paper_portfolio=paper_portfolio,
         persistence=persistence_adapter,
         recovery_result=recovery_result,
+        testnet=testnet_components,
     )
 
 
@@ -702,6 +778,17 @@ def log_stage_one_status(
         report.persistence_last_journal_seq,
         report.persistence_checkpoint_version,
         report.paper_health,
+    )
+    logger.info(
+        "Testnet runtime availability=%s readiness=%s reasons=%s "
+        "submission_capability_present=%s reconciliation=%s settlement=%s non_terminal=%s",
+        report.testnet_runtime_availability,
+        report.testnet_readiness,
+        report.testnet_readiness_reasons,
+        report.testnet_submission_capability_present,
+        report.testnet_reconciliation_status,
+        report.testnet_settlement_status,
+        report.testnet_non_terminal_order_count,
     )
 
 

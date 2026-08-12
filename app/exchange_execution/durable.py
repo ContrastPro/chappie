@@ -1,12 +1,17 @@
 from collections.abc import Callable
 
+from app.exchange_execution.exceptions import ExchangeSubmissionSafetyError
 from app.exchange_execution.models import (
     ExchangeCommand,
     ExchangeOrderStatus,
     ExchangeTrade,
     TransportOutcomeKind,
 )
-from app.exchange_execution.ports import ExchangeOrderGateway, MarketOrderSubmission
+from app.exchange_execution.ports import (
+    ExchangeOrderGateway,
+    MarketOrderSubmission,
+    PreSubmitAuthorization,
+)
 from app.persistence.exchange_models import DurableExchangeOrder, LocalExchangeRecoveryResult
 from app.persistence.ports import ExchangeLifecyclePersistence
 
@@ -47,10 +52,22 @@ class DurableExchangeOrderLifecycle:
             occurred_at_ms=self._timestamp(),
         )
 
-    def submit_prepared(self, durable_command_key: str) -> DurableExchangeOrder:
+    def _submit_authorized(self, authorization: PreSubmitAuthorization) -> DurableExchangeOrder:
+        """Internal side-effect primitive; only the final gate may call this method."""
+        if not isinstance(authorization, PreSubmitAuthorization):
+            raise ExchangeSubmissionSafetyError("final pre-submit authorization is required")
+        durable_command_key = authorization.durable_command_key
         current = self._persistence.load_order(durable_command_key)
         if current.order.status is not ExchangeOrderStatus.PREPARED:
-            return current
+            raise ExchangeSubmissionSafetyError("authorized order is no longer PREPARED")
+        if (
+            current.execution_root_id != authorization.execution_root_id
+            or current.session_id != authorization.session_id
+            or current.order.account_fingerprint != authorization.account_fingerprint
+            or current.order.client_order_id != authorization.client_order_id
+        ):
+            raise ExchangeSubmissionSafetyError("authorization/order lineage mismatch")
+        authorization._consume()
         submitting = self._persistence.begin_submission(
             durable_command_key, occurred_at_ms=self._timestamp()
         )
