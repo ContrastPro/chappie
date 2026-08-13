@@ -46,7 +46,8 @@ M4.9 offline crash/restart torture recreates fresh production graphs around file
 a deterministic fake exchange. Repeated NOT_FOUND, later FOUND, lost acknowledgements, duplicate
 decisions and settlement restarts remain no-resubmit/exact-once. This is automated safety evidence,
 not an authenticated Testnet smoke. M4.10 Phase 1 authenticated read-only evidence now passes;
-Phase 2 authorization remains pending and LIVE is unsupported.
+the Phase 2 harness is implemented offline, Phase 2 authorization remains pending and LIVE is
+unsupported.
 
 The M4.10 controlled Spot Testnet security preflight is completed and its final safety review
 passed. The dedicated `python -m app.tools.testnet_phase1` harness is structurally read-only,
@@ -55,6 +56,12 @@ retry #1 passed with four GETs, no open orders/trades and no side effects; Phase
 authorization-gated. The first attempt's `logs/m4_10_phase1.log` evidence is retained after a safe
 one-public-GET contract-drift stop; separately authorized retry #1 used
 `logs/m4_10_phase1_retry1.log` without overwriting it.
+The dedicated `python -m app.tools.testnet_phase2` harness requires the exact non-secret
+`M4_10_PHASE2_AUTHORIZED=YES` token and permits one request only: fixed-host
+`POST /api/v3/order/test`. Its reviewed BUY quantity is `0.00016000` BTC, validated entirely with
+`Decimal` against the Phase 1 rules and the manually observed public reference price
+`63849.22000000`; it is Phase 2-only evidence and is not a real-order quantity. Phase 2 has not
+been executed, and Phase 3 is unauthorized.
 See [`M4_10_TESTNET_SMOKE_PLAN.md`](M4_10_TESTNET_SMOKE_PLAN.md). Configuring credentials does not
 authorize an authenticated read, `/api/v3/order/test` or a real order; each is a separate gate.
 

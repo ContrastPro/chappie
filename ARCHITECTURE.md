@@ -800,7 +800,8 @@ green. Detailed evidence is in `M4_9_CRASH_RESTART_REPORT.md`; Stage 4 remains i
 ## M4.10 controlled Testnet smoke authorization
 
 M4.10 security preflight is completed, its final safety review passed, and Phase 1 authenticated
-read-only evidence passed; Phase 2 authorization is pending.
+read-only evidence passed. The dedicated `python -m app.tools.testnet_phase2` harness is implemented
+and reviewed offline; Phase 2 authorization is pending.
 `M4_10_TESTNET_SMOKE_PLAN.md` separates
 offline, authenticated-read, `/order/test`, one-order and restart phases; each requires independent
 operator approval. Central logging suppresses private transport tracing even under global DEBUG;
@@ -814,3 +815,10 @@ credential use, network request or order is currently authorized. Stage 4 remain
 The Phase 1 run made exactly four fixed-host GETs, observed zero open orders/trades, normalized
 BTCUSDT rules and BTC/USDT balances, and produced no durable or financial mutation. Its consumed
 authorization grants no POST authority.
+The Phase 2 process requires `M4_10_PHASE2_AUTHORIZED=YES`; its transport permits exactly one
+fixed-host `POST /api/v3/order/test` and rejects every other method, path, authority and any second
+request before transport. A narrow facade exposes only `test_market_order`; the graph imports no
+persistence, Portfolio, durable lifecycle, reconciliation, settlement or normal runtime. The
+reviewed Phase 2-only BUY quantity `0.00016000` BTC is checked with `Decimal` against the observed
+price `63849.22000000`, `stepSize=0.00001000`, `minQty=0.00001000` and `minNotional=5.00000000`.
+Phase 2 has not run, and Phase 3 remains unauthorized.

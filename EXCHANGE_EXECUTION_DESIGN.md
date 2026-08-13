@@ -981,7 +981,7 @@ authorization pending.
 
 ### M4.10 controlled smoke design status
 
-Status: **Phase 1 authenticated read-only PASS; Phase 2 authorization pending** (2026-08-13). The authorization ladder in
+Status: **Phase 1 authenticated read-only PASS; Phase 2 harness implemented/reviewed offline and authorization pending** (2026-08-13). The authorization ladder in
 `M4_10_TESTNET_SMOKE_PLAN.md` keeps authenticated reads, `/api/v3/order/test`, one real Testnet
 order and restart reconciliation under distinct approvals. Central dependency-log suppression and
 an explicit no-fallback order-test adapter contract are implemented. The Phase 0 read-harness gap
@@ -991,3 +991,11 @@ MockTransport proofs exclude trader composition, persistence, submission capabil
 real submit and order-test calls. It writes sanitized evidence and exits. Audited kill-switch/smoke
 commands remain later prerequisites. Phase 1 used exactly four GETs and produced no order-capable
 call or durable/financial mutation. Its authorization is consumed; Phase 2 remains unauthorized.
+The separate `python -m app.tools.testnet_phase2` entrypoint requires the exact
+`M4_10_PHASE2_AUTHORIZED=YES` token. Its capability-narrow facade exposes only
+`test_market_order`, while its transport allows exactly one fixed-host
+`POST /api/v3/order/test`; it rejects real submission, cancellation, alternate endpoints/hosts
+and a second request before transport. The reviewed Phase 2-only BUY quantity `0.00016000` BTC is
+validated with `Decimal` against the public reference price `63849.22000000` and preserved Phase 1
+rules. No persistence, Portfolio, lifecycle, reconciliation, settlement or normal trading graph is
+composed. Phase 2 has not run and Phase 3 remains unauthorized.

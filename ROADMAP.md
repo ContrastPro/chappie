@@ -356,7 +356,7 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 
 ## Этап 4. Risk hardening и биржевое execution
 
-Статус: **in progress — M4.9 completed; M4.10 Phase 1 read-only PASS, Phase 2 authorization pending**.
+Статус: **in progress — M4.9 completed; M4.10 Phase 1 read-only PASS, Phase 2 harness reviewed offline and authorization pending**.
 
 ### Цель
 
@@ -483,7 +483,7 @@ recovery и изолированным testnet execution до отдельног
 
 #### M4.10 Controlled Binance Testnet Smoke
 
-Статус: **Phase 1 authenticated read-only PASS; Phase 2 authorization pending** (2026-08-13).
+Статус: **Phase 1 authenticated read-only PASS; Phase 2 harness implemented/reviewed offline and authorization pending** (2026-08-13).
 
 - По отдельным разрешениям выполнить read-only authentication, `/api/v3/order/test`, bounded
   BUY/SELL и restart/reconciliation smoke только на Spot Testnet. Cancellation остаётся
@@ -494,6 +494,10 @@ recovery и изолированным testnet execution до отдельног
   authorization-token-gated, fixed-host GET-only harness with a hard five-request budget, narrow
   read facade, sanitized evidence and no persistence/submission composition. Phase 1 retry #1
   passed with exactly four GETs and no side effects; Phase 2 remains separately authorization-gated.
+- `python -m app.tools.testnet_phase2` requires `M4_10_PHASE2_AUTHORIZED=YES` and permits exactly
+  one fixed-host `POST /api/v3/order/test`. Its reviewed Phase 2-only BUY quantity is
+  `0.00016000` BTC based on the public reference price `63849.22000000`; all numeric checks use
+  `Decimal`. The harness has not been executed, and Phase 3 is unauthorized.
 
 #### M4.11 Stage 4 Completion
 
@@ -515,7 +519,8 @@ recovery и изолированным testnet execution до отдельног
   authoritative execution flow and durable reconciliation coverage horizon are implemented.
   M4.9 completed; final crash/restart safety review passed. M4.10 security preflight is
   completed and its final preflight safety review passed; Phase 1 authenticated read-only PASS,
-  Phase 2 authorization is pending, and Stage 4 remains in progress.
+  the Phase 2 harness is implemented/reviewed offline with authorization pending, Phase 3 is
+  unauthorized, and Stage 4 remains in progress.
 - Проведён paper/shadow run, достаточный для сбора требуемой выборки наблюдений.
 - Собрано достаточное для допуска количество наблюдений по утверждённым критериям качества.
 

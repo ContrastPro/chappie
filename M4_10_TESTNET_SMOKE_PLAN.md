@@ -1,6 +1,6 @@
 # M4.10 Controlled Binance Spot Testnet Smoke Plan
 
-Status: **Phase 1 authenticated read-only PASS; Phase 2 authorization pending** (2026-08-13).
+Status: **Phase 1 authenticated read-only PASS; Phase 2 harness implemented/reviewed offline and authorization pending** (2026-08-13).
 
 Stage 4 remains in progress. This document authorizes no network access, credential use,
 `/api/v3/order/test` request or real Testnet order. Every phase below needs a new, explicit
@@ -197,7 +197,12 @@ Respect `Retry-After` and do not repeatedly probe credentials. Phase 1 never pro
 
 ## Phase 2 — signed order-test request
 
-The minimal adapter operation now exists for exactly `POST /api/v3/order/test`. It is a separate
+The dedicated one-shot harness is now implemented at `python -m app.tools.testnet_phase2`. It
+requires the exact non-secret `M4_10_PHASE2_AUTHORIZED=YES` token and permits exactly one fixed-host
+`POST /api/v3/order/test`; every other method, path, authority and any second request stop before
+transport. Its restricted facade exposes only `test_market_order` and composes no persistence,
+Portfolio, durable submission lifecycle, reconciliation, settlement or normal trading runtime.
+The minimal adapter operation is a separate
 contract from `submit_market_order`: there is no fallback to `/api/v3/order`, no retry, no redirect,
 and no production lifecycle mutation. Phase 1 evidence passed; Phase 2 remains authorization
 pending and requires a new explicit operator authorization.
@@ -214,15 +219,15 @@ They specify a signed `POST /api/v3/order/test`, `X-MBX-APIKEY`, order parameter
 states that Spot Testnet at `https://testnet.binance.vision` supports `/api/*` endpoints. No
 request was sent during verification.
 
-Before Phase 2, obtain a fresh public/read reference price `P`; Phase 1 did not record price, so it
-is unsafe to guess an exact quantity now. Compute entirely with `Decimal` using target test
-notional `2 * minNotional = 10.00000000 USDT` and
-`quantity = max(minQty, ceil((10 / P) / stepSize) * stepSize)`. Recheck the resulting notional,
-current rules and available balance immediately before authorization. This Phase 2-only candidate
-is not a Phase 3 real-order quantity. Include a deterministic Testnet-format client ID. Send
-`symbol=BTCUSDT`, chosen `side`,
+The reviewed public reference price is `63849.22000000` and the Phase 2-only BUY quantity is
+`0.00016000` BTC, approximately `10.22` USDT. The harness validates these fixed `Decimal` values
+against `stepSize=0.00001000`, `minQty=0.00001000`, `minNotional=5.00000000` and a two-times
+minimum-notional margin before transport. This observation does not imply permanent validity and
+must be re-reviewed before authorization; the quantity is not a Phase 3 real-order quantity. The
+harness uses the existing deterministic Testnet-format client-ID generator. It sends
+`symbol=BTCUSDT`, `side=BUY`,
 `type=MARKET`, base `quantity`, `newOrderRespType=ACK`, timestamp and the fixed 5-second
-`recvWindow`. Do not hardcode the quantity in this plan.
+`recvWindow`, with the signature covering the exact transmitted bytes before the signature field.
 
 Implemented MockTransport proof shows exactly one POST to the allowlisted host; the signed bytes
 equal transmitted bytes;
@@ -238,12 +243,13 @@ failure, redirect and 5xx raise typed preflight failures, not real-submit ambigu
 and `Retry-After`; malformed or non-empty success bodies fail normalization. There is no sleep or
 retry. A closed adapter rejects before HTTP.
 
-Offline Phase 2 prerequisites are otherwise met: the committed preflight method targets exactly
-one fixed-host `POST /api/v3/order/test`, has no fallback or retry, carries no persistence or
-financial semantics, validates the deterministic client-ID format, and has Phase 1 account/rules
-evidence preserved. Before authorization, this evidence update must be committed with a clean Git
-tree and a reviewed fresh public price observation must support the Decimal quantity calculation.
-No production behavior is missing. Any Phase 2 authorization permits exactly that one POST. It
+Offline Phase 2 implementation and review are complete: the harness targets exactly one fixed-host
+`POST /api/v3/order/test`, has no fallback or retry, carries no persistence or financial semantics,
+validates the deterministic client-ID format, and preserves Phase 1 account/rules evidence. It
+writes immutable sanitized evidence to `logs/m4_10_phase2.log` and refuses a pre-existing path
+before credentials or transport. Before authorization, these changes must be committed with a
+clean Git tree and the reviewed price/rules must still be accepted by the operator. Phase 2 has
+not been executed. Any Phase 2 authorization permits exactly that one POST. It
 does not permit `POST /api/v3/order`, cancellation, kill-switch clear, a real order, continuous
 trading or Phase 3.
 
