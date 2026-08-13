@@ -35,7 +35,7 @@ from app.market.models import MarketStreamKey
 PHASE1_AUTHORIZATION_ENV = "M4_10_PHASE1_AUTHORIZED"
 PHASE1_AUTHORIZATION_VALUE = "YES"
 SPOT_TESTNET_HOST = "https://testnet.binance.vision"
-EVIDENCE_PATH = Path("logs/m4_10_phase1.log")
+EVIDENCE_PATH = Path("logs/m4_10_phase1_retry1.log")
 MAX_REQUESTS = 5
 ALLOWED_ENDPOINTS = frozenset(
     {

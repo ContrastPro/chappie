@@ -383,7 +383,7 @@ def test_cli_refuses_existing_evidence_before_credentials_or_transport(
     monkeypatch, tmp_path, capsys
 ) -> None:
     monkeypatch.chdir(tmp_path)
-    evidence = tmp_path / "logs/m4_10_phase1.log"
+    evidence = tmp_path / "logs/m4_10_phase1_retry1.log"
     evidence.parent.mkdir()
     evidence.write_text("old", encoding="utf-8")
     monkeypatch.setenv("M4_10_PHASE1_AUTHORIZED", "YES")
@@ -432,7 +432,7 @@ def test_cli_mock_success_writes_sanitized_evidence_and_closes_once(monkeypatch,
     monkeypatch.setattr(httpx, "HTTPTransport", lambda: TrackingMockTransport(handler))
 
     assert testnet_phase1.main() == 0
-    evidence = (tmp_path / "logs/m4_10_phase1.log").read_text(encoding="utf-8")
+    evidence = (tmp_path / "logs/m4_10_phase1_retry1.log").read_text(encoding="utf-8")
     assert "outcome=PASS" in evidence
     assert "request_count=4" in evidence
     assert "rules_quantity_step=0.00001" in evidence

@@ -52,7 +52,9 @@ The M4.10 controlled Spot Testnet security preflight is completed and its final 
 passed. The dedicated `python -m app.tools.testnet_phase1` harness is structurally read-only,
 GET-only, capped at five requests and isolated from persistence/submission composition; Phase 1
 still awaits explicit authorization. Its exact `M4_10_PHASE1_AUTHORIZED=YES` token has no meaning
-outside this command, which also refuses pre-existing `logs/m4_10_phase1.log` evidence.
+outside this command. The first attempt's `logs/m4_10_phase1.log` evidence is retained after a safe
+one-public-GET contract-drift stop; a separately authorized retry uses
+`logs/m4_10_phase1_retry1.log` and refuses a collision there.
 See [`M4_10_TESTNET_SMOKE_PLAN.md`](M4_10_TESTNET_SMOKE_PLAN.md). Configuring credentials does not
 authorize an authenticated read, `/api/v3/order/test` or a real order; each is a separate gate.
 

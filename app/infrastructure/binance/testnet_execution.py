@@ -518,7 +518,9 @@ class BinanceSpotTestnetAdapter:
             "MARKET_LOT_SIZE",
             "MAX_NUM_ORDERS",
             "MAX_NUM_ALGO_ORDERS",
+            "MAX_NUM_ORDER_AMENDS",
             "MAX_NUM_ICEBERG_ORDERS",
+            "MAX_NUM_ORDER_LISTS",
             "MAX_POSITION",
             "TRAILING_DELTA",
         }

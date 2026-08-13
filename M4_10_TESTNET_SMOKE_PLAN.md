@@ -114,7 +114,7 @@ attach them to evidence.
 
 Phase 1 still requires separate explicit authorization. The dedicated one-shot entrypoint is
 `python -m app.tools.testnet_phase1`; it requires the exact non-secret
-`M4_10_PHASE1_AUTHORIZED=YES` token, refuses an existing `logs/m4_10_phase1.log`, and exits after
+`M4_10_PHASE1_AUTHORIZED=YES` token, refuses an existing retry evidence path, and exits after
 one bounded run. It is not a mode of `app.main`: it imports no trader, decision pipeline,
 submission service/gate/capability, lifecycle or persistence component. Its restricted facade
 exposes only instrument rules, BTC/USDT balances, BTCUSDT open orders and recent trade history.
@@ -126,6 +126,30 @@ request. The initial fresh-account run always uses four requests and fails fast 
 open order. It creates no database or durable reconciliation/control/order/Portfolio state and
 does not inspect or mutate the kill switch. Sanitized evidence contains normalized facts only;
 exit codes are 0 PASS, 2 BLOCKED, and 1 technical FAILED.
+
+The first authorized Phase 1 attempt stopped safely on 2026-08-13 at 16:05:51 +0300 (run
+`9f22a99b-7e60-4682-9da6-a1d2b54716cd`) after exactly one public
+`GET /api/v3/exchangeInfo`. Its sanitized `logs/m4_10_phase1.log` evidence records
+`BinanceUnsupportedContractError`; no authenticated endpoint, POST, order-test, order or durable
+side effect occurred. Offline review traced the stop to documented Binance symbol-filter contract
+drift: `MAX_NUM_ORDER_AMENDS` and `MAX_NUM_ORDER_LISTS` were missing from the explicit known-ignore
+set. The compatibility fix recognizes only those irrelevant no-amend/no-order-list limits while
+retaining fail-closed behavior for truly unknown filters and unchanged MARKET lot/notional rules.
+The original evidence must remain untouched. A separately authorized retry writes exclusively to
+`logs/m4_10_phase1_retry1.log` and refuses a collision there. Phase 1 has not passed; retry
+authorization remains pending.
+
+Offline filter-contract classification for the 2026-08-13 documented Spot symbol set:
+
+- executable MARKET safety inputs: `MARKET_LOT_SIZE`, fallback `LOT_SIZE`, `MIN_NOTIONAL` and
+  `NOTIONAL`; their quantity/minimum/application semantics remain strictly normalized;
+- known outside the current MARKET-only, no-iceberg/no-amend/no-order-list execution model:
+  `PRICE_FILTER`, `PERCENT_PRICE`, `PERCENT_PRICE_BY_SIDE`, `ICEBERG_PARTS`, `MAX_NUM_ORDERS`,
+  `MAX_NUM_ALGO_ORDERS`, `MAX_NUM_ICEBERG_ORDERS`, `MAX_POSITION`, `TRAILING_DELTA`,
+  `MAX_NUM_ORDER_AMENDS` and `MAX_NUM_ORDER_LISTS`;
+- unsupported: every identifier outside that explicit reviewed set, plus representable identifiers
+  whose MARKET semantics cannot be expressed safely (for example an active maximum MARKET
+  notional). These continue to raise `BinanceUnsupportedContractError`.
 
 It must make at most five HTTP requests; the initial empty-lineage command makes exactly four:
 

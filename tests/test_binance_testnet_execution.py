@@ -1003,6 +1003,82 @@ def test_unknown_and_richer_market_filters_fail_closed_and_disabled_market_lot_f
     assert rules.quantity_step == D("0.00001")
 
 
+def _exchange_info_rules_payload(extra_filters: list[dict[str, object]]) -> dict[str, object]:
+    return {
+        "symbols": [
+            {
+                "symbol": "BTCUSDT",
+                "filters": [
+                    {"filterType": "LOT_SIZE", "minQty": "0.00001", "stepSize": "0.00001"},
+                    {
+                        "filterType": "MARKET_LOT_SIZE",
+                        "minQty": "0.00001",
+                        "stepSize": "0.00001",
+                    },
+                    {
+                        "filterType": "MIN_NOTIONAL",
+                        "minNotional": "5",
+                        "applyToMarket": True,
+                    },
+                    *extra_filters,
+                ],
+            }
+        ]
+    }
+
+
+@pytest.mark.parametrize(
+    "documented_additional_filters",
+    [
+        [{"filterType": "MAX_NUM_ORDER_AMENDS", "maxNumOrderAmends": 10}],
+        [{"filterType": "MAX_NUM_ORDER_LISTS", "maxNumOrderLists": 20}],
+        [
+            {"filterType": "MAX_NUM_ORDER_AMENDS", "maxNumOrderAmends": 10},
+            {"filterType": "MAX_NUM_ORDER_LISTS", "maxNumOrderLists": 20},
+        ],
+        [
+            {"filterType": "PRICE_FILTER"},
+            {"filterType": "PERCENT_PRICE"},
+            {"filterType": "PERCENT_PRICE_BY_SIDE"},
+            {
+                "filterType": "NOTIONAL",
+                "minNotional": "5",
+                "applyMinToMarket": True,
+                "applyMaxToMarket": False,
+            },
+            {"filterType": "ICEBERG_PARTS"},
+            {"filterType": "MAX_NUM_ORDERS"},
+            {"filterType": "MAX_NUM_ALGO_ORDERS"},
+            {"filterType": "MAX_NUM_ICEBERG_ORDERS"},
+            {"filterType": "MAX_POSITION"},
+            {"filterType": "TRAILING_DELTA"},
+            {"filterType": "MAX_NUM_ORDER_AMENDS", "maxNumOrderAmends": 10},
+            {"filterType": "MAX_NUM_ORDER_LISTS", "maxNumOrderLists": 20},
+        ],
+    ],
+)
+def test_documented_symbol_filter_contract_preserves_executable_rules(
+    documented_additional_filters: list[dict[str, object]],
+) -> None:
+    baseline, baseline_client = adapter(
+        lambda request: httpx.Response(200, json=_exchange_info_rules_payload([]))
+    )
+    candidate, candidate_client = adapter(
+        lambda request: httpx.Response(
+            200, json=_exchange_info_rules_payload(documented_additional_filters)
+        )
+    )
+    try:
+        expected = baseline.read_instrument_rules(KEY)
+        actual = candidate.read_instrument_rules(KEY)
+    finally:
+        baseline.close()
+        candidate.close()
+        baseline_client.close()
+        candidate_client.close()
+    assert actual == expected
+
+
 def test_response_helper_validation_and_safe_retry_after() -> None:
     response = httpx.Response(200, content=b"not-json")
     with pytest.raises(BinanceNormalizationError):
