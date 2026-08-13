@@ -60,9 +60,14 @@ The dedicated `python -m app.tools.testnet_phase2` harness requires the exact no
 `POST /api/v3/order/test`. Its reviewed BUY quantity is `0.00016000` BTC, validated entirely with
 `Decimal` against the Phase 1 rules and the manually observed public reference price
 `63849.22000000`; it is Phase 2-only evidence and is not a real-order quantity. Phase 2 passed with
-exactly one test-endpoint POST and no financial semantics. Phase 3 remains blocked and unauthorized:
-there is no reviewed one-shot real-order command or audited kill-switch procedure, and the account's
-pre-existing 1 BTC is not managed Portfolio history and has no accepted subledger/bootstrap policy.
+exactly one test-endpoint POST and no financial semantics. Phase 3 execution remains blocked and unauthorized:
+there is no implemented one-shot real-order command/schema-v5 authority, and the account's
+pre-existing 1 BTC remains external rather than managed Portfolio history.
+The Phase 3 final design review accepts ADR-064: a zero-BTC, `25 USDT` managed
+subledger plus durable one-shot authority consumed atomically with the sole PREPARED command. A
+schema-v5 implementation is still required. The global switch remains ACTIVE; only the transaction's
+in-memory exact-command claim may reach the final gate, so restart cannot recreate eligibility.
+Phase 3 remains unauthorized and no Phase 3 command exists.
 See [`M4_10_TESTNET_SMOKE_PLAN.md`](M4_10_TESTNET_SMOKE_PLAN.md). Configuring credentials does not
 authorize an authenticated read, `/api/v3/order/test` or a real order; each is a separate gate.
 

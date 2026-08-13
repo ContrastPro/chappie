@@ -1,6 +1,6 @@
 # M4.10 Controlled Binance Spot Testnet Smoke Plan
 
-Status: **Phase 1 authenticated read-only PASS; Phase 2 signed order-test PASS; Phase 3 BLOCKED and unauthorized** (2026-08-13).
+Status: **Phase 1 authenticated read-only PASS; Phase 2 signed order-test PASS; Phase 3 architecture accepted, READY_FOR_SCHEMA_V5_IMPLEMENTATION and unauthorized** (2026-08-13).
 
 Stage 4 remains in progress. This document authorizes no network access, credential use,
 additional `/api/v3/order/test` request or real Testnet order. Every phase below needs a new, explicit
@@ -270,13 +270,25 @@ trading or Phase 3.
 
 ## Phase 3 — one real Testnet order
 
-Phase 3 remains **BLOCKED and not authorized**. The repository has no dedicated one-shot Phase 3
-operator entrypoint, no audited operator command for a bounded kill-switch clear/reactivation
-cycle, and no accepted initial-balance/subledger policy for the pre-existing `1.00000000 BTC`
-observed in the Testnet account. Authorization must not be requested until these gaps are
-implemented and reviewed offline. It must then state exact HEAD, account fingerprint,
-fresh database path, run ID, BUY/SELL, computed base quantity, maximum submitted notional and
+Phase 3 architecture is accepted by ADR-064, but execution remains **BLOCKED and not authorized**
+until schema v5, operator tooling and crash proofs are implemented and reviewed. The repository
+still has no Phase 3 entrypoint or production authority API. Authorization must not be requested
+until those gaps close. It must then state exact HEAD, account fingerprint,
+fresh database path, run ID, BUY, computed base quantity, maximum submitted notional and
 request count.
+
+Offline architecture review found an additional durable crash gap. Today an audited
+`ACTIVE -> CLEARED` transition can occur before any submission counter is consumed. If the process
+dies in that interval, restart sees a CLEARED switch and can mint a fresh process-local capability.
+ADR-063 prevents in-process promotion but does not make that pre-attempt ceremony one-shot.
+ADR-064 resolves the design with a schema-v5 authority bound to the
+exact root/account/session, control and reconciliation generations, run/authorization identity,
+command identity and risk envelope. The global switch remains ACTIVE. One `BEGIN IMMEDIATE`
+transaction inserts and consumes the authority, creates the only PREPARED command/reservation/event
+and commits their one-to-one audit link. No authority-only commit is permitted. The commit returns
+an in-memory claim receipt for an exact-command capability; crash/restart loses it and remains
+recovery-only, able to inspect/reconcile the same identity but never regain first-submit eligibility.
+No migration or production implementation was added in this design review.
 
 The safer decision source is a dedicated operator-initiated smoke command, not waiting for or
 distorting EMA. It must reuse the normal financial Risk, exchange Risk, durable decision/identity,
@@ -284,17 +296,91 @@ PREPARED, final gate and execution machinery; it may not submit directly. Its du
 include the smoke authorization/run identity so replay returns the same command. Implement and
 review this path separately.
 
-Select BUY only if Phase 1 proves a dedicated lineage with expected USDT, no unmanaged BTC and no
-unexpected history. Select SELL only when a prior managed BUY has produced the exact durable BTC
-position intended for the paired smoke. Never sell or normalize unexplained BTC. Any unexpected
-position/history requires operator review.
+The first Phase 3 authority is BUY-only. Its fresh preflight must prove the expected external BTC
+baseline, sufficient quote, no open orders and no unexpected managed-prefix history. SELL is not a
+field in this authority policy and is typed-rejected before command creation. A future separately
+authorized SELL may use only exact managed BTC from authoritative Chappie BUY trades. Never sell or
+normalize unexplained BTC.
 
 Production composition initializes the durable Portfolio with zero base and configured quote
 funds, while current reconciliation checks balance scope but does not establish ownership of the
 pre-existing BTC. That BTC must remain outside managed Portfolio history and must never be sold
-automatically. Phase 3 requires an accepted design: preferably a quote-funded managed subledger
-whose invariants/evidence distinguish pre-existing exchange BTC, or a separately reviewed initial-
-balance bootstrap/reconciliation model. Current architecture does not yet prove either policy.
+automatically. ADR-064 accepts a quote-funded managed subledger whose invariants/evidence distinguish
+pre-existing exchange BTC. Reconciliation compares total free+locked balances to immutable external
+baselines plus managed exchange effects derived only from authoritative Chappie trades; unexplained
+difference is conflict, never import.
+
+The proposed initial managed allocation is exactly `25 USDT`, with zero managed BTC. It is a
+subledger ceiling rather than ownership of all `10000 USDT` observed at the exchange. The reviewed
+smoke envelope would target approximately `10 USDT`, cap order/session-submitted/session-turnover
+and managed position notional at `12 USDT`, and preserve at least `13 USDT` of the allocation for
+reserve, fees and slippage. These are maximums, not a final quantity: current rules, price,
+balances, open orders and managed-prefix history must be freshly checked with `Decimal` before any
+future authorization.
+
+### Accepted authority and schema-v5 contract
+
+`Phase3SmokeAuthority` is an immutable durable consumption receipt, not a persistent capability.
+Required identity is: `authority_id`; fixed TESTNET/`binance-spot`; account fingerprint;
+execution-root and session IDs; expected control and reconciliation generations; unique
+`operator_run_id`; unique Phase 3 economic-slot key; normalized non-sensitive `audit_reason`;
+`smoke_policy_version`; exact durable command key; rules and execution-configuration fingerprints;
+canonical risk-envelope and balance-scope payloads/digests; `created_at_ms`, `consumed_at_ms` and
+record digest. Credentials never participate.
+
+The reviewed authorization input uses the existing integer-millisecond Testnet authorization max
+age. Freshness is checked before entering and again inside the write transaction. A stale input
+fails without a durable row. Inside one `BEGIN IMMEDIATE`, authority is transaction-locally
+PREPARED, the exact BUY command/order/event/reservation is inserted, authority is linked and marked
+CONSUMED, and an append-only authority event is written. COMMIT exposes all facts or none. CONSUMED
+is terminal and occurs at PREPARED commit, not HTTP transmission. There is no committed unconsumed
+authority, so EXPIRED/CANCELED states and automatic replacement are unnecessary.
+
+Conceptual migration 005 adds `exchange_smoke_authorities` and
+`exchange_smoke_authority_events`. Authority columns include every identity/fingerprint/timestamp
+above, canonical envelope/balance payloads, `status='CONSUMED'`, nullable-during-transaction but
+required-at-COMMIT consumed command linkage, and payload digest. Constraints include PK authority;
+UNIQUE execution-root/operator-run, economic slot and consumed command; FKs to root/session/order;
+fixed environment/venue/status; positive generations/timestamps; consumed time not before creation;
+64-character digests; and one authority event sequence. UPDATE/DELETE triggers make authority and
+events immutable. Deferred linkage or an equivalent transaction-safe constraint must permit the
+single circular authority/command creation without permitting a committed partial pair.
+
+The minimum application API is one operation,
+`authorize_phase3_smoke_command(reviewed_request) -> Phase3ClaimReceipt`. It owns no SQL and calls
+one persistence transaction. Duplicate delivery of the same authority/run/economic slot returns
+the identical consumed authority/command only when every canonical fact matches; any difference is
+a typed conflict. The in-memory receipt mints a non-copyable/non-serializable TESTNET capability
+bound to authority, command, session and generations. The final gate rechecks the consumed linkage,
+ACTIVE control, SAFE reconciliation, settlement, session, counters, rules, envelope and current
+authorization. ACTIVE is satisfied only for that exact command-scoped claim and blocks everything
+else. Restart never restores the receipt or capability.
+
+Balance-scope payload records fresh exchange free+locked totals and immutable external baselines.
+For the accepted initial allocation, external BTC baseline is the observed total minus zero managed
+BTC; external USDT baseline is the observed total minus `25 USDT`. Reconciliation requires exchange
+totals to equal external baselines plus managed exchange effects calculated only from authoritative
+trades for the linked command, including known locked effects and fees. Exchange free quote must
+also cover managed pending requirements and the `13 USDT` reserve. Excess is external; any
+unexplained delta is conflict. Whole-account balances are never copied into Portfolio.
+
+### Required schema-v5 crash matrix
+
+| Failpoint | Fresh-process authority/order state | Submission eligibility |
+| --- | --- | --- |
+| Before authority insert | no authority, no command | none |
+| After insert, command insert, PREPARED event or CONSUMED update but before COMMIT | full rollback; no authority or command | none |
+| Immediately after COMMIT or lost COMMIT acknowledgement | one CONSUMED authority linked to one PREPARED command | none after restart; ACTIVE/recovery-only |
+| Before `SUBMITTING` in the same process | consumed authority and PREPARED command | only the original in-memory exact-command claim |
+| After `SUBMITTING` COMMIT, before gateway or with lost ACK/ambiguity | one attempt and SUBMITTING/reconciliation-required identity | reconciliation only; no replacement |
+| After ACK/rejection persistence | existing terminal/non-terminal lifecycle fact | existing reconciliation/settlement rules only |
+
+Recovery validates authority/event digests, lineage, generations, timestamps, canonical envelope
+and balance payloads, exact one-to-one authority/command linkage and legal order lifecycle. A
+committed unconsumed authority, multiple commands, missing event/link, altered digest or impossible
+timestamp is `RECOVERY_REQUIRED`; nothing is deleted or rebuilt. Phase 4 reopens the same database,
+account, authority, command and client ID, reconciles authoritative trades and settles exactly once
+without submission authority.
 
 Limits are: BTCUSDT only; MARKET only; long-only; base quantity; one order and one in-flight order;
 `TESTNET_MAX_SESSION_SUBMISSION_COUNT=1`; submitted-notional and turnover caps just above the
@@ -306,19 +392,18 @@ approximation. Final numeric values require Phase 1 price, rules and balances an
 Required sequence:
 
 ```text
-phase-specific authorization -> audited kill-switch clear -> fresh startup
--> recovery -> reconciliation -> settlement -> READY
--> one controlled smoke command -> financial Risk -> exchange Risk -> PREPARED
+phase-specific authorization -> ACTIVE kill switch -> read-only recovery/reconciliation/settlement
+-> cleanliness + financial Risk + exchange Risk
+-> atomic one-shot authority CONSUMED + sole PREPARED command
 -> final durable gate -> SUBMITTING COMMIT -> exactly one POST /api/v3/order
 -> ACK or ambiguity -> reconciliation -> authoritative trades -> settlement
 -> Portfolio verification -> durable kill switch ACTIVE -> process stop
 ```
 
-Stop at every mismatch. Submission has no automatic retry. A reviewed one-shot policy should
-atomically exhaust authority after the first committed attempt and reactivate the kill switch as
-soon as the outcome is durably recorded. Until that behavior exists, the operator must reactivate
-through an audited command immediately after the first attempt; the runtime stays supervised and
-must be stopped if reactivation cannot be proven. Environment values may not clear the switch.
+Stop at every mismatch. Submission has no automatic retry. Authority is consumed when the sole
+PREPARED command commits, so rejection, local/gateway failure or ambiguity cannot permit a
+replacement. The global kill switch stays ACTIVE throughout; only the same-process, exact-command
+claim can satisfy the final gate. Environment values cannot clear or replace this control.
 
 Before authorization, the dedicated command must enforce one submission, one non-terminal order
 and one in-flight order maximum; narrowly bounded submitted-notional, turnover, order and position

@@ -356,7 +356,7 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 
 ## Этап 4. Risk hardening и биржевое execution
 
-Статус: **in progress — M4.10 Phase 1 and Phase 2 PASS; Phase 3 BLOCKED and unauthorized**.
+Статус: **in progress — M4.10 Phase 1 and Phase 2 PASS; Phase 3 architecture accepted, READY_FOR_SCHEMA_V5_IMPLEMENTATION and unauthorized**.
 
 ### Цель
 
@@ -483,7 +483,7 @@ recovery и изолированным testnet execution до отдельног
 
 #### M4.10 Controlled Binance Testnet Smoke
 
-Статус: **Phase 1 authenticated read-only PASS; Phase 2 signed order-test PASS; Phase 3 BLOCKED and unauthorized** (2026-08-13).
+Статус: **Phase 1 authenticated read-only PASS; Phase 2 signed order-test PASS; Phase 3 architecture accepted, READY_FOR_SCHEMA_V5_IMPLEMENTATION and unauthorized** (2026-08-13).
 
 - По отдельным разрешениям выполнить read-only authentication, `/api/v3/order/test`, bounded
   BUY/SELL и restart/reconciliation smoke только на Spot Testnet. Cancellation остаётся
@@ -498,9 +498,10 @@ recovery и изолированным testnet execution до отдельног
   one fixed-host `POST /api/v3/order/test`. Its reviewed Phase 2-only BUY quantity is
   `0.00016000` BTC based on the public reference price `63849.22000000`; all numeric checks use
   `Decimal`. Phase 2 passed with exactly one `/api/v3/order/test` POST and no financial semantics.
-- Phase 3 is blocked pending a dedicated one-shot durable operator command, audited kill-switch
-  clear/reactivation flow, bounded first-order risk envelope, and an accepted policy that keeps the
-  pre-existing exchange 1 BTC outside managed Portfolio history or explicitly bootstraps it.
+- ADR-064 accepts the zero-BTC/`25 USDT` managed subledger and BUY-only durable authority consumed
+  atomically with the sole PREPARED command while the global switch remains ACTIVE. Its in-memory
+  exact-command claim is lost on restart. Schema-v5/runtime implementation and crash proofs remain
+  pending; Phase 3 is not authorized.
 
 #### M4.11 Stage 4 Completion
 
@@ -522,8 +523,8 @@ recovery и изолированным testnet execution до отдельног
   authoritative execution flow and durable reconciliation coverage horizon are implemented.
   M4.9 completed; final crash/restart safety review passed. M4.10 security preflight is
   completed and its final preflight safety review passed; Phase 1 authenticated read-only PASS,
-  Phase 2 signed order-test PASS, Phase 3 is blocked and unauthorized pending offline safety
-  prerequisites, and Stage 4 remains in progress.
+  Phase 2 signed order-test PASS, Phase 3 architecture accepted with schema-v5 implementation
+  pending and execution unauthorized, and Stage 4 remains in progress.
 - Проведён paper/shadow run, достаточный для сбора требуемой выборки наблюдений.
 - Собрано достаточное для допуска количество наблюдений по утверждённым критериям качества.
 

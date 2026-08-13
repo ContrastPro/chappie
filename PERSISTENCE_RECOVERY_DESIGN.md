@@ -1053,3 +1053,37 @@ remains durable evidence only; startup never converts it into a network side eff
 Migration 004 also binds every settlement to its authorizing SAFE reconciliation run and positive
 generation. Recovery verifies that linkage and settlement refuses financial application while
 the current reconciliation state lacks durable complete-history evidence.
+
+### Accepted M4.10 Phase 3 schema-v5 design
+
+The Phase 3 offline review found that schema v4 cannot safely express a one-shot operator
+ceremony. `execution_control_state` can durably clear the kill switch, but a crash after that clear
+and before `begin_submission()` leaves no consumed attempt or other durable fact preventing restart
+from minting a new process-local capability. Ordinary CLEARED state is therefore insufficient for
+the first real smoke.
+
+Accepted ADR-064 requires an additive `exchange_smoke_authorities` record bound to execution root,
+account, session, control/reconciliation generations, operator run and economic-slot identities,
+exact command, rules/configuration fingerprints and canonical risk-envelope/balance-scope digests.
+The only committed state is CONSUMED. One `BEGIN IMMEDIATE` operation inserts the transaction-local
+authority, creates the sole PREPARED order/event/reservation, links command and authority one-to-one,
+marks CONSUMED and appends its audit event. There is no authority-only commit. The global switch
+remains ACTIVE; commit returns only an in-memory exact-command claim, never durable capability.
+Restart loses the claim and is recovery-only; it may reconcile the same identity but cannot restore
+first-submit eligibility. Phase 4 reopens this exact lineage and settlement journal without a new
+authority.
+
+Conceptual constraints are: PK authority ID; UNIQUE execution-root/operator-run, Phase 3 economic
+slot and consumed command; FKs to root/session/command; TESTNET/binance-spot and CONSUMED-linkage
+CHECKs; canonical 64-character digests; append-only events; and UPDATE/DELETE denial. Recovery
+verifies authority and event digests, lineage, expected generations, exact one-to-one command,
+BUY-only envelope, timestamps and payload fingerprints. Any missing/impossible link is
+`RECOVERY_REQUIRED`. Migration 005 remains additive and transactional; migrations 001–004 remain
+byte-identical and a failed upgrade leaves v4 valid under the existing migration transaction.
+
+The accepted design records a zero-base managed Portfolio root with an explicit `25 USDT` quote
+allocation. Exchange balances remain observations, not Portfolio genesis: the pre-existing
+`1 BTC` is external/unmanaged and cannot be imported, settled or sold. Existing Portfolio root
+configuration can represent `0 BTC / 25 USDT`, so v5 adds authority/balance-scope evidence rather
+than a second financial root. No migration 005 or runtime API is implemented by this review; Phase 3
+remains unauthorized until implementation and crash-safety review pass.
