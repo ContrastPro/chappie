@@ -1089,3 +1089,10 @@ than a second financial root. Migration 005 and the offline atomic authority API
 with BaseException crash proofs and recovery validation; the final adversarial safety review passed.
 The Phase 3 one-shot operator harness is complete and its final offline operator safety review passed,
 while execution remains unauthorized pending a separate explicit authorization.
+
+Phase 4 reopens that exact schema-v5 database without reconstructing the Phase 3 claim. Its offline
+recovery/settlement harness is complete and the final adversarial safety review passed; production
+execution authorization remains pending. Its harness reconciles the sole order and authoritative
+trades, records complete coverage only when facts
+agree, and reuses atomic exactly-once settlement. Production execution remains unauthorized; ACK alone
+is never treated as a fill.

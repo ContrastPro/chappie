@@ -356,7 +356,7 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 
 ## Этап 4. Risk hardening и биржевое execution
 
-Статус: **in progress — M4.10 Phase 1 and Phase 2 PASS; Phase 3 schema-v5 PASS; operator harness completed; final offline operator safety review passed; execution authorization pending**.
+Статус: **in progress — M4.10 Phase 1/2 PASS; Phase 3 one-shot submission PASS; Phase 4 recovery/settlement harness completed and final offline safety review passed; execution authorization pending**.
 
 ### Цель
 
@@ -483,7 +483,7 @@ recovery и изолированным testnet execution до отдельног
 
 #### M4.10 Controlled Binance Testnet Smoke
 
-Статус: **Phase 1 authenticated read-only PASS; Phase 2 signed order-test PASS; Phase 3 schema-v5 PASS; operator harness completed; final offline operator safety review passed; execution authorization pending** (2026-08-13).
+Статус: **Phase 1/2 PASS; Phase 3 one-shot submission PASS; authoritative fill/settlement not yet proven; Phase 4 recovery/settlement harness completed and final offline safety review passed; execution authorization pending** (2026-08-13).
 
 - По отдельным разрешениям выполнить read-only authentication, `/api/v3/order/test`, bounded
   BUY/SELL и restart/reconciliation smoke только на Spot Testnet. Cancellation остаётся

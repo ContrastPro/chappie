@@ -836,3 +836,10 @@ restart remains ACTIVE/recovery-only and preserves the same command for reconcil
 first-submit eligibility. Schema-v5 authority implementation and offline crash proofs are complete
 and the final adversarial safety review passed. The isolated one-shot operator harness is complete
 and its final offline operator safety review passed, while Phase 3 execution authorization remains pending.
+
+Phase 3 subsequently reached ACK with its sole durable identity; ACK remains non-settlement evidence.
+Phase 4 is a distinct fresh-process, same-database GET-only recovery graph. Its harness is complete and
+its final offline safety review passed; production execution authorization remains pending. It derives
+the sole durable identity, validates normalized order/trade and external-balance facts, and reuses
+exactly-once settlement.
+It has no submission capability or POST path and remains unauthorized for production execution.

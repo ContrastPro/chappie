@@ -1002,8 +1002,8 @@ rules. No persistence, Portfolio, lifecycle, reconciliation, settlement or norma
 composed. Phase 2 passed with exactly one test-endpoint POST, accepted signing/request-contract
 semantics and no real order or financial mutation.
 
-Phase 3 execution remains pending separate authorization. The implemented and finally reviewed offline
-one-shot authority graph through Risk, durable
+Phase 3 completed its one-shot ACK-level submission. The implemented and finally reviewed offline
+one-shot authority graph passes through Risk, durable
 identity, PREPARED, final gate and SUBMITTING and a first-order risk envelope capped at one
 submission/non-terminal/in-flight order. The Testnet
 account's pre-existing 1 BTC is not managed history: production Portfolio composition starts at
@@ -1018,8 +1018,12 @@ balance-scope digests. One `BEGIN IMMEDIATE` transaction inserts and consumes th
 the only PREPARED command/event/reservation and commits their one-to-one audit link. The global
 switch remains ACTIVE; only the returned in-memory exact-command claim can satisfy the final gate.
 Crash loses it, so restart omits capability and retains reconciliation authority for the same
-identity. Schema-v5 persistence and readiness are implemented; the operator API is next. Ordinary
+identity. Schema-v5 persistence and the Phase 3 operator are implemented. Ordinary
 CLEARED state is forbidden for Phase 3.
+
+Phase 4 is a separate GET-only recovery and settlement graph over the same database and identity. Its
+offline harness and final adversarial safety review are complete; execution authorization remains
+pending. It cannot submit, replace, or cancel. Authoritative fill/settlement proof remains pending.
 
 The committed lifecycle has one terminal state, CONSUMED. Transaction-local PREPARED cannot become
 visible without the linked command; stale authorization fails before insert, so EXPIRED/CANCELED

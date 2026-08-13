@@ -67,10 +67,14 @@ subledger plus durable one-shot authority consumed atomically with the sole PREP
 The schema-v5 safety boundary is implemented. The global switch remains ACTIVE; only the transaction's
 in-memory exact-command claim may reach the final gate, so restart cannot recreate eligibility.
 The offline schema-v5 one-shot authority implementation is complete and its final adversarial safety
-review passed. The dedicated one-shot Phase 3 operator harness is complete and its final offline
-operator safety review passed; execution authorization remains pending and no Phase 3 command has been executed.
+review passed. The dedicated one-shot Phase 3 operator completed its authorized ACK-level submission;
+ACK is not fill or settlement evidence.
 See [`M4_10_TESTNET_SMOKE_PLAN.md`](M4_10_TESTNET_SMOKE_PLAN.md). Configuring credentials does not
 authorize an authenticated read, `/api/v3/order/test` or a real order; each is a separate gate.
+
+Phase 3 subsequently completed its single ACK-level submission; ACK is not fill evidence. The Phase 4
+same-database recovery/settlement harness is complete and its final offline safety review passed. It
+has no submission path and remains unauthorized pending separate execution approval.
 
 Important defaults:
 

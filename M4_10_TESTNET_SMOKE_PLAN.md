@@ -1,6 +1,10 @@
 # M4.10 Controlled Binance Spot Testnet Smoke Plan
 
-Status: **Phase 1 authenticated read-only PASS; Phase 2 signed order-test PASS; Phase 3 schema-v5 PASS; operator harness completed; final offline operator safety review passed; execution authorization pending** (2026-08-13).
+Status: **Phase 1 PASS; Phase 2 PASS; Phase 3 one-shot submission PASS; authoritative fill/settlement not yet proven; Phase 4 recovery/settlement harness completed; final offline Phase 4 safety review passed; Phase 4 execution authorization pending** (2026-08-13).
+
+Phase 4 uses `python -m app.tools.testnet_phase4` to reopen the same smoke database. It is GET-only,
+cannot reconstruct submission authority, and settles only normalized authoritative trades through the
+existing exactly-once machinery. Production Phase 4 execution remains unauthorized.
 
 Stage 4 remains in progress. This document authorizes no network access, credential use,
 additional `/api/v3/order/test` request or real Testnet order. Every phase below needs a new, explicit

@@ -1032,11 +1032,10 @@ class SQLiteExchangePersistence:
             "SELECT a.*,o.execution_root_id AS order_root,o.session_id AS order_session,"
             "o.account_fingerprint AS order_account,o.side AS order_side,"
             "p.execution_root_id AS portfolio_root,p.state_digest AS portfolio_initial_digest,"
-            "c.state_payload AS portfolio_current_payload,c.portfolio_version "
+            "p.state_payload AS portfolio_initial_payload "
             "FROM exchange_smoke_authorities a LEFT JOIN exchange_orders o "
             "ON o.durable_command_key=a.consumed_durable_command_key "
             "LEFT JOIN exchange_portfolio_roots p ON p.portfolio_id=a.managed_portfolio_id "
-            "LEFT JOIN exchange_portfolio_current c ON c.portfolio_id=a.managed_portfolio_id "
             "ORDER BY a.authority_id"
         ).fetchall()
         for row in rows:
@@ -1108,10 +1107,10 @@ class SQLiteExchangePersistence:
                     or deserialize_decimal(balance["usdt_free"]["$decimal"]) < Decimal(25)
                 ):
                     raise PersistenceIntegrityError("Phase 3 balance scope violates policy")
-                portfolio = json.loads(row["portfolio_current_payload"])
+                portfolio = json.loads(row["portfolio_initial_payload"])
                 if (
                     row["portfolio_root"] != row["execution_root_id"]
-                    or row["portfolio_version"] != 0
+                    or portfolio["version"] != 0
                     or portfolio["portfolio_id"] != row["managed_portfolio_id"]
                     or portfolio["base_balance"] != {"$decimal": "0"}
                     or portfolio["quote_balance"] != {"$decimal": "25"}
