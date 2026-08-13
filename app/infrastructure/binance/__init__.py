@@ -14,8 +14,10 @@ from app.infrastructure.binance.exceptions import (
 from app.infrastructure.binance.signing import encode_parameters, sign_hmac_sha256
 from app.infrastructure.binance.testnet_execution import (
     SPOT_TESTNET_BASE_URL,
+    AccountTradeObservation,
     BinanceSpotTestnetAdapter,
     BinanceSpotTestnetConfig,
+    OpenOrderObservation,
     OrderIdentity,
     OrderIdentityResolver,
     OrderTestPreflightResult,
@@ -24,6 +26,7 @@ from app.infrastructure.binance.testnet_execution import (
 
 __all__ = [
     "SPOT_TESTNET_BASE_URL",
+    "AccountTradeObservation",
     "BinanceAmbiguousSubmissionError",
     "BinanceAuthenticationError",
     "BinanceConfigurationError",
@@ -37,6 +40,7 @@ __all__ = [
     "BinanceTestnetAdapterError",
     "BinanceTransportError",
     "BinanceUnsupportedContractError",
+    "OpenOrderObservation",
     "OrderIdentity",
     "OrderIdentityResolver",
     "OrderTestPreflightResult",

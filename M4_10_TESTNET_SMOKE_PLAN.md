@@ -112,16 +112,28 @@ attach them to evidence.
 
 ## Phase 1 — authenticated read-only
 
-Phase 1 still requires separate explicit authorization and a dedicated bounded command which
-constructs only persistence, the private read adapter, reconciler and settlement/status reporting
-while the durable kill switch remains ACTIVE.
-It must make at most five HTTP requests in the normal empty-lineage case:
+Phase 1 still requires separate explicit authorization. The dedicated one-shot entrypoint is
+`python -m app.tools.testnet_phase1`; it requires the exact non-secret
+`M4_10_PHASE1_AUTHORIZED=YES` token, refuses an existing `logs/m4_10_phase1.log`, and exits after
+one bounded run. It is not a mode of `app.main`: it imports no trader, decision pipeline,
+submission service/gate/capability, lifecycle or persistence component. Its restricted facade
+exposes only instrument rules, BTC/USDT balances, BTCUSDT open orders and recent trade history.
+Phase 1 authorization is still pending; this command must not run before separate approval.
+
+The transport guard fixes `https://testnet.binance.vision`, permits only approved GET paths, counts
+method/path without query material, rejects every POST/PUT/PATCH/DELETE, and fails before a sixth
+request. The initial fresh-account run always uses four requests and fails fast after an unexpected
+open order. It creates no database or durable reconciliation/control/order/Portfolio state and
+does not inspect or mutate the kill switch. Sanitized evidence contains normalized facts only;
+exit codes are 0 PASS, 2 BLOCKED, and 1 technical FAILED.
+
+It must make at most five HTTP requests; the initial empty-lineage command makes exactly four:
 
 1. public `GET /api/v3/exchangeInfo?symbol=BTCUSDT`;
 2. signed `GET /api/v3/account` for normalized BTC and USDT balances;
 3. signed `GET /api/v3/openOrders?symbol=BTCUSDT`;
 4. signed `GET /api/v3/myTrades?symbol=BTCUSDT&startTime=...&limit=1000`;
-5. optional public server-time read only if minimal clock-preflight tooling adds it.
+5. reserved; no fifth request is made by the initial fresh-account command.
 
 The current adapter has no `/api/v3/time` method; do not improvise a raw request in an operator
 shell. For an existing durable managed order, its signed order query and order-scoped trade query
@@ -129,8 +141,9 @@ may replace/augment reads only under a separately reviewed request budget. Never
 
 Success requires authentication and 5-second `recvWindow` handling, clock skew inside the reviewed
 threshold, exact out-of-band account-lineage match, correctly normalized balances/rules, no
-unexpected orders or trades, SAFE reconciliation or an explicitly understood fail-closed initial
-state, and zero secret/signature leakage. Treat current rules and balances as exchange authority.
+unexpected orders or trades, an observation compatible with a clean initial lineage, and zero
+secret/signature leakage. Phase 1 deliberately writes no durable reconciliation record. Treat
+current rules and balances as exchange authority.
 Faucet/reset balances are not managed Portfolio history.
 
 STOP immediately on authentication, timestamp/signature or lineage failure; HTTP 418/429; rules

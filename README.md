@@ -49,7 +49,10 @@ not an authenticated Testnet smoke. M4.10 security preflight review passed, but 
 authorization remains pending; LIVE is unsupported.
 
 The M4.10 controlled Spot Testnet security preflight is completed and its final safety review
-passed; Phase 1 still awaits explicit authorization.
+passed. The dedicated `python -m app.tools.testnet_phase1` harness is structurally read-only,
+GET-only, capped at five requests and isolated from persistence/submission composition; Phase 1
+still awaits explicit authorization. Its exact `M4_10_PHASE1_AUTHORIZED=YES` token has no meaning
+outside this command, which also refuses pre-existing `logs/m4_10_phase1.log` evidence.
 See [`M4_10_TESTNET_SMOKE_PLAN.md`](M4_10_TESTNET_SMOKE_PLAN.md). Configuring credentials does not
 authorize an authenticated read, `/api/v3/order/test` or a real order; each is a separate gate.
 

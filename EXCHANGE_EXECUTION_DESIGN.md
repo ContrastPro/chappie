@@ -981,5 +981,9 @@ completed with final safety review passed and Phase 1 authorization pending.
 Status: **security preflight completed; final preflight safety review passed; Phase 1 authorization pending** (2026-08-13). The authorization ladder in
 `M4_10_TESTNET_SMOKE_PLAN.md` keeps authenticated reads, `/api/v3/order/test`, one real Testnet
 order and restart reconciliation under distinct approvals. Central dependency-log suppression and
-an explicit no-fallback order-test adapter contract are implemented. Safe bounded read tooling and
-audited kill-switch/smoke commands remain later prerequisites. No network action was performed.
+an explicit no-fallback order-test adapter contract are implemented. The Phase 0 read-harness gap
+is resolved by the separate `app.tools.testnet_phase1` entrypoint: its four-operation facade and
+fixed-host transport enforce the GET whitelist and five-request ceiling. AST/import and
+MockTransport proofs exclude trader composition, persistence, submission capability/gate/lifecycle,
+real submit and order-test calls. It writes sanitized evidence and exits. Audited kill-switch/smoke
+commands remain later prerequisites. Phase 1 remains unauthorized; no network action was performed.

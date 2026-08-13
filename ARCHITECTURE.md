@@ -804,6 +804,10 @@ is pending.
 `M4_10_TESTNET_SMOKE_PLAN.md` separates
 offline, authenticated-read, `/order/test`, one-order and restart phases; each requires independent
 operator approval. Central logging suppresses private transport tracing even under global DEBUG;
-the adapter's isolated order-test method has no durable or financial semantics. Audited one-shot
-and kill-switch operator commands remain prerequisites for later phases. No credential, network
-request or order is authorized by this implementation. Stage 4 remains in progress.
+the adapter's isolated order-test method has no durable or financial semantics. The separate
+`app.tools.testnet_phase1` one-shot harness resolves the Phase 0 read-harness gap: its narrow facade
+exposes four reads, its transport permits only the fixed Testnet host and GET whitelist under a
+five-request ceiling, and it imports neither persistence nor trader, submission, order-test or
+capability paths. It writes sanitized evidence only and does not inspect or change the kill switch.
+Audited kill-switch and one-order commands remain prerequisites for later phases. No credential,
+network request or order is authorized by this implementation. Stage 4 remains in progress.

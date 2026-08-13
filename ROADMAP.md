@@ -490,6 +490,10 @@ recovery и изолированным testnet execution до отдельног
   unsupported. План не разрешает credentials, network или order до отдельной phase authorization.
 - Central logging suppression and an isolated MockTransport-proven `/api/v3/order/test` adapter
   contract are implemented. Neither capability performs an authenticated action by itself.
+- Phase 0's bounded-reader blocker is resolved by `python -m app.tools.testnet_phase1`: a separate
+  authorization-token-gated, fixed-host GET-only harness with a hard five-request budget, narrow
+  read facade, sanitized evidence and no persistence/submission composition. Phase 1 remains
+  unauthorized and unexecuted.
 
 #### M4.11 Stage 4 Completion
 

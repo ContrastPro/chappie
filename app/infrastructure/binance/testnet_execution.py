@@ -104,6 +104,34 @@ class OrderTestPreflightResult:
         return True
 
 
+@dataclass(frozen=True, slots=True)
+class AccountTradeObservation:
+    """Minimal account-history fact for the observation-only Phase 1 harness."""
+
+    exchange_order_id: str
+    client_order_id: str | None
+    commission_asset: str
+
+    def __post_init__(self) -> None:
+        if not self.exchange_order_id:
+            raise BinanceNormalizationError("trade observation order ID must be non-empty")
+        if self.client_order_id is not None and not self.client_order_id:
+            raise BinanceNormalizationError("trade observation client ID must be non-empty")
+        if not self.commission_asset:
+            raise BinanceNormalizationError("trade observation commission asset must be non-empty")
+
+
+@dataclass(frozen=True, slots=True)
+class OpenOrderObservation:
+    """Minimal open-order fact for the observation-only Phase 1 harness."""
+
+    client_order_id: str
+
+    def __post_init__(self) -> None:
+        if not self.client_order_id:
+            raise BinanceNormalizationError("open-order observation client ID must be non-empty")
+
+
 @runtime_checkable
 class OrderIdentityResolver(Protocol):
     def by_client_order_id(self, client_order_id: str) -> OrderIdentity | None: ...
@@ -357,6 +385,23 @@ class BinanceSpotTestnetAdapter:
             orders.append(self._normalize_order_payload(value, identity, stream_key))
         return tuple(orders)
 
+    def read_open_order_observations(
+        self, *, stream_key: MarketStreamKey
+    ) -> tuple[OpenOrderObservation, ...]:
+        """Read sanitized open-order presence without requiring durable identity."""
+
+        self._validate_stream(stream_key)
+        response = self._signed_get("/api/v3/openOrders", [("symbol", stream_key.symbol)])
+        self._raise_if_error(response, self._error_payload(response))
+        observations: list[OpenOrderObservation] = []
+        for value in self._json_list(response):
+            if not isinstance(value, dict):
+                raise BinanceNormalizationError("open-order observation must be an object")
+            if self._string(value, "symbol") != stream_key.symbol:
+                raise BinanceNormalizationError("open-order observation symbol mismatch")
+            observations.append(OpenOrderObservation(self._string(value, "clientOrderId")))
+        return tuple(observations)
+
     def read_trade_history(
         self, *, stream_key: MarketStreamKey, start_at_ms: int
     ) -> ExchangeTradeHistory:
@@ -380,6 +425,39 @@ class BinanceSpotTestnetAdapter:
         return ExchangeTradeHistory(
             tuple(trades), start_at_ms, coverage_end_ms, len(payload) < 1000
         )
+
+    def read_account_trade_observations(
+        self, *, stream_key: MarketStreamKey, start_at_ms: int
+    ) -> tuple[AccountTradeObservation, ...]:
+        """Read sanitized trade presence without requiring or creating durable identity."""
+
+        self._validate_stream(stream_key)
+        if isinstance(start_at_ms, bool) or not isinstance(start_at_ms, int) or start_at_ms < 0:
+            raise BinanceConfigurationError("start_at_ms must be non-negative")
+        response = self._signed_get(
+            "/api/v3/myTrades",
+            [("symbol", stream_key.symbol), ("startTime", start_at_ms), ("limit", 1000)],
+        )
+        self._raise_if_error(response, self._error_payload(response))
+        observations: list[AccountTradeObservation] = []
+        for value in self._json_list(response):
+            if not isinstance(value, dict):
+                raise BinanceNormalizationError("trade observation must be an object")
+            if self._string(value, "symbol") != stream_key.symbol:
+                raise BinanceNormalizationError("trade observation symbol mismatch")
+            exchange_order_id = str(self._integer(value, "orderId"))
+            try:
+                identity = self._identity_resolver.by_exchange_order_id(exchange_order_id)
+            except Exception as error:
+                raise BinanceConfigurationError("order identity resolver failed") from error
+            observations.append(
+                AccountTradeObservation(
+                    exchange_order_id,
+                    identity.client_order_id if identity is not None else None,
+                    self._string(value, "commissionAsset"),
+                )
+            )
+        return tuple(observations)
 
     def read_balances(self, assets: tuple[str, ...]) -> tuple[AccountBalance, ...]:
         self._ensure_open()
