@@ -45,16 +45,16 @@ process to perform a fresh readiness check; recovery-only does not promote itsel
 M4.9 offline crash/restart torture recreates fresh production graphs around file-backed SQLite and
 a deterministic fake exchange. Repeated NOT_FOUND, later FOUND, lost acknowledgements, duplicate
 decisions and settlement restarts remain no-resubmit/exact-once. This is automated safety evidence,
-not an authenticated Testnet smoke. M4.10 security preflight review passed, but Phase 1
-authorization remains pending; LIVE is unsupported.
+not an authenticated Testnet smoke. M4.10 Phase 1 authenticated read-only evidence now passes;
+Phase 2 authorization remains pending and LIVE is unsupported.
 
 The M4.10 controlled Spot Testnet security preflight is completed and its final safety review
 passed. The dedicated `python -m app.tools.testnet_phase1` harness is structurally read-only,
-GET-only, capped at five requests and isolated from persistence/submission composition; Phase 1
-still awaits explicit authorization. Its exact `M4_10_PHASE1_AUTHORIZED=YES` token has no meaning
-outside this command. The first attempt's `logs/m4_10_phase1.log` evidence is retained after a safe
-one-public-GET contract-drift stop; a separately authorized retry uses
-`logs/m4_10_phase1_retry1.log` and refuses a collision there.
+GET-only, capped at five requests and isolated from persistence/submission composition. Phase 1
+retry #1 passed with four GETs, no open orders/trades and no side effects; Phase 2 remains separately
+authorization-gated. The first attempt's `logs/m4_10_phase1.log` evidence is retained after a safe
+one-public-GET contract-drift stop; separately authorized retry #1 used
+`logs/m4_10_phase1_retry1.log` without overwriting it.
 See [`M4_10_TESTNET_SMOKE_PLAN.md`](M4_10_TESTNET_SMOKE_PLAN.md). Configuring credentials does not
 authorize an authenticated read, `/api/v3/order/test` or a real order; each is a separate gate.
 

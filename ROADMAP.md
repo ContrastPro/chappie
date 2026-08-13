@@ -356,7 +356,7 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 
 ## Этап 4. Risk hardening и биржевое execution
 
-Статус: **in progress — M4.9 completed; M4.10 preflight review passed, Phase 1 authorization pending**.
+Статус: **in progress — M4.9 completed; M4.10 Phase 1 read-only PASS, Phase 2 authorization pending**.
 
 ### Цель
 
@@ -483,7 +483,7 @@ recovery и изолированным testnet execution до отдельног
 
 #### M4.10 Controlled Binance Testnet Smoke
 
-Статус: **security preflight completed; final preflight safety review passed; Phase 1 authorization pending** (2026-08-13).
+Статус: **Phase 1 authenticated read-only PASS; Phase 2 authorization pending** (2026-08-13).
 
 - По отдельным разрешениям выполнить read-only authentication, `/api/v3/order/test`, bounded
   BUY/SELL и restart/reconciliation smoke только на Spot Testnet. Cancellation остаётся
@@ -492,8 +492,8 @@ recovery и изолированным testnet execution до отдельног
   contract are implemented. Neither capability performs an authenticated action by itself.
 - Phase 0's bounded-reader blocker is resolved by `python -m app.tools.testnet_phase1`: a separate
   authorization-token-gated, fixed-host GET-only harness with a hard five-request budget, narrow
-  read facade, sanitized evidence and no persistence/submission composition. Phase 1 remains
-  unauthorized and unexecuted.
+  read facade, sanitized evidence and no persistence/submission composition. Phase 1 retry #1
+  passed with exactly four GETs and no side effects; Phase 2 remains separately authorization-gated.
 
 #### M4.11 Stage 4 Completion
 
@@ -514,8 +514,8 @@ recovery и изолированным testnet execution до отдельног
 - M4.8 completed; final safety review passed. Production Testnet composition,
   authoritative execution flow and durable reconciliation coverage horizon are implemented.
   M4.9 completed; final crash/restart safety review passed. M4.10 security preflight is
-  completed and its final preflight safety review passed; Phase 1 authorization is pending and
-  Stage 4 remains in progress.
+  completed and its final preflight safety review passed; Phase 1 authenticated read-only PASS,
+  Phase 2 authorization is pending, and Stage 4 remains in progress.
 - Проведён paper/shadow run, достаточный для сбора требуемой выборки наблюдений.
 - Собрано достаточное для допуска количество наблюдений по утверждённым критериям качества.
 

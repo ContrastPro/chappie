@@ -926,7 +926,8 @@ inventing conversion. Runtime startup executes recovery -> reconciliation -> set
 readiness and issues authority only after re-reading current durable generations. The authority
 is TESTNET-only and binds account and session lineage. LIVE, cancellation and authenticated smoke
 remain absent; M4.9 is completed and its final crash/restart safety review passed. M4.10 security
-preflight safety review passed and Phase 1 authorization is pending; Stage 4 remains in progress.
+preflight safety review passed, Phase 1 authenticated read-only PASS and Phase 2 authorization is
+pending; Stage 4 remains in progress.
 
 The completion pass makes the network boundary accept only a single-use `PreSubmitAuthorization`
 minted by `TestnetPreSubmitGate`. The gate performs a final durable reread and rejects stale Risk,
@@ -957,7 +958,8 @@ decision coordinator, so executable intents cannot accumulate PREPARED orders. T
 same-process promotion in M4.8: resolving the blocker requires a fresh startup, which repeats the
 ordered recovery checks and may mint a new generation-bound capability. ADR-063 is accepted;
 M4.9 is completed and its final crash/restart safety review passed. M4.10 security preflight
-review passed and Phase 1 authorization is pending, while Stage 4 remains in progress.
+review passed, Phase 1 authenticated read-only PASS and Phase 2 authorization is pending, while
+Stage 4 remains in progress.
 
 Full-graph acceptance uses fresh `build_application()` objects for every simulated process while
 sharing only the SQLite file and deterministic fake exchange. The suite proves lost ACK A/B/C,
@@ -974,11 +976,12 @@ fixed-seed schedules preserve one durable command/client ID/attempt and at most 
 Existing transaction failpoint matrices cover all four exception families around submission,
 status, reconciliation and settlement commits. No new ADR or exchange capability was required.
 See `M4_9_CRASH_RESTART_REPORT.md`; Stage 4 remains in progress and M4.10 security preflight is
-completed with final safety review passed and Phase 1 authorization pending.
+completed with final safety review passed, Phase 1 authenticated read-only PASS and Phase 2
+authorization pending.
 
 ### M4.10 controlled smoke design status
 
-Status: **security preflight completed; final preflight safety review passed; Phase 1 authorization pending** (2026-08-13). The authorization ladder in
+Status: **Phase 1 authenticated read-only PASS; Phase 2 authorization pending** (2026-08-13). The authorization ladder in
 `M4_10_TESTNET_SMOKE_PLAN.md` keeps authenticated reads, `/api/v3/order/test`, one real Testnet
 order and restart reconciliation under distinct approvals. Central dependency-log suppression and
 an explicit no-fallback order-test adapter contract are implemented. The Phase 0 read-harness gap
@@ -986,4 +989,5 @@ is resolved by the separate `app.tools.testnet_phase1` entrypoint: its four-oper
 fixed-host transport enforce the GET whitelist and five-request ceiling. AST/import and
 MockTransport proofs exclude trader composition, persistence, submission capability/gate/lifecycle,
 real submit and order-test calls. It writes sanitized evidence and exits. Audited kill-switch/smoke
-commands remain later prerequisites. Phase 1 remains unauthorized; no network action was performed.
+commands remain later prerequisites. Phase 1 used exactly four GETs and produced no order-capable
+call or durable/financial mutation. Its authorization is consumed; Phase 2 remains unauthorized.

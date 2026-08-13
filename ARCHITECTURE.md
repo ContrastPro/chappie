@@ -756,7 +756,7 @@ blocks settlement and new authority.
 Submission authority is opaque and process-local, and binds TESTNET environment, account,
 session, reconciliation generation and control generation. Any failed gate produces no
 capability. LIVE remains structurally rejected. M4.9 is completed and its final crash/restart
-safety review passed; M4.10 security preflight review passed and Phase 1 authorization is
+safety review passed; M4.10 Phase 1 authenticated read-only PASS and Phase 2 authorization is
 pending; Stage 4 remains in progress.
 
 The M4.8 completion pass removes the raw public `submit_prepared(key)` gateway path. A synchronous
@@ -783,8 +783,8 @@ delivery. Kill-switch, reconciliation and non-terminal-order blockers are recove
 corrupt/incompatible durable state remains fatal. Recovery-only never promotes in-process: a fresh
 startup must rerun recovery, reconciliation, settlement and control checks before minting a new
 process-local capability. This contract is recorded by accepted ADR-063. M4.9
-is completed and its final crash/restart safety review passed; M4.10 security preflight review
-passed and Phase 1 authorization is pending; Stage 4 remains in progress.
+is completed and its final crash/restart safety review passed; M4.10 Phase 1 authenticated
+read-only PASS and Phase 2 authorization is pending; Stage 4 remains in progress.
 
 ## M4.9 crash/restart torture review
 
@@ -799,8 +799,8 @@ green. Detailed evidence is in `M4_9_CRASH_RESTART_REPORT.md`; Stage 4 remains i
 
 ## M4.10 controlled Testnet smoke authorization
 
-M4.10 security preflight is completed, its final safety review passed, and Phase 1 authorization
-is pending.
+M4.10 security preflight is completed, its final safety review passed, and Phase 1 authenticated
+read-only evidence passed; Phase 2 authorization is pending.
 `M4_10_TESTNET_SMOKE_PLAN.md` separates
 offline, authenticated-read, `/order/test`, one-order and restart phases; each requires independent
 operator approval. Central logging suppresses private transport tracing even under global DEBUG;
@@ -809,5 +809,8 @@ the adapter's isolated order-test method has no durable or financial semantics. 
 exposes four reads, its transport permits only the fixed Testnet host and GET whitelist under a
 five-request ceiling, and it imports neither persistence nor trader, submission, order-test or
 capability paths. It writes sanitized evidence only and does not inspect or change the kill switch.
-Audited kill-switch and one-order commands remain prerequisites for later phases. No credential,
-network request or order is authorized by this implementation. Stage 4 remains in progress.
+Audited kill-switch and one-order commands remain prerequisites for later phases. No further
+credential use, network request or order is currently authorized. Stage 4 remains in progress.
+The Phase 1 run made exactly four fixed-host GETs, observed zero open orders/trades, normalized
+BTCUSDT rules and BTC/USDT balances, and produced no durable or financial mutation. Its consumed
+authorization grants no POST authority.

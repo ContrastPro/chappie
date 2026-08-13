@@ -1,6 +1,6 @@
 # M4.10 Controlled Binance Spot Testnet Smoke Plan
 
-Status: **security preflight completed; final preflight safety review passed; Phase 1 authorization pending** (2026-08-13).
+Status: **Phase 1 authenticated read-only PASS; Phase 2 authorization pending** (2026-08-13).
 
 Stage 4 remains in progress. This document authorizes no network access, credential use,
 `/api/v3/order/test` request or real Testnet order. Every phase below needs a new, explicit
@@ -112,13 +112,13 @@ attach them to evidence.
 
 ## Phase 1 — authenticated read-only
 
-Phase 1 still requires separate explicit authorization. The dedicated one-shot entrypoint is
+Phase 1 completed with PASS under its separate authorization. The dedicated one-shot entrypoint is
 `python -m app.tools.testnet_phase1`; it requires the exact non-secret
 `M4_10_PHASE1_AUTHORIZED=YES` token, refuses an existing retry evidence path, and exits after
 one bounded run. It is not a mode of `app.main`: it imports no trader, decision pipeline,
 submission service/gate/capability, lifecycle or persistence component. Its restricted facade
 exposes only instrument rules, BTC/USDT balances, BTCUSDT open orders and recent trade history.
-Phase 1 authorization is still pending; this command must not run before separate approval.
+The Phase 1 authorization was consumed by that one run and grants no authority to rerun or proceed.
 
 The transport guard fixes `https://testnet.binance.vision`, permits only approved GET paths, counts
 method/path without query material, rejects every POST/PUT/PATCH/DELETE, and fails before a sixth
@@ -135,9 +135,28 @@ side effect occurred. Offline review traced the stop to documented Binance symbo
 drift: `MAX_NUM_ORDER_AMENDS` and `MAX_NUM_ORDER_LISTS` were missing from the explicit known-ignore
 set. The compatibility fix recognizes only those irrelevant no-amend/no-order-list limits while
 retaining fail-closed behavior for truly unknown filters and unchanged MARKET lot/notional rules.
-The original evidence must remain untouched. A separately authorized retry writes exclusively to
-`logs/m4_10_phase1_retry1.log` and refuses a collision there. Phase 1 has not passed; retry
-authorization remains pending.
+The original evidence remains untouched. Retry #1 wrote exclusively to
+`logs/m4_10_phase1_retry1.log` and refused a collision there.
+
+Phase 1 retry #1 completed with **PASS** on 2026-08-13 at 16:31:03 +0300 (run
+`09be9bb1-a293-4879-9575-6e4dedc35ad5`). Evidence SHA-256 is
+`ae3c7066ceb66a82f297c87a30d6da8d3ef340df6010c0744ea5a507a1c11e75`. Exactly four requests
+occurred: one GET each to `/api/v3/exchangeInfo`, `/api/v3/account`, `/api/v3/openOrders` and
+`/api/v3/myTrades`. No POST, `/api/v3/order/test`, `/api/v3/order`, cancellation, order,
+persistence/Portfolio/control mutation or kill-switch change occurred. Credentials and the Phase 1
+authorization token were removed after the run; evidence contains no key, secret, signature,
+signed URL/query/body or private header.
+
+Sanitized exchange authority was BTC `1.00000000` free / `0` locked and USDT `10000.00000000`
+free / `0` locked. This is not managed Portfolio history. Open, managed-open and unmanaged-open
+order counts were all zero. Recent and managed trade counts and unsupported-commission observations
+were all zero, establishing a clean observed account lineage. BTCUSDT normalized to quantity step
+`0.00001000` BTC, minimum quantity `0.00001000` BTC, minimum notional `5.00000000` USDT and rules
+version `5a8c5636f082e6f494d3690c011b6264820b778b1156580cd05a9a3897d0169c`.
+
+This proves the dedicated Testnet credentials authenticated, signed timestamp/`recvWindow`
+handling worked, account reads normalized, the current filter contract normalized, and the
+read-only harness remained isolated. It authorizes no POST or later phase.
 
 Offline filter-contract classification for the 2026-08-13 documented Spot symbol set:
 
@@ -180,8 +199,8 @@ Respect `Retry-After` and do not repeatedly probe credentials. Phase 1 never pro
 
 The minimal adapter operation now exists for exactly `POST /api/v3/order/test`. It is a separate
 contract from `submit_market_order`: there is no fallback to `/api/v3/order`, no retry, no redirect,
-and no production lifecycle mutation. Phase 2 nevertheless remains blocked until Phase 1 evidence
-passes and the operator separately authorizes Phase 2.
+and no production lifecycle mutation. Phase 1 evidence passed; Phase 2 remains authorization
+pending and requires a new explicit operator authorization.
 
 Official contract verification on 2026-08-13 used the current Binance Spot REST
 [`Test new order (TRADE)` documentation](https://developers.binance.com/en/docs/catalog/core-trading-spot-trading/api/rest-api/trade#test-new-order-trade)
@@ -195,10 +214,13 @@ They specify a signed `POST /api/v3/order/test`, `X-MBX-APIKEY`, order parameter
 states that Spot Testnet at `https://testnet.binance.vision` supports `/api/*` endpoints. No
 request was sent during verification.
 
-After fresh Phase 1 evidence, compute a BTCUSDT MARKET base quantity entirely with `Decimal`: align
-to current MARKET/LOT_SIZE step, exceed current minQty and current minNotional by a conservative
-margin, remain below Phase 3 caps and available Testnet balance, and include a deterministic
-Testnet-format client ID if the endpoint accepts it. Send `symbol=BTCUSDT`, chosen `side`,
+Before Phase 2, obtain a fresh public/read reference price `P`; Phase 1 did not record price, so it
+is unsafe to guess an exact quantity now. Compute entirely with `Decimal` using target test
+notional `2 * minNotional = 10.00000000 USDT` and
+`quantity = max(minQty, ceil((10 / P) / stepSize) * stepSize)`. Recheck the resulting notional,
+current rules and available balance immediately before authorization. This Phase 2-only candidate
+is not a Phase 3 real-order quantity. Include a deterministic Testnet-format client ID. Send
+`symbol=BTCUSDT`, chosen `side`,
 `type=MARKET`, base `quantity`, `newOrderRespType=ACK`, timestamp and the fixed 5-second
 `recvWindow`. Do not hardcode the quantity in this plan.
 
@@ -216,11 +238,21 @@ failure, redirect and 5xx raise typed preflight failures, not real-submit ambigu
 and `Retry-After`; malformed or non-empty success bodies fail normalization. There is no sleep or
 retry. A closed adapter rejects before HTTP.
 
+Offline Phase 2 prerequisites are otherwise met: the committed preflight method targets exactly
+one fixed-host `POST /api/v3/order/test`, has no fallback or retry, carries no persistence or
+financial semantics, validates the deterministic client-ID format, and has Phase 1 account/rules
+evidence preserved. Before authorization, this evidence update must be committed with a clean Git
+tree and a reviewed fresh public price observation must support the Decimal quantity calculation.
+No production behavior is missing. Any Phase 2 authorization permits exactly that one POST. It
+does not permit `POST /api/v3/order`, cancellation, kill-switch clear, a real order, continuous
+trading or Phase 3.
+
 ## Phase 3 — one real Testnet order
 
-Phase 3 is design-only until Phase 1 and Phase 2 evidence passes and the missing one-shot operator
-tooling is reviewed. Authorization must state exact HEAD, account fingerprint, fresh database path,
-run ID, BUY/SELL, computed base quantity, maximum submitted notional and request count.
+Phase 3 remains not authorized and is design-only until Phase 2 evidence passes and the missing
+one-shot operator tooling is reviewed. Authorization must state exact HEAD, account fingerprint,
+fresh database path, run ID, BUY/SELL, computed base quantity, maximum submitted notional and
+request count.
 
 The safer decision source is a dedicated operator-initiated smoke command, not waiting for or
 distorting EMA. It must reuse the normal financial Risk, exchange Risk, durable decision/identity,
