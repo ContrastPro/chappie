@@ -356,7 +356,7 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 
 ## Этап 4. Risk hardening и биржевое execution
 
-Статус: **in progress — M4.8 completed; final safety review passed; M4.9 next**.
+Статус: **in progress — M4.9 completed; final crash/restart safety review passed; M4.10 next**.
 
 ### Цель
 
@@ -472,12 +472,18 @@ recovery и изолированным testnet execution до отдельног
 
 #### M4.9 Crash/Restart/Duplicate-Order Safety Review
 
-Статус: **next**.
+Статус: **completed; final crash/restart safety review passed** (2026-08-13).
 
 - Проверить ambiguous submit, partial fills, cancellations, writer exclusion, lost
   acknowledgements и exact-once Portfolio application per exchange trade.
+- Deterministic offline torture extended production recovery to twenty NOT_FOUND restarts,
+  later FOUND resolution, 100 same-process and ten cross-process duplicate decisions, twenty
+  RECOVERY_ONLY/READY restarts, and fixed-seed crash schedules. No production safety defect was
+  found; M4.10 remains future controlled Testnet smoke.
 
 #### M4.10 Controlled Binance Testnet Smoke
+
+Статус: **next; not started**.
 
 - После отдельного разрешения выполнить bounded BUY/SELL/restart/cancellation smoke
   только на Testnet с проверкой endpoint и отсутствия secret leakage.
@@ -500,7 +506,8 @@ recovery и изолированным testnet execution до отдельног
 - Подключён Binance testnet adapter.
 - M4.8 completed; final safety review passed. Production Testnet composition,
   authoritative execution flow and durable reconciliation coverage horizon are implemented.
-  M4.9 is not started; Stage 4 remains in progress.
+  M4.9 completed; final crash/restart safety review passed. M4.10 is next and not started;
+  Stage 4 remains in progress.
 - Проведён paper/shadow run, достаточный для сбора требуемой выборки наблюдений.
 - Собрано достаточное для допуска количество наблюдений по утверждённым критериям качества.
 

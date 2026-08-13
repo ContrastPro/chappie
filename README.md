@@ -42,6 +42,12 @@ reconciliation, settlement and status remain available, while no submission capa
 service or Testnet decision consumer exists. After the durable blocker is resolved, restart the
 process to perform a fresh readiness check; recovery-only does not promote itself in-process.
 
+M4.9 offline crash/restart torture recreates fresh production graphs around file-backed SQLite and
+a deterministic fake exchange. Repeated NOT_FOUND, later FOUND, lost acknowledgements, duplicate
+decisions and settlement restarts remain no-resubmit/exact-once. This is automated safety evidence,
+not an authenticated Testnet smoke; M4.10 is next, not started and separately controlled, while
+LIVE is unsupported.
+
 Important defaults:
 
 - market: Binance Spot;

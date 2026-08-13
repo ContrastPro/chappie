@@ -925,7 +925,8 @@ session-turnover commit, then memory synchronization. Other fee assets fail clos
 inventing conversion. Runtime startup executes recovery -> reconciliation -> settlement ->
 readiness and issues authority only after re-reading current durable generations. The authority
 is TESTNET-only and binds account and session lineage. LIVE, cancellation and authenticated smoke
-remain absent; M4.9 is next and Stage 4 remains in progress.
+remain absent; M4.9 is completed and its final crash/restart safety review passed, M4.10 is next
+and not started, and Stage 4 remains in progress.
 
 The completion pass makes the network boundary accept only a single-use `PreSubmitAuthorization`
 minted by `TestnetPreSubmitGate`. The gate performs a final durable reread and rejects stale Risk,
@@ -955,10 +956,21 @@ invalid Testnet configuration and LIVE remain fatal. A Testnet-only recovery gra
 decision coordinator, so executable intents cannot accumulate PREPARED orders. There is no
 same-process promotion in M4.8: resolving the blocker requires a fresh startup, which repeats the
 ordered recovery checks and may mint a new generation-bound capability. ADR-063 is accepted;
-M4.9 is next and not started, while Stage 4 remains in progress.
+M4.9 is completed and its final crash/restart safety review passed. M4.10 is next and not started,
+while Stage 4 remains in progress.
 
 Full-graph acceptance uses fresh `build_application()` objects for every simulated process while
 sharing only the SQLite file and deterministic fake exchange. The suite proves lost ACK A/B/C,
 FILLED and PARTIALLY_FILLED settlement recovery, five consecutive ambiguous NOT_FOUND restarts,
 and a lost ambiguity-status persistence result. In every case the durable command, client ID,
 attempt and submission counters remain singular and no startup performs a replacement submit.
+
+### M4.9 implementation/review status
+
+Status: **completed; final crash/restart safety review passed** (2026-08-13). M4.9 adds only
+adversarial evidence. Twenty NOT_FOUND production restarts, later FOUND resolution, repeated
+same-process and cross-process decisions, recovery-only/READY restart stress and deterministic
+fixed-seed schedules preserve one durable command/client ID/attempt and at most one gateway call.
+Existing transaction failpoint matrices cover all four exception families around submission,
+status, reconciliation and settlement commits. No new ADR or exchange capability was required.
+See `M4_9_CRASH_RESTART_REPORT.md`; Stage 4 remains in progress and M4.10 is next and not started.

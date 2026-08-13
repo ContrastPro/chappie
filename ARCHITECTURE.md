@@ -755,7 +755,8 @@ blocks settlement and new authority.
 
 Submission authority is opaque and process-local, and binds TESTNET environment, account,
 session, reconciliation generation and control generation. Any failed gate produces no
-capability. LIVE remains structurally rejected. M4.9 is next; Stage 4 remains in progress.
+capability. LIVE remains structurally rejected. M4.9 is completed and its final crash/restart
+safety review passed; M4.10 is next and not started; Stage 4 remains in progress.
 
 The M4.8 completion pass removes the raw public `submit_prepared(key)` gateway path. A synchronous
 final gate rereads order, session, reconciliation/control generations, kill switch, settlement,
@@ -780,5 +781,17 @@ no decision coordinator. A shadow consumer may continue on the shared coordinato
 delivery. Kill-switch, reconciliation and non-terminal-order blockers are recoverable states;
 corrupt/incompatible durable state remains fatal. Recovery-only never promotes in-process: a fresh
 startup must rerun recovery, reconciliation, settlement and control checks before minting a new
-process-local capability. This contract is recorded by accepted ADR-063. M4.9 is next and not
-started; Stage 4 remains in progress.
+process-local capability. This contract is recorded by accepted ADR-063. M4.9
+is completed and its final crash/restart safety review passed; M4.10 is next and not started;
+Stage 4 remains in progress.
+
+## M4.9 crash/restart torture review
+
+M4.9 is completed and its final crash/restart safety review passed. It introduces
+no exchange feature or new authority. File-backed, socket-guarded production graphs prove that
+pre-COMMIT submission failures roll back atomically, while every post-COMMIT uncertainty remains
+`SUBMITTING`/`RECONCILIATION_REQUIRED` and can only query the immutable client order ID. Repeated
+NOT_FOUND, later FOUND, process dedup eviction and new runtime UUIDs cannot create another durable
+command, attempt or gateway call. Settlement chronology, exact-once financial application,
+unsupported-fee blocking, writer/WAL recovery and process-local capability invariants remain
+green. Detailed evidence is in `M4_9_CRASH_RESTART_REPORT.md`; Stage 4 remains in progress.

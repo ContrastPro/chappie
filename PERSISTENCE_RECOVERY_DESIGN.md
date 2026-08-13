@@ -1041,8 +1041,8 @@ settlement journal. Each normalized exchange trade has one durable settlement id
 quote-fee transition, Portfolio head update and session turnover update commit atomically before
 memory synchronization; restart restores the committed head and suppresses replay. Unsupported
 fee assets are recorded as blocked settlement facts and never converted heuristically. M4.8 final
-safety review passed on 2026-08-12; M4.9 crash/restart/duplicate-order review is next and not
-started.
+safety review passed on 2026-08-12; M4.9 crash/restart/duplicate-order work is completed and its
+final crash/restart safety review passed on 2026-08-13. M4.10 is next and not started.
 
 The M4.8 completion pass validates every persisted settlement record against its digest and
 exchange-trade identity, rebuilds the consecutive Portfolio version/head chain, and recomputes
