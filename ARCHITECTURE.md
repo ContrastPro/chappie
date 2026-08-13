@@ -834,5 +834,5 @@ kill switch remains ACTIVE; the committed transaction returns only an in-memory 
 an exact-authority/command capability for the existing final gate. Crash loses that capability, so
 restart remains ACTIVE/recovery-only and preserves the same command for reconciliation without
 first-submit eligibility. Schema-v5 authority implementation and offline crash proofs are complete
-and the final adversarial safety review passed; Phase 3 operator implementation is next, while Phase 3
-is still unauthorized.
+and the final adversarial safety review passed. The isolated one-shot operator harness is complete
+and its final offline operator safety review passed, while Phase 3 execution authorization remains pending.

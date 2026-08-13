@@ -981,7 +981,7 @@ authorization pending.
 
 ### M4.10 controlled smoke design status
 
-Status: **Phase 1 authenticated read-only PASS; Phase 2 signed order-test PASS; Phase 3 schema-v5 completed, final adversarial safety review passed, operator implementation next, and unauthorized** (2026-08-13). The authorization ladder in
+Status: **Phase 1 authenticated read-only PASS; Phase 2 signed order-test PASS; Phase 3 schema-v5 PASS; operator harness completed; final offline operator safety review passed; execution authorization pending** (2026-08-13). The authorization ladder in
 `M4_10_TESTNET_SMOKE_PLAN.md` keeps authenticated reads, `/api/v3/order/test`, one real Testnet
 order and restart reconciliation under distinct approvals. Central dependency-log suppression and
 an explicit no-fallback order-test adapter contract are implemented. The Phase 0 read-harness gap

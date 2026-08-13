@@ -1087,5 +1087,5 @@ allocation. Exchange balances remain observations, not Portfolio genesis: the pr
 configuration can represent `0 BTC / 25 USDT`, so v5 adds authority/balance-scope evidence rather
 than a second financial root. Migration 005 and the offline atomic authority API are now implemented
 with BaseException crash proofs and recovery validation; the final adversarial safety review passed.
-Phase 3 operator implementation is next, while Phase 3 execution remains unauthorized pending a
-separate explicit authorization.
+The Phase 3 one-shot operator harness is complete and its final offline operator safety review passed,
+while execution remains unauthorized pending a separate explicit authorization.

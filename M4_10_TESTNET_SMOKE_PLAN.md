@@ -1,6 +1,6 @@
 # M4.10 Controlled Binance Spot Testnet Smoke Plan
 
-Status: **Phase 1 authenticated read-only PASS; Phase 2 signed order-test PASS; Phase 3 schema-v5 completed, final adversarial safety review passed, operator implementation next, and execution unauthorized** (2026-08-13).
+Status: **Phase 1 authenticated read-only PASS; Phase 2 signed order-test PASS; Phase 3 schema-v5 PASS; operator harness completed; final offline operator safety review passed; execution authorization pending** (2026-08-13).
 
 Stage 4 remains in progress. This document authorizes no network access, credential use,
 additional `/api/v3/order/test` request or real Testnet order. Every phase below needs a new, explicit
@@ -272,8 +272,9 @@ trading or Phase 3.
 
 Phase 3 architecture is accepted by ADR-064 and its offline schema-v5 authority primitive and crash
 proofs are implemented and the final adversarial review passed, but execution remains **BLOCKED and not authorized**.
-The repository still has no Phase 3 operator entrypoint. Authorization must not be requested
-until those gaps close. It must then state exact HEAD, account fingerprint,
+The dedicated `python -m app.tools.testnet_phase3` one-shot entrypoint is complete and its final
+offline operator safety review passed using guarded mock transport only. Production execution remains
+unauthorized. Any later authorization must state exact HEAD, account fingerprint,
 fresh database path, run ID, BUY, computed base quantity, maximum submitted notional and
 request count.
 
