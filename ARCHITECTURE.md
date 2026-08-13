@@ -756,8 +756,8 @@ blocks settlement and new authority.
 Submission authority is opaque and process-local, and binds TESTNET environment, account,
 session, reconciliation generation and control generation. Any failed gate produces no
 capability. LIVE remains structurally rejected. M4.9 is completed and its final crash/restart
-safety review passed; M4.10 Phase 1 and Phase 2 PASS, while Phase 3 architecture is accepted but
-schema-v5 implementation is pending and execution is unauthorized; Stage 4 remains in progress.
+safety review passed; M4.10 Phase 1 and Phase 2 PASS, while Phase 3 schema v5 and its final
+adversarial review are complete but execution is unauthorized; Stage 4 remains in progress.
 
 The M4.8 completion pass removes the raw public `submit_prepared(key)` gateway path. A synchronous
 final gate rereads order, session, reconciliation/control generations, kill switch, settlement,
@@ -784,8 +784,8 @@ corrupt/incompatible durable state remains fatal. Recovery-only never promotes i
 startup must rerun recovery, reconciliation, settlement and control checks before minting a new
 process-local capability. This contract is recorded by accepted ADR-063. M4.9
 is completed and its final crash/restart safety review passed; M4.10 Phase 1 authenticated
-read-only and Phase 2 signed order-test PASS; Phase 3 architecture is accepted but implementation
-is pending and execution unauthorized, and Stage 4 remains in progress.
+read-only and Phase 2 signed order-test PASS; Phase 3 schema v5 and its final adversarial review are
+complete but execution is unauthorized, and Stage 4 remains in progress.
 
 ## M4.9 crash/restart torture review
 
@@ -823,7 +823,7 @@ persistence, Portfolio, durable lifecycle, reconciliation, settlement or normal 
 reviewed Phase 2-only BUY quantity `0.00016000` BTC is checked with `Decimal` against the observed
 price `63849.22000000`, `stepSize=0.00001000`, `minQty=0.00001000` and `minNotional=5.00000000`.
 Phase 2 created no order, trade, Fill, durable lifecycle or balance mutation. Phase 3 execution
-remains blocked and unauthorized while schema-v5/operator implementation is absent. The
+remains blocked and unauthorized while its operator implementation is absent. The
 pre-existing Testnet 1 BTC cannot be silently imported into the zero-base managed Portfolio.
 
 The Phase 3 final design review accepts ADR-064. Its managed subledger starts at zero BTC with an
@@ -833,5 +833,6 @@ is inserted and consumed in the same transaction that creates the sole PREPARED 
 kill switch remains ACTIVE; the committed transaction returns only an in-memory claim that can mint
 an exact-authority/command capability for the existing final gate. Crash loses that capability, so
 restart remains ACTIVE/recovery-only and preserves the same command for reconciliation without
-first-submit eligibility. Schema-v5/runtime implementation and crash proofs remain pending; Phase 3
+first-submit eligibility. Schema-v5 authority implementation and offline crash proofs are complete
+and the final adversarial safety review passed; Phase 3 operator implementation is next, while Phase 3
 is still unauthorized.

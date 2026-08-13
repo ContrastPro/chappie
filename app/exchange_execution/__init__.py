@@ -33,6 +33,14 @@ from app.exchange_execution.models import (
     TransportFailureCategory,
     TransportOutcomeKind,
 )
+from app.exchange_execution.phase3 import (
+    Phase3BalanceScope,
+    Phase3ClaimReceipt,
+    Phase3ProcessClaim,
+    Phase3RiskEnvelope,
+    ReviewedPhase3SmokeRequest,
+    derive_phase3_economic_slot,
+)
 from app.exchange_execution.ports import (
     AccountBalance,
     ExchangeAccountReader,
@@ -78,7 +86,12 @@ __all__ = [
     "MarketOrderSubmission",
     "OrderQueryResult",
     "PendingExposure",
+    "Phase3BalanceScope",
+    "Phase3ClaimReceipt",
+    "Phase3ProcessClaim",
+    "Phase3RiskEnvelope",
     "QueryResultKind",
+    "ReviewedPhase3SmokeRequest",
     "SettlementClassification",
     "SubmissionCapability",
     "SubmissionObservation",
@@ -90,6 +103,7 @@ __all__ = [
     "assert_submission_gates",
     "classify_settlement",
     "create_client_order_id",
+    "derive_phase3_economic_slot",
     "status_after_transport",
     "transition_order",
 ]

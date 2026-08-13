@@ -1085,5 +1085,7 @@ The accepted design records a zero-base managed Portfolio root with an explicit 
 allocation. Exchange balances remain observations, not Portfolio genesis: the pre-existing
 `1 BTC` is external/unmanaged and cannot be imported, settled or sold. Existing Portfolio root
 configuration can represent `0 BTC / 25 USDT`, so v5 adds authority/balance-scope evidence rather
-than a second financial root. No migration 005 or runtime API is implemented by this review; Phase 3
-remains unauthorized until implementation and crash-safety review pass.
+than a second financial root. Migration 005 and the offline atomic authority API are now implemented
+with BaseException crash proofs and recovery validation; the final adversarial safety review passed.
+Phase 3 operator implementation is next, while Phase 3 execution remains unauthorized pending a
+separate explicit authorization.

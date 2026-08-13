@@ -41,7 +41,7 @@ class SQLiteExchangeSettlement:
     ) -> None:
         if not isinstance(persistence, SQLiteExchangePersistence):
             raise TypeError("persistence must be SQLiteExchangePersistence")
-        if persistence._trading.config.expected_schema_version != 4:
+        if persistence._trading.config.expected_schema_version < 4:
             raise ExchangeSettlementError("settlement requires schema version 4")
         if not isinstance(portfolio, Portfolio):
             raise TypeError("portfolio must be Portfolio")

@@ -40,6 +40,7 @@ MIGRATION_NAMES = (
     "002_exchange_execution.sql",
     "003_exchange_reconciliation.sql",
     "004_exchange_settlement.sql",
+    "005_phase3_smoke_authority.sql",
 )
 
 

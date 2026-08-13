@@ -926,8 +926,8 @@ inventing conversion. Runtime startup executes recovery -> reconciliation -> set
 readiness and issues authority only after re-reading current durable generations. The authority
 is TESTNET-only and binds account and session lineage. LIVE, cancellation and authenticated smoke
 remain absent; M4.9 is completed and its final crash/restart safety review passed. M4.10 security
-preflight safety review passed, Phase 1 and Phase 2 PASS, and Phase 3 architecture is accepted but
-schema-v5 implementation is pending and execution unauthorized; Stage 4 remains in progress.
+preflight safety review passed, Phase 1 and Phase 2 PASS, and Phase 3 schema v5 and its final
+adversarial review are complete but execution is unauthorized; Stage 4 remains in progress.
 
 The completion pass makes the network boundary accept only a single-use `PreSubmitAuthorization`
 minted by `TestnetPreSubmitGate`. The gate performs a final durable reread and rejects stale Risk,
@@ -958,8 +958,8 @@ decision coordinator, so executable intents cannot accumulate PREPARED orders. T
 same-process promotion in M4.8: resolving the blocker requires a fresh startup, which repeats the
 ordered recovery checks and may mint a new generation-bound capability. ADR-063 is accepted;
 M4.9 is completed and its final crash/restart safety review passed. M4.10 security preflight
-review passed, Phase 1 and Phase 2 PASS, while Phase 3 architecture is accepted but implementation
-is pending and execution unauthorized; Stage 4 remains in progress.
+review passed, Phase 1 and Phase 2 PASS, while Phase 3 schema v5 and its final adversarial review
+are complete but execution is unauthorized; Stage 4 remains in progress.
 
 Full-graph acceptance uses fresh `build_application()` objects for every simulated process while
 sharing only the SQLite file and deterministic fake exchange. The suite proves lost ACK A/B/C,
@@ -981,7 +981,7 @@ authorization pending.
 
 ### M4.10 controlled smoke design status
 
-Status: **Phase 1 authenticated read-only PASS; Phase 2 signed order-test PASS; Phase 3 architecture accepted, READY_FOR_SCHEMA_V5_IMPLEMENTATION and unauthorized** (2026-08-13). The authorization ladder in
+Status: **Phase 1 authenticated read-only PASS; Phase 2 signed order-test PASS; Phase 3 schema-v5 completed, final adversarial safety review passed, operator implementation next, and unauthorized** (2026-08-13). The authorization ladder in
 `M4_10_TESTNET_SMOKE_PLAN.md` keeps authenticated reads, `/api/v3/order/test`, one real Testnet
 order and restart reconciliation under distinct approvals. Central dependency-log suppression and
 an explicit no-fallback order-test adapter contract are implemented. The Phase 0 read-harness gap
@@ -1002,7 +1002,8 @@ rules. No persistence, Portfolio, lifecycle, reconciliation, settlement or norma
 composed. Phase 2 passed with exactly one test-endpoint POST, accepted signing/request-contract
 semantics and no real order or financial mutation.
 
-Phase 3 implementation is pending a reviewed one-shot operator graph through Risk, durable
+Phase 3 execution remains pending separate authorization. The implemented and finally reviewed offline
+one-shot authority graph through Risk, durable
 identity, PREPARED, final gate and SUBMITTING and a first-order risk envelope capped at one
 submission/non-terminal/in-flight order. The Testnet
 account's pre-existing 1 BTC is not managed history: production Portfolio composition starts at
@@ -1017,7 +1018,7 @@ balance-scope digests. One `BEGIN IMMEDIATE` transaction inserts and consumes th
 the only PREPARED command/event/reservation and commits their one-to-one audit link. The global
 switch remains ACTIVE; only the returned in-memory exact-command claim can satisfy the final gate.
 Crash loses it, so restart omits capability and retains reconciliation authority for the same
-identity. Implementing this requires schema-v5 persistence, readiness and operator APIs; ordinary
+identity. Schema-v5 persistence and readiness are implemented; the operator API is next. Ordinary
 CLEARED state is forbidden for Phase 3.
 
 The committed lifecycle has one terminal state, CONSUMED. Transaction-local PREPARED cannot become

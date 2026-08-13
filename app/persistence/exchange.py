@@ -1,9 +1,11 @@
 import json
 import sqlite3
 from collections.abc import Callable
+from dataclasses import asdict
 from decimal import Decimal, localcontext
 from typing import Self
 
+from app.exchange_execution.factories import DeterministicClientOrderIdFactory
 from app.exchange_execution.lifecycle import transition_order
 from app.exchange_execution.models import (
     ExchangeCommand,
@@ -18,6 +20,12 @@ from app.exchange_execution.models import (
     KillSwitch,
     KillSwitchState,
 )
+from app.exchange_execution.phase3 import (
+    Phase3ClaimReceipt,
+    Phase3ProcessClaim,
+    ReviewedPhase3SmokeRequest,
+    derive_phase3_economic_slot,
+)
 from app.market.models import MarketStreamKey
 from app.persistence.canonical import (
     canonical_json,
@@ -29,6 +37,10 @@ from app.persistence.exceptions import (
     PersistenceConflictError,
     PersistenceIntegrityError,
     PersistenceTransactionError,
+    Phase3AuthorityConflictError,
+    Phase3LineageError,
+    Phase3StaleControlError,
+    Phase3StaleReconciliationError,
 )
 from app.persistence.exchange_models import (
     DurableExchangeOrder,
@@ -44,7 +56,7 @@ from app.persistence.exchange_models import (
     TradeCompletenessStatus,
     TradeSettlementStatus,
 )
-from app.persistence.models import SQLitePersistenceConfig
+from app.persistence.models import PortfolioState, SQLitePersistenceConfig
 from app.persistence.sqlite import SQLiteTradingPersistence
 
 
@@ -108,9 +120,9 @@ class SQLiteExchangePersistence:
     ) -> None:
         if not isinstance(
             config, SQLitePersistenceConfig
-        ) or config.expected_schema_version not in {2, 3, 4}:
+        ) or config.expected_schema_version not in {2, 3, 4, 5}:
             raise PersistenceIntegrityError(
-                "exchange persistence requires schema version 2, 3, or 4"
+                "exchange persistence requires schema version 2, 3, 4, or 5"
             )
         self._trading = SQLiteTradingPersistence(config)
         self._connection = self._trading._connection
@@ -118,6 +130,7 @@ class SQLiteExchangePersistence:
             self._trading.close()
             raise PersistenceIntegrityError("failure_injector must be callable")
         self._failure_injector = failure_injector
+        self._phase3_claims: dict[str, Phase3ProcessClaim] = {}
 
     def _hit(self, boundary: str) -> None:
         if self._failure_injector is not None:
@@ -362,6 +375,341 @@ class SQLiteExchangePersistence:
             raise PersistenceTransactionError("order preparation failed") from error
         except BaseException:
             connection.rollback()
+            raise
+
+    def authorize_phase3_smoke_command(
+        self, request: ReviewedPhase3SmokeRequest
+    ) -> Phase3ClaimReceipt:
+        """Atomically consume one reviewed authority and prepare its sole command."""
+        if self._trading.config.expected_schema_version != 5:
+            raise PersistenceIntegrityError("Phase 3 authority requires schema version 5")
+        if not isinstance(request, ReviewedPhase3SmokeRequest):
+            raise PersistenceIntegrityError("invalid reviewed Phase 3 request")
+        command = request.command
+        expected_client_id = DeterministicClientOrderIdFactory().create_client_order_id(
+            environment=ExecutionEnvironment.TESTNET,
+            venue="binance-spot",
+            account_fingerprint=request.account_fingerprint,
+            durable_command_key=command.durable_command_key,
+        )
+        if request.client_order_id != expected_client_id:
+            raise PersistenceConflictError("Phase 3 client order identity is not deterministic")
+        order = ExchangeOrder(
+            command.durable_command_key,
+            request.client_order_id,
+            request.account_fingerprint,
+            command.stream_key,
+            command.side,
+            command.base_quantity,
+            ExchangeOrderStatus.PREPARED,
+            request.created_at_ms,
+        )
+        envelope_payload = canonical_json(asdict(request.envelope))
+        balance_payload = canonical_json(asdict(request.balance_scope))
+        authority_values = {
+            "authority_id": request.authority_id,
+            "execution_root_id": request.execution_root_id,
+            "session_id": request.session_id,
+            "account_fingerprint": request.account_fingerprint,
+            "managed_portfolio_id": request.portfolio_id,
+            "venue": "binance-spot",
+            "environment": "testnet",
+            "symbol": "BTCUSDT",
+            "side": "BUY",
+            "control_generation": request.control_generation,
+            "reconciliation_generation": request.reconciliation_generation,
+            "operator_run_id": request.operator_run_id,
+            "economic_slot_key": request.economic_slot_key,
+            "policy_version": request.policy_version,
+            "rules_fingerprint": command.instrument_rules_fingerprint,
+            "config_fingerprint": command.execution_configuration_fingerprint,
+            "risk_envelope_digest": request.envelope.digest,
+            "balance_scope_digest": request.balance_scope.digest,
+            "consumed_durable_command_key": command.durable_command_key,
+            "created_at_ms": request.created_at_ms,
+            "consumed_at_ms": request.created_at_ms,
+            "status": "CONSUMED",
+        }
+        authority_payload = canonical_json(authority_values)
+        authority_digest = canonical_sha256(
+            authority_values, algorithm_version=request.policy_version
+        )
+        connection = self._connection
+        committed = False
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                "SELECT authority_id,consumed_durable_command_key,payload_digest "
+                "FROM exchange_smoke_authorities WHERE authority_id=? OR economic_slot_key=? "
+                "OR consumed_durable_command_key=? OR (operator_run_id=? AND execution_root_id=?)",
+                (
+                    request.authority_id,
+                    request.economic_slot_key,
+                    command.durable_command_key,
+                    request.operator_run_id,
+                    request.execution_root_id,
+                ),
+            ).fetchone()
+            if existing is not None:
+                if (
+                    existing[0] != request.authority_id
+                    or existing[1] != command.durable_command_key
+                    or existing[2] != authority_digest
+                ):
+                    raise Phase3AuthorityConflictError("Phase 3 authority identity conflicts")
+                self._validate_phase3_authorities()
+                connection.rollback()
+                claim = self._phase3_claims.get(request.authority_id)
+                return Phase3ClaimReceipt(
+                    request.authority_id,
+                    command.durable_command_key,
+                    request.client_order_id,
+                    claim,
+                    recovered=claim is None,
+                )
+            root = connection.execute(
+                "SELECT account_fingerprint,configuration_fingerprint FROM exchange_execution_roots WHERE execution_root_id=?",
+                (request.execution_root_id,),
+            ).fetchone()
+            session = connection.execute(
+                "SELECT execution_root_id,account_fingerprint,state,submission_count,submitted_notional,executed_turnover FROM exchange_sessions WHERE session_id=?",
+                (request.session_id,),
+            ).fetchone()
+            control = connection.execute(
+                "SELECT kill_switch_state,control_generation,reconciliation_generation FROM exchange_control_state WHERE execution_root_id=?",
+                (request.execution_root_id,),
+            ).fetchone()
+            reconciliation = connection.execute(
+                "SELECT status,generation FROM exchange_reconciliation_current WHERE execution_root_id=?",
+                (request.execution_root_id,),
+            ).fetchone()
+            if (
+                root is None
+                or session is None
+                or root[0] != request.account_fingerprint
+                or tuple(session[:3])
+                != (request.execution_root_id, request.account_fingerprint, "ACTIVE")
+            ):
+                raise Phase3LineageError("Phase 3 root/session/account lineage mismatch")
+            if root[1] != command.execution_configuration_fingerprint:
+                raise Phase3LineageError("Phase 3 configuration fingerprint mismatch")
+            if (
+                control is None
+                or control[0] != "ACTIVE"
+                or control[1] != request.control_generation
+            ):
+                raise Phase3StaleControlError("Phase 3 ACTIVE control generation is stale")
+            if (
+                reconciliation is None
+                or reconciliation[0] != "SAFE"
+                or reconciliation[1] != request.reconciliation_generation
+                or control[2] != request.reconciliation_generation
+            ):
+                raise Phase3StaleReconciliationError(
+                    "Phase 3 SAFE reconciliation generation is stale"
+                )
+            if (
+                session[3] != 0
+                or deserialize_decimal(session[4]) != 0
+                or deserialize_decimal(session[5]) != 0
+            ):
+                raise PersistenceConflictError("Phase 3 requires an unused execution session")
+            counts = connection.execute(
+                "SELECT count(*),sum(CASE WHEN terminal=0 THEN 1 ELSE 0 END) FROM exchange_orders WHERE execution_root_id=?",
+                (request.execution_root_id,),
+            ).fetchone()
+            if counts[0] or counts[1]:
+                raise PersistenceConflictError("Phase 3 requires an empty order lineage")
+            managed_state = PortfolioState(
+                portfolio_id=request.portfolio_id,
+                stream_key=command.stream_key,
+                base_asset="BTC",
+                quote_asset="USDT",
+                quote_balance=Decimal(25),
+                base_balance=Decimal(0),
+                position=None,
+                realised_pnl=Decimal(0),
+                unrealised_pnl=Decimal(0),
+                total_fees=Decimal(0),
+                initial_equity=Decimal(25),
+                turnover=Decimal(0),
+                trade_count=0,
+                applied_fill_count=0,
+                peak_equity=Decimal(25),
+                current_equity=Decimal(25),
+                drawdown=Decimal(0),
+                max_drawdown=Decimal(0),
+                mark_price=None,
+                as_of_ms=request.created_at_ms,
+                version=0,
+                correlation_id=request.operator_run_id,
+            )
+            portfolio = connection.execute(
+                "SELECT portfolio_id,state_digest,config_fingerprint FROM exchange_portfolio_roots "
+                "WHERE execution_root_id=? OR portfolio_id=?",
+                (request.execution_root_id, request.portfolio_id),
+            ).fetchone()
+            if portfolio is None:
+                connection.execute(
+                    "INSERT INTO exchange_portfolio_roots VALUES(?,?,?,?,?,?,?)",
+                    (
+                        request.portfolio_id,
+                        request.execution_root_id,
+                        managed_state.canonical_payload,
+                        managed_state.digest,
+                        command.execution_configuration_fingerprint,
+                        request.created_at_ms,
+                        "exchange-portfolio-root/v1",
+                    ),
+                )
+                connection.execute(
+                    "INSERT INTO exchange_portfolio_current VALUES(?,?,?,?,NULL)",
+                    (
+                        request.portfolio_id,
+                        0,
+                        managed_state.canonical_payload,
+                        managed_state.digest,
+                    ),
+                )
+            elif tuple(portfolio) != (
+                request.portfolio_id,
+                managed_state.digest,
+                command.execution_configuration_fingerprint,
+            ):
+                raise PersistenceConflictError(
+                    "Phase 3 managed Portfolio is not the reviewed zero-BTC/25-USDT root"
+                )
+            self._hit("phase3_after_managed_portfolio")
+            self._hit("phase3_before_authority")
+            connection.execute(
+                "INSERT INTO exchange_smoke_authorities VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    request.authority_id,
+                    request.execution_root_id,
+                    request.session_id,
+                    request.account_fingerprint,
+                    request.portfolio_id,
+                    "binance-spot",
+                    "testnet",
+                    "BTCUSDT",
+                    "BUY",
+                    request.control_generation,
+                    request.reconciliation_generation,
+                    request.operator_run_id,
+                    request.economic_slot_key,
+                    request.policy_version,
+                    command.instrument_rules_fingerprint,
+                    command.execution_configuration_fingerprint,
+                    envelope_payload,
+                    request.envelope.digest,
+                    balance_payload,
+                    request.balance_scope.digest,
+                    command.durable_command_key,
+                    request.created_at_ms,
+                    request.created_at_ms,
+                    "CONSUMED",
+                    authority_payload,
+                    authority_digest,
+                ),
+            )
+            self._hit("phase3_after_authority")
+            state_payload = canonical_json(_order_payload(order))
+            connection.execute(
+                "INSERT INTO exchange_orders VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    order.durable_command_key,
+                    command.stable_decision_key,
+                    order.client_order_id,
+                    request.execution_root_id,
+                    request.session_id,
+                    request.account_fingerprint,
+                    order.venue,
+                    order.environment.value,
+                    order.stream_key.symbol,
+                    order.stream_key.interval,
+                    order.side.value,
+                    serialize_decimal(order.original_base_quantity),
+                    serialize_decimal(command.approved_notional),
+                    order.status.value,
+                    None,
+                    "0",
+                    "0",
+                    order.created_at_ms,
+                    None,
+                    None,
+                    None,
+                    0,
+                    1,
+                    _command_payload(command),
+                    state_payload,
+                    _order_digest(order),
+                ),
+            )
+            self._hit("phase3_after_command")
+            self._hit("phase3_after_prepared_order")
+            self._append_event(
+                order,
+                None,
+                1,
+                ExchangeOrderEventSource.LOCAL_PREPARATION,
+                "phase3_smoke_prepared",
+                request.created_at_ms,
+            )
+            self._hit("phase3_after_prepared_event")
+            self._hit("phase3_after_reservation")
+            self._hit("phase3_after_linkage")
+            self._hit("phase3_after_consumed")
+            event_values = {
+                "authority_id": request.authority_id,
+                "event_ordinal": 1,
+                "event_type": "CONSUMED",
+                "durable_command_key": command.durable_command_key,
+                "operator_run_id": request.operator_run_id,
+                "occurred_at_ms": request.created_at_ms,
+                "policy_version": request.policy_version,
+            }
+            event_payload = canonical_json(event_values)
+            event_id = canonical_sha256(
+                {"authority_id": request.authority_id, "event_ordinal": 1},
+                algorithm_version="phase3-authority-event-id/v1",
+            )
+            connection.execute(
+                "INSERT INTO exchange_smoke_authority_events VALUES(NULL,?,?,?,?,?,?,?,?,?)",
+                (
+                    event_id,
+                    request.authority_id,
+                    1,
+                    "CONSUMED",
+                    command.durable_command_key,
+                    request.operator_run_id,
+                    request.created_at_ms,
+                    event_payload,
+                    canonical_sha256(event_values, algorithm_version="phase3-authority-event/v1"),
+                ),
+            )
+            self._hit("phase3_after_audit_event")
+            self._hit("phase3_before_commit")
+            connection.commit()
+            committed = True
+            claim = Phase3ProcessClaim._issue(request)
+            self._phase3_claims[request.authority_id] = claim
+            self._hit("phase3_after_commit")
+            return Phase3ClaimReceipt(
+                request.authority_id, command.durable_command_key, request.client_order_id, claim
+            )
+        except (PersistenceConflictError, sqlite3.IntegrityError) as error:
+            if not committed:
+                connection.rollback()
+            if isinstance(error, PersistenceConflictError):
+                raise
+            raise Phase3AuthorityConflictError("Phase 3 authority constraint conflict") from error
+        except sqlite3.Error as error:
+            if not committed:
+                connection.rollback()
+            raise PersistenceTransactionError("Phase 3 authority transaction failed") from error
+        except BaseException:
+            if not committed:
+                connection.rollback()
             raise
 
     def begin_submission(
@@ -648,15 +996,29 @@ class SQLiteExchangePersistence:
             if self._trading.config.expected_schema_version >= 3:
                 self.read_reconciliation_state(root[0])
         orders = self.list_orders()
+        phase3_keys: set[str] = set()
+        if self._trading.config.expected_schema_version >= 5:
+            self._validate_phase3_authorities()
+            phase3_keys = {
+                row[0]
+                for row in self._connection.execute(
+                    "SELECT consumed_durable_command_key FROM exchange_smoke_authorities"
+                ).fetchall()
+            }
         prepared = tuple(
             v
             for v in orders
             if self.restart_disposition(v) is RestartDisposition.FIRST_SUBMISSION_ELIGIBLE
+            and v.order.durable_command_key not in phase3_keys
         )
         reconciliation = tuple(
             v
             for v in orders
             if self.restart_disposition(v) is RestartDisposition.RECONCILIATION_REQUIRED
+            or (
+                v.order.status is ExchangeOrderStatus.PREPARED
+                and v.order.durable_command_key in phase3_keys
+            )
         )
         terminal = tuple(
             v for v in orders if self.restart_disposition(v) is RestartDisposition.TERMINAL
@@ -664,6 +1026,161 @@ class SQLiteExchangePersistence:
         return LocalExchangeRecoveryResult(
             LocalExchangeRecoveryStatus.CLEAN, prepared, reconciliation, terminal
         )
+
+    def _validate_phase3_authorities(self) -> None:
+        rows = self._connection.execute(
+            "SELECT a.*,o.execution_root_id AS order_root,o.session_id AS order_session,"
+            "o.account_fingerprint AS order_account,o.side AS order_side,"
+            "p.execution_root_id AS portfolio_root,p.state_digest AS portfolio_initial_digest,"
+            "c.state_payload AS portfolio_current_payload,c.portfolio_version "
+            "FROM exchange_smoke_authorities a LEFT JOIN exchange_orders o "
+            "ON o.durable_command_key=a.consumed_durable_command_key "
+            "LEFT JOIN exchange_portfolio_roots p ON p.portfolio_id=a.managed_portfolio_id "
+            "LEFT JOIN exchange_portfolio_current c ON c.portfolio_id=a.managed_portfolio_id "
+            "ORDER BY a.authority_id"
+        ).fetchall()
+        for row in rows:
+            try:
+                payload = json.loads(row["payload"])
+                expected_payload = {
+                    name: row[name]
+                    for name in (
+                        "authority_id",
+                        "execution_root_id",
+                        "session_id",
+                        "account_fingerprint",
+                        "managed_portfolio_id",
+                        "venue",
+                        "environment",
+                        "symbol",
+                        "side",
+                        "control_generation",
+                        "reconciliation_generation",
+                        "operator_run_id",
+                        "economic_slot_key",
+                        "policy_version",
+                        "rules_fingerprint",
+                        "config_fingerprint",
+                        "risk_envelope_digest",
+                        "balance_scope_digest",
+                        "consumed_durable_command_key",
+                        "created_at_ms",
+                        "consumed_at_ms",
+                        "status",
+                    )
+                }
+                if (
+                    canonical_json(payload) != row["payload"]
+                    or canonical_sha256(payload, algorithm_version=row["policy_version"])
+                    != row["payload_digest"]
+                ):
+                    raise PersistenceIntegrityError("Phase 3 authority payload digest mismatch")
+                if payload != expected_payload:
+                    raise PersistenceIntegrityError("Phase 3 authority payload/column mismatch")
+                envelope = json.loads(row["risk_envelope_payload"])
+                balance = json.loads(row["balance_scope_payload"])
+                exact_envelope = {
+                    "managed_quote_allocation": {"$decimal": "25"},
+                    "max_order_notional": {"$decimal": "12"},
+                    "max_submitted_notional": {"$decimal": "12"},
+                    "max_turnover": {"$decimal": "12"},
+                    "max_managed_position_notional": {"$decimal": "12"},
+                    "min_retained_reserve": {"$decimal": "13"},
+                    "max_submissions": 1,
+                    "max_non_terminal": 1,
+                    "max_in_flight": 1,
+                    "symbol": "BTCUSDT",
+                    "side": "BUY",
+                    "assumptions_fingerprint": row["rules_fingerprint"],
+                }
+                if envelope != exact_envelope:
+                    # The assumptions digest may differ from the rules digest, but every
+                    # financial/count/side field is fixed by ADR-064.
+                    comparable = dict(envelope)
+                    comparable["assumptions_fingerprint"] = row["rules_fingerprint"]
+                    if comparable != exact_envelope:
+                        raise PersistenceIntegrityError("Phase 3 envelope is broader than policy")
+                if (
+                    balance.get("account_fingerprint") != row["account_fingerprint"]
+                    or balance.get("managed_quote_allocation") != {"$decimal": "25"}
+                    or balance.get("interpretation")
+                    != "btc-external-unmanaged;usdt-managed-allocation-only"
+                    or deserialize_decimal(balance["usdt_free"]["$decimal"]) < Decimal(25)
+                ):
+                    raise PersistenceIntegrityError("Phase 3 balance scope violates policy")
+                portfolio = json.loads(row["portfolio_current_payload"])
+                if (
+                    row["portfolio_root"] != row["execution_root_id"]
+                    or row["portfolio_version"] != 0
+                    or portfolio["portfolio_id"] != row["managed_portfolio_id"]
+                    or portfolio["base_balance"] != {"$decimal": "0"}
+                    or portfolio["quote_balance"] != {"$decimal": "25"}
+                    or portfolio["initial_equity"] != {"$decimal": "25"}
+                    or portfolio["position"] is not None
+                    or portfolio["turnover"] != {"$decimal": "0"}
+                ):
+                    raise PersistenceIntegrityError(
+                        "Phase 3 managed Portfolio is not zero-BTC/25-USDT"
+                    )
+                if (
+                    canonical_sha256(envelope, algorithm_version=row["policy_version"])
+                    != row["risk_envelope_digest"]
+                ):
+                    raise PersistenceIntegrityError("Phase 3 envelope digest mismatch")
+                if (
+                    canonical_sha256(balance, algorithm_version="phase3-balance-scope/v1")
+                    != row["balance_scope_digest"]
+                ):
+                    raise PersistenceIntegrityError("Phase 3 balance digest mismatch")
+                if (
+                    row["status"] != "CONSUMED"
+                    or row["consumed_at_ms"] < row["created_at_ms"]
+                    or tuple(row[name] for name in ("order_root", "order_session", "order_account"))
+                    != tuple(
+                        row[name]
+                        for name in ("execution_root_id", "session_id", "account_fingerprint")
+                    )
+                    or row["order_side"] != "BUY"
+                    or row["economic_slot_key"]
+                    != derive_phase3_economic_slot(
+                        row["execution_root_id"], row["account_fingerprint"]
+                    )
+                ):
+                    raise PersistenceIntegrityError("Phase 3 authority linkage is invalid")
+                events = self._connection.execute(
+                    "SELECT * FROM exchange_smoke_authority_events WHERE authority_id=? ORDER BY event_ordinal",
+                    (row["authority_id"],),
+                ).fetchall()
+                if len(events) != 1 or events[0]["event_ordinal"] != 1:
+                    raise PersistenceIntegrityError("Phase 3 authority event continuity is invalid")
+                event_payload = json.loads(events[0]["payload"])
+                if (
+                    canonical_json(event_payload) != events[0]["payload"]
+                    or canonical_sha256(
+                        event_payload, algorithm_version="phase3-authority-event/v1"
+                    )
+                    != events[0]["payload_digest"]
+                ):
+                    raise PersistenceIntegrityError("Phase 3 authority event digest mismatch")
+                if (
+                    events[0]["durable_command_key"] != row["consumed_durable_command_key"]
+                    or events[0]["operator_run_id"] != row["operator_run_id"]
+                ):
+                    raise PersistenceIntegrityError("Phase 3 authority event linkage is invalid")
+                command_row = self._connection.execute(
+                    "SELECT command_payload FROM exchange_orders WHERE durable_command_key=?",
+                    (row["consumed_durable_command_key"],),
+                ).fetchone()
+                command = json.loads(command_row[0])
+                if (
+                    command["instrument_rules_fingerprint"] != row["rules_fingerprint"]
+                    or command["execution_configuration_fingerprint"] != row["config_fingerprint"]
+                ):
+                    raise PersistenceIntegrityError(
+                        "Phase 3 authority command fingerprints conflict"
+                    )
+            except (json.JSONDecodeError, TypeError, KeyError) as error:
+                raise PersistenceIntegrityError("Phase 3 authority is corrupted") from error
 
     @staticmethod
     def restart_disposition(value: DurableExchangeOrder) -> RestartDisposition:

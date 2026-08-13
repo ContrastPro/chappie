@@ -8,6 +8,7 @@ from app.exchange_execution import (
     ExchangeOrderStatus,
     ExecutionEnvironment,
     PendingExposure,
+    Phase3ProcessClaim,
     SubmissionCapability,
     aggregate_pending_exposure,
 )
@@ -98,6 +99,7 @@ class TestnetPreSubmitGate:
         capability: SubmissionCapability | None,
         expected_rules_fingerprint: str,
         now_ms: int,
+        phase3_claim: Phase3ProcessClaim | None = None,
     ) -> PreSubmitGateResult:
         """Reread every mutable durable gate; never performs network I/O or mutation."""
         reasons: set[PreSubmitBlockReason] = set()
@@ -134,9 +136,11 @@ class TestnetPreSubmitGate:
             reasons.add(PreSubmitBlockReason.LINEAGE_MISMATCH)
         if reconciliation.status is not ExchangeReconciliationStatus.SAFE:
             reasons.add(PreSubmitBlockReason.RECONCILIATION_UNSAFE)
-        if (
-            bootstrap.control.kill_switch.state.value != "CLEARED"
-            or bootstrap.control.reconciliation_generation != reconciliation.generation
+        phase3_valid = self._phase3_claim_valid(
+            phase3_claim, durable, bootstrap, reconciliation.generation
+        )
+        if bootstrap.control.reconciliation_generation != reconciliation.generation or (
+            bootstrap.control.kill_switch.state.value != "CLEARED" and not phase3_valid
         ):
             reasons.add(PreSubmitBlockReason.CONTROL_UNSAFE)
         unsettled, blocked = self._settlement_counts()
@@ -176,21 +180,25 @@ class TestnetPreSubmitGate:
             or context.account.reconciliation_generation != reconciliation.generation
         ):
             reasons.add(PreSubmitBlockReason.RISK_CONTEXT_STALE)
-        safety = evaluate_exchange_submission_safety(
-            assessment,
-            context,
-            bootstrap.control.kill_switch,
-            capability,
-            environment=durable.order.environment,
-            pending_control_safe=not other_open and not attempts,
-        )
+        safety = None
+        if not phase3_valid:
+            safety = evaluate_exchange_submission_safety(
+                assessment,
+                context,
+                bootstrap.control.kill_switch,
+                capability,
+                environment=durable.order.environment,
+                pending_control_safe=not other_open and not attempts,
+            )
         if assessment.outcome.value != "APPROVED":
             reasons.add(PreSubmitBlockReason.RISK_BLOCKED)
-        if not safety.authorized:
+        if not phase3_valid and (safety is None or not safety.authorized):
             reasons.add(PreSubmitBlockReason.CAPABILITY_INVALID)
         ordered = tuple(sorted(reasons, key=lambda value: value.value))
         if ordered:
             return PreSubmitGateResult(None, ordered)
+        if phase3_valid and phase3_claim is not None:
+            phase3_claim._consume()
         return PreSubmitGateResult(
             PreSubmitAuthorization._issue(
                 execution_root_id=self._root_id,
@@ -204,6 +212,51 @@ class TestnetPreSubmitGate:
                 control_generation=bootstrap.control.kill_switch.generation,
             ),
             (),
+        )
+
+    def _phase3_claim_valid(
+        self, claim, durable, bootstrap, reconciliation_generation: int
+    ) -> bool:
+        if not isinstance(claim, Phase3ProcessClaim) or claim._consumed:
+            return False
+        if (
+            claim.authority_id == ""
+            or claim.durable_command_key != durable.order.durable_command_key
+            or claim.execution_root_id != self._root_id
+            or claim.session_id != durable.session_id
+            or claim.account_fingerprint != durable.order.account_fingerprint
+            or claim.control_generation != bootstrap.control.kill_switch.generation
+            or claim.reconciliation_generation != reconciliation_generation
+        ):
+            return False
+        command = json.loads(durable.command_payload)
+        row = self._persistence._connection.execute(
+            "SELECT 1 FROM exchange_smoke_authorities WHERE authority_id=? "
+            "AND consumed_durable_command_key=? AND execution_root_id=? AND session_id=? "
+            "AND account_fingerprint=? AND control_generation=? AND reconciliation_generation=? "
+            "AND economic_slot_key=? AND risk_envelope_digest=? AND balance_scope_digest=? "
+            "AND rules_fingerprint=? AND config_fingerprint=? AND environment='testnet' "
+            "AND managed_portfolio_id=? AND venue='binance-spot' AND symbol='BTCUSDT' "
+            "AND side='BUY' AND status='CONSUMED'",
+            (
+                claim.authority_id,
+                claim.durable_command_key,
+                claim.execution_root_id,
+                claim.session_id,
+                claim.account_fingerprint,
+                claim.control_generation,
+                claim.reconciliation_generation,
+                claim.economic_slot_key,
+                claim.envelope_digest,
+                claim.balance_scope_digest,
+                claim.rules_fingerprint,
+                claim.config_fingerprint,
+                claim.portfolio_id,
+            ),
+        ).fetchone()
+        return row is not None and (
+            command["instrument_rules_fingerprint"] == claim.rules_fingerprint
+            and command["execution_configuration_fingerprint"] == claim.config_fingerprint
         )
 
     def authorize_and_submit(self, *args, **kwargs):

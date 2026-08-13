@@ -36,3 +36,7 @@ class ExchangeReconciliationRequiredError(ExchangeSubmissionSafetyError):
 
 class ExchangeCapabilityError(ExchangeSubmissionSafetyError):
     """Raised when the process-local submission capability is absent or invalid."""
+
+
+class Phase3ReviewError(ExchangeExecutionInvariantError):
+    """Raised before persistence when a Phase 3 reviewed request is unsafe."""

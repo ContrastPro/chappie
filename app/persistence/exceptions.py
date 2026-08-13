@@ -30,6 +30,30 @@ class PersistenceConflictError(PersistenceIntegrityError):
     pass
 
 
+class Phase3AuthorityConflictError(PersistenceConflictError):
+    pass
+
+
+class Phase3StaleControlError(Phase3AuthorityConflictError):
+    pass
+
+
+class Phase3StaleReconciliationError(Phase3AuthorityConflictError):
+    pass
+
+
+class Phase3LineageError(Phase3AuthorityConflictError):
+    pass
+
+
+class Phase3EconomicSlotConflictError(Phase3AuthorityConflictError):
+    pass
+
+
+class Phase3AuthorityCorruptionError(PersistenceIntegrityError):
+    pass
+
+
 class PersistenceSerializationError(PersistenceError):
     pass
 
