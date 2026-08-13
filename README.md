@@ -76,6 +76,11 @@ Phase 3 subsequently completed its single ACK-level submission; ACK is not fill 
 same-database recovery/settlement harness is complete and its final offline safety review passed. It
 has no submission path and remains unauthorized pending separate execution approval.
 
+The first real Phase 4 observation proved a complete FILLED trade and SAFE reconciliation, then stopped
+INCOMPLETE because Binance labeled an exact zero commission as BTC. ADR-065 accepts exact finite Decimal
+zero as asset-neutral while preserving the original trade and blocked audit record. Schema-v6
+append-only resolution is designed but not implemented or authorized; M4.10 is not yet complete.
+
 Important defaults:
 
 - market: Binance Spot;

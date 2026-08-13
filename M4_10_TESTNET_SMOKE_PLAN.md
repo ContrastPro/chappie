@@ -1,10 +1,16 @@
 # M4.10 Controlled Binance Spot Testnet Smoke Plan
 
-Status: **Phase 1 PASS; Phase 2 PASS; Phase 3 one-shot submission PASS; authoritative fill/settlement not yet proven; Phase 4 recovery/settlement harness completed; final offline Phase 4 safety review passed; Phase 4 execution authorization pending** (2026-08-13).
+Status: **Phase 1 PASS; Phase 2 PASS; Phase 3 one-shot submission PASS; Phase 4 real reconciliation SAFE but settlement INCOMPLETE for authoritative `0 BTC` commission; ADR-065 exact-zero resolution design accepted; implementation/remediation authorization pending** (2026-08-13).
 
 Phase 4 uses `python -m app.tools.testnet_phase4` to reopen the same smoke database. It is GET-only,
 cannot reconstruct submission authority, and settles only normalized authoritative trades through the
 existing exactly-once machinery. Production Phase 4 execution remains unauthorized.
+
+The first authorized Phase 4 pass preserved one complete FILLED trade and correctly appended
+`BLOCKED_UNSUPPORTED_FEE`: Binance reported exact zero commission with asset label BTC. ADR-065 accepts
+exact finite Decimal zero as asset-neutral, but no production state is resolved by that decision alone.
+Schema-v6 implementation, offline review, commit/push and separate same-database remediation authority
+are required. No additional order, cancellation or fee conversion is permitted.
 
 Stage 4 remains in progress. This document authorizes no network access, credential use,
 additional `/api/v3/order/test` request or real Testnet order. Every phase below needs a new, explicit
@@ -517,6 +523,31 @@ signatures under global DEBUG and assert that request URLs, bodies, headers, pri
 exception tracebacks do not leak them.
 
 ## Completion and M4.11 boundary
+
+### ADR-065 implementation acceptance matrix
+
+Zero is evaluated only after typed finite `Decimal` normalization and by exact `is_zero()` semantics;
+there is no epsilon. Inbound `0`, `0.0`, `0.00000000` and `-0` normalize to canonical persisted `0`.
+Canonical storage rejects non-canonical spellings, malformed/non-finite values and floats; the smallest
+non-zero Decimal remains non-zero. Exact-zero BUY accounting adds authoritative base quantity, deducts
+authoritative quote quantity, adds zero fees and adds quote quantity to turnover, independent of the
+preserved commission asset label. It never subtracts base commission or converts BTC/BNB.
+
+Implementation review must cover zero BTC, BNB and USDT labels; signed zero; positive BTC/BNB blocking;
+positive USDT unchanged; smallest positive unsupported fee blocking; malformed/non-finite/float
+rejection; and the production-style `0 BTC` blocked fixture resolving to `0.00016 BTC`, `14.890736
+USDT`, zero fees and `10.109264 USDT` turnover. Resolve-once, duplicate resolution, restart, duplicate
+trade delivery, Phase 4 replay on a copy and lost commit acknowledgement must produce one economic
+effect. `RuntimeError`, `KeyboardInterrupt`, `SystemExit` and `GeneratorExit` are injected before/after
+resolution insert, Portfolio current, session turnover, audit record, commit and acknowledgement:
+pre-commit is full rollback; post-commit is durable recovery.
+
+The typed completion predicate is `SYNCHRONIZED` only when the authoritative order is terminal, base
+and quote trade totals are complete, reconciliation and coverage are SAFE/complete, every trade has
+either a normal SETTLED record or a valid resolved-zero record, unresolved blocked/pending counts are
+zero, and Portfolio/session authority validation succeeds. `blocked_count`, `settled_count` and other
+per-invocation counters are diagnostics only. Integrity/authority mismatch is FAILED/CONFLICT;
+unresolved or pending truth is INCOMPLETE.
 
 M4.10 completes only after separately authorized Phases 1–4 prove: read authentication and lineage;
 one `/order/test`; one valid real Testnet MARKET order; authoritative reconciliation and settlement;

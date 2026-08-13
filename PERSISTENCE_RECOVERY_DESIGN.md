@@ -1096,3 +1096,31 @@ execution authorization remains pending. Its harness reconciles the sole order a
 trades, records complete coverage only when facts
 agree, and reuses atomic exactly-once settlement. Production execution remains unauthorized; ACK alone
 is never treated as a fill.
+
+### Schema-v6 zero-commission settlement resolution
+
+ADR-065 accepts exact finite Decimal zero as asset-neutral without changing the authoritative trade.
+Migration 006 is required because `exchange_trade_settlements` permits only one append-only row per
+trade and the existing `BLOCKED_UNSUPPORTED_FEE` row cannot be updated, deleted or replaced. The
+additive `exchange_trade_settlement_resolutions` journal conceptually stores a deterministic
+resolution ID and fill ID, the unique prior blocked settlement ID, the full trade identity and command,
+Portfolio/session/reconciliation lineage, `zero-commission-asset-neutral/v1`, reason code, version
+before/after, before/after state and digests, timestamp, canonical record payload and digest. UPDATE and
+DELETE triggers forbid mutation. UNIQUE constraints cover the blocked settlement, trade identity,
+resolution/fill identity and `(portfolio_id, portfolio_version_after)`.
+
+One `BEGIN IMMEDIATE` transaction revalidates the original block, exact `commission == Decimal(0)`,
+complete SAFE coverage, current Portfolio digest/version and session generation; inserts the resolution,
+advances Portfolio by the authoritative trade, adds authoritative quote quantity to turnover, advances
+session generation and commits. No trade or old settlement row changes. The existing
+`last_settlement_seq` may reference the original blocked row; recovery proves the resulting version
+through its unique resolution link rather than interpreting that pointer as a successful historical
+settlement. Pre-commit failures roll back every effect; post-commit acknowledgement loss discovers the
+same resolution and returns it idempotently.
+
+Recovery derives effective trade state as `PENDING`, `BLOCKED_UNSUPPORTED_FEE`, `SETTLED`, or
+`RESOLVED_ZERO_COMMISSION`. It retains the historical block in audit output but excludes a valid linked
+resolution from the unresolved-block count. Portfolio authority validation merges ordinary SETTLED
+rows and resolution rows by `portfolio_version_after`, requires a contiguous version/digest chain and
+recomputes session turnover. Any orphan, duplicate, digest mismatch or cross-table version collision is
+`RECOVERY_REQUIRED`.

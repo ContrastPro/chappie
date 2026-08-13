@@ -1025,6 +1025,14 @@ Phase 4 is a separate GET-only recovery and settlement graph over the same datab
 offline harness and final adversarial safety review are complete; execution authorization remains
 pending. It cannot submit, replace, or cancel. Authoritative fill/settlement proof remains pending.
 
+The first production Phase 4 observation reached SAFE reconciliation but remained INCOMPLETE because
+the authoritative fill reported `commission=0` with `commission_asset=BTC`. ADR-065 accepts only exact
+finite Decimal zero as asset-neutral. It preserves that BTC label, applies no fee or conversion, and
+requires a schema-v6 append-only resolution of the existing blocked record. Positive USDT fees retain
+existing accounting; positive BTC/BNB/other fees remain unsupported. Completion is a durable global
+predicate—terminal order, complete base and quote trade truth, SAFE complete coverage, no unresolved
+pending/block, and synchronized Portfolio/session—not a test of newly blocked rows in one invocation.
+
 The committed lifecycle has one terminal state, CONSUMED. Transaction-local PREPARED cannot become
 visible without the linked command; stale authorization fails before insert, so EXPIRED/CANCELED
 states are unnecessary. UNIQUE authority ID, operator run, economic slot and command linkage prove
