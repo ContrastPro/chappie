@@ -756,8 +756,8 @@ blocks settlement and new authority.
 Submission authority is opaque and process-local, and binds TESTNET environment, account,
 session, reconciliation generation and control generation. Any failed gate produces no
 capability. LIVE remains structurally rejected. M4.9 is completed and its final crash/restart
-safety review passed; M4.10 Phase 1 authenticated read-only PASS and Phase 2 authorization is
-pending; Stage 4 remains in progress.
+safety review passed; M4.10 Phase 1 and Phase 2 PASS, while Phase 3 is blocked and unauthorized;
+Stage 4 remains in progress.
 
 The M4.8 completion pass removes the raw public `submit_prepared(key)` gateway path. A synchronous
 final gate rereads order, session, reconciliation/control generations, kill switch, settlement,
@@ -784,7 +784,8 @@ corrupt/incompatible durable state remains fatal. Recovery-only never promotes i
 startup must rerun recovery, reconciliation, settlement and control checks before minting a new
 process-local capability. This contract is recorded by accepted ADR-063. M4.9
 is completed and its final crash/restart safety review passed; M4.10 Phase 1 authenticated
-read-only PASS and Phase 2 authorization is pending; Stage 4 remains in progress.
+read-only and Phase 2 signed order-test PASS; Phase 3 is blocked and unauthorized, and Stage 4
+remains in progress.
 
 ## M4.9 crash/restart torture review
 
@@ -800,8 +801,8 @@ green. Detailed evidence is in `M4_9_CRASH_RESTART_REPORT.md`; Stage 4 remains i
 ## M4.10 controlled Testnet smoke authorization
 
 M4.10 security preflight is completed, its final safety review passed, and Phase 1 authenticated
-read-only evidence passed. The dedicated `python -m app.tools.testnet_phase2` harness is implemented
-and reviewed offline; Phase 2 authorization is pending.
+read-only evidence passed. The dedicated `python -m app.tools.testnet_phase2` harness completed with
+PASS after exactly one signed test-endpoint POST and no financial semantics.
 `M4_10_TESTNET_SMOKE_PLAN.md` separates
 offline, authenticated-read, `/order/test`, one-order and restart phases; each requires independent
 operator approval. Central logging suppresses private transport tracing even under global DEBUG;
@@ -821,4 +822,8 @@ request before transport. A narrow facade exposes only `test_market_order`; the 
 persistence, Portfolio, durable lifecycle, reconciliation, settlement or normal runtime. The
 reviewed Phase 2-only BUY quantity `0.00016000` BTC is checked with `Decimal` against the observed
 price `63849.22000000`, `stepSize=0.00001000`, `minQty=0.00001000` and `minNotional=5.00000000`.
-Phase 2 has not run, and Phase 3 remains unauthorized.
+Phase 2 created no order, trade, Fill, durable lifecycle or balance mutation. Phase 3 remains
+blocked and unauthorized: no dedicated one-shot operator flow or audited kill-switch command exists,
+and the pre-existing Testnet 1 BTC cannot be silently imported into the zero-base managed Portfolio.
+A quote-funded subledger or explicit initial-balance bootstrap/reconciliation policy must first be
+accepted and proven.

@@ -926,8 +926,8 @@ inventing conversion. Runtime startup executes recovery -> reconciliation -> set
 readiness and issues authority only after re-reading current durable generations. The authority
 is TESTNET-only and binds account and session lineage. LIVE, cancellation and authenticated smoke
 remain absent; M4.9 is completed and its final crash/restart safety review passed. M4.10 security
-preflight safety review passed, Phase 1 authenticated read-only PASS and Phase 2 authorization is
-pending; Stage 4 remains in progress.
+preflight safety review passed, Phase 1 and Phase 2 PASS, and Phase 3 is blocked and unauthorized;
+Stage 4 remains in progress.
 
 The completion pass makes the network boundary accept only a single-use `PreSubmitAuthorization`
 minted by `TestnetPreSubmitGate`. The gate performs a final durable reread and rejects stale Risk,
@@ -958,8 +958,8 @@ decision coordinator, so executable intents cannot accumulate PREPARED orders. T
 same-process promotion in M4.8: resolving the blocker requires a fresh startup, which repeats the
 ordered recovery checks and may mint a new generation-bound capability. ADR-063 is accepted;
 M4.9 is completed and its final crash/restart safety review passed. M4.10 security preflight
-review passed, Phase 1 authenticated read-only PASS and Phase 2 authorization is pending, while
-Stage 4 remains in progress.
+review passed, Phase 1 and Phase 2 PASS, while Phase 3 is blocked and unauthorized and Stage 4
+remains in progress.
 
 Full-graph acceptance uses fresh `build_application()` objects for every simulated process while
 sharing only the SQLite file and deterministic fake exchange. The suite proves lost ACK A/B/C,
@@ -981,7 +981,7 @@ authorization pending.
 
 ### M4.10 controlled smoke design status
 
-Status: **Phase 1 authenticated read-only PASS; Phase 2 harness implemented/reviewed offline and authorization pending** (2026-08-13). The authorization ladder in
+Status: **Phase 1 authenticated read-only PASS; Phase 2 signed order-test PASS; Phase 3 BLOCKED and unauthorized** (2026-08-13). The authorization ladder in
 `M4_10_TESTNET_SMOKE_PLAN.md` keeps authenticated reads, `/api/v3/order/test`, one real Testnet
 order and restart reconciliation under distinct approvals. Central dependency-log suppression and
 an explicit no-fallback order-test adapter contract are implemented. The Phase 0 read-harness gap
@@ -990,7 +990,8 @@ fixed-host transport enforce the GET whitelist and five-request ceiling. AST/imp
 MockTransport proofs exclude trader composition, persistence, submission capability/gate/lifecycle,
 real submit and order-test calls. It writes sanitized evidence and exits. Audited kill-switch/smoke
 commands remain later prerequisites. Phase 1 used exactly four GETs and produced no order-capable
-call or durable/financial mutation. Its authorization is consumed; Phase 2 remains unauthorized.
+call or durable/financial mutation. Its authorization is consumed. Phase 2 later passed under its
+own separate authorization.
 The separate `python -m app.tools.testnet_phase2` entrypoint requires the exact
 `M4_10_PHASE2_AUTHORIZED=YES` token. Its capability-narrow facade exposes only
 `test_market_order`, while its transport allows exactly one fixed-host
@@ -998,4 +999,13 @@ The separate `python -m app.tools.testnet_phase2` entrypoint requires the exact
 and a second request before transport. The reviewed Phase 2-only BUY quantity `0.00016000` BTC is
 validated with `Decimal` against the public reference price `63849.22000000` and preserved Phase 1
 rules. No persistence, Portfolio, lifecycle, reconciliation, settlement or normal trading graph is
-composed. Phase 2 has not run and Phase 3 remains unauthorized.
+composed. Phase 2 passed with exactly one test-endpoint POST, accepted signing/request-contract
+semantics and no real order or financial mutation.
+
+Phase 3 is blocked pending a reviewed one-shot operator graph through Risk, durable identity,
+PREPARED, final gate and SUBMITTING; an audited kill-switch clear/reactivation procedure; and a
+first-order risk envelope capped at one submission/non-terminal/in-flight order. The Testnet
+account's pre-existing 1 BTC is not managed history: production Portfolio composition starts at
+zero base, and current balance inspection does not establish ownership. A quote-funded managed
+subledger or explicit initial-balance bootstrap/reconciliation policy must be accepted before any
+real-order authorization. The pre-existing BTC must not be sold automatically.

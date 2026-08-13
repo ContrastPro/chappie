@@ -1,9 +1,9 @@
 # M4.10 Controlled Binance Spot Testnet Smoke Plan
 
-Status: **Phase 1 authenticated read-only PASS; Phase 2 harness implemented/reviewed offline and authorization pending** (2026-08-13).
+Status: **Phase 1 authenticated read-only PASS; Phase 2 signed order-test PASS; Phase 3 BLOCKED and unauthorized** (2026-08-13).
 
 Stage 4 remains in progress. This document authorizes no network access, credential use,
-`/api/v3/order/test` request or real Testnet order. Every phase below needs a new, explicit
+additional `/api/v3/order/test` request or real Testnet order. Every phase below needs a new, explicit
 operator authorization naming that phase. Approval never carries forward.
 
 ## Safety finding and prerequisites
@@ -197,6 +197,22 @@ Respect `Retry-After` and do not repeatedly probe credentials. Phase 1 never pro
 
 ## Phase 2 — signed order-test request
 
+Phase 2 completed with **PASS** at `2026-08-13T14:00:10.409Z` under its separate authorization.
+Run `54c016e7-d5f3-48ca-9ec0-d0f87c78bce1` produced the ignored sanitized evidence file
+`logs/m4_10_phase2.log`, SHA-256
+`88087b28fa1b1aa2709c850b087e641dc877133017b331813686afba2220f383`.
+Exactly one request occurred: `POST /api/v3/order/test`, for `BTCUSDT`, `BUY`, base quantity
+`0.00016000` and deterministic client order ID `ctt1t-evgxmjostjpx6py6eql5svvwrj`.
+It returned `validated=True`, with no retry, stop reason, fallback or other endpoint. Evidence says
+`financial_semantics=none`; credentials and `M4_10_PHASE2_AUTHORIZED` were removed from the shell,
+and no API key, secret, signature, signed request or private header was recorded.
+
+This proves that the Testnet signed POST contract, deterministic `ctt1t-` representation, MARKET
+BUY base-quantity form, `newOrderRespType=ACK`, timestamp, fixed `recvWindow` and API-key header
+were accepted by the test endpoint. It does not prove that a real order was accepted or executable.
+No exchange order ID, trade, Fill, durable order/attempt, Portfolio change,
+reconciliation/settlement state or balance mutation was created.
+
 The dedicated one-shot harness is now implemented at `python -m app.tools.testnet_phase2`. It
 requires the exact non-secret `M4_10_PHASE2_AUTHORIZED=YES` token and permits exactly one fixed-host
 `POST /api/v3/order/test`; every other method, path, authority and any second request stop before
@@ -204,8 +220,8 @@ transport. Its restricted facade exposes only `test_market_order` and composes n
 Portfolio, durable submission lifecycle, reconciliation, settlement or normal trading runtime.
 The minimal adapter operation is a separate
 contract from `submit_market_order`: there is no fallback to `/api/v3/order`, no retry, no redirect,
-and no production lifecycle mutation. Phase 1 evidence passed; Phase 2 remains authorization
-pending and requires a new explicit operator authorization.
+and no production lifecycle mutation. Phase 1 evidence passed; the separately authorized Phase 2
+run recorded above also passed.
 
 Official contract verification on 2026-08-13 used the current Binance Spot REST
 [`Test new order (TRADE)` documentation](https://developers.binance.com/en/docs/catalog/core-trading-spot-trading/api/rest-api/trade#test-new-order-trade)
@@ -247,16 +263,18 @@ Offline Phase 2 implementation and review are complete: the harness targets exac
 `POST /api/v3/order/test`, has no fallback or retry, carries no persistence or financial semantics,
 validates the deterministic client-ID format, and preserves Phase 1 account/rules evidence. It
 writes immutable sanitized evidence to `logs/m4_10_phase2.log` and refuses a pre-existing path
-before credentials or transport. Before authorization, these changes must be committed with a
-clean Git tree and the reviewed price/rules must still be accepted by the operator. Phase 2 has
-not been executed. Any Phase 2 authorization permits exactly that one POST. It
+before credentials or transport. Phase 2 authorization was consumed by the recorded PASS and
+grants no rerun or later-phase authority. It
 does not permit `POST /api/v3/order`, cancellation, kill-switch clear, a real order, continuous
 trading or Phase 3.
 
 ## Phase 3 — one real Testnet order
 
-Phase 3 remains not authorized and is design-only until Phase 2 evidence passes and the missing
-one-shot operator tooling is reviewed. Authorization must state exact HEAD, account fingerprint,
+Phase 3 remains **BLOCKED and not authorized**. The repository has no dedicated one-shot Phase 3
+operator entrypoint, no audited operator command for a bounded kill-switch clear/reactivation
+cycle, and no accepted initial-balance/subledger policy for the pre-existing `1.00000000 BTC`
+observed in the Testnet account. Authorization must not be requested until these gaps are
+implemented and reviewed offline. It must then state exact HEAD, account fingerprint,
 fresh database path, run ID, BUY/SELL, computed base quantity, maximum submitted notional and
 request count.
 
@@ -270,6 +288,13 @@ Select BUY only if Phase 1 proves a dedicated lineage with expected USDT, no unm
 unexpected history. Select SELL only when a prior managed BUY has produced the exact durable BTC
 position intended for the paired smoke. Never sell or normalize unexplained BTC. Any unexpected
 position/history requires operator review.
+
+Production composition initializes the durable Portfolio with zero base and configured quote
+funds, while current reconciliation checks balance scope but does not establish ownership of the
+pre-existing BTC. That BTC must remain outside managed Portfolio history and must never be sold
+automatically. Phase 3 requires an accepted design: preferably a quote-funded managed subledger
+whose invariants/evidence distinguish pre-existing exchange BTC, or a separately reviewed initial-
+balance bootstrap/reconciliation model. Current architecture does not yet prove either policy.
 
 Limits are: BTCUSDT only; MARKET only; long-only; base quantity; one order and one in-flight order;
 `TESTNET_MAX_SESSION_SUBMISSION_COUNT=1`; submitted-notional and turnover caps just above the
@@ -294,6 +319,14 @@ atomically exhaust authority after the first committed attempt and reactivate th
 soon as the outcome is durably recorded. Until that behavior exists, the operator must reactivate
 through an audited command immediately after the first attempt; the runtime stays supervised and
 must be stopped if reactivation cannot be proven. Environment values may not clear the switch.
+
+Before authorization, the dedicated command must enforce one submission, one non-terminal order
+and one in-flight order maximum; narrowly bounded submitted-notional, turnover, order and position
+caps; sufficient quote reserve; current rules and a fresh reference price; controlled durable
+decision/command identity; and automatic or audited immediate kill-switch reactivation after the
+first committed attempt. Reserve `logs/m4_10_phase3.log`, `logs/m4_10_phase4.log` and
+`data/m4_10_testnet_smoke.sqlite3` with fail-closed collision handling; do not create them before
+their authorized phases.
 
 ## Ambiguity and stop procedures
 
