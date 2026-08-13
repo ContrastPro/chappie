@@ -4,6 +4,12 @@ from uuid import uuid4
 
 LOG_FORMAT = "%(asctime)s | %(levelname)s | %(name)s | run_id=%(run_id)s | %(message)s"
 
+# These transports can render complete request URLs, headers, or wire data. Private Binance
+# requests contain signatures and API-key headers, so operational facts must be logged by our
+# adapter/application boundary instead of dependency request tracing.
+PRIVATE_TRANSPORT_LOGGERS = ("httpx", "httpcore", "h11", "h2", "hpack")
+PRIVATE_TRANSPORT_LOG_LEVEL = logging.CRITICAL + 1
+
 
 class UUIDRunIdFactory:
     """Create a unique identifier for one application invocation."""
@@ -80,6 +86,14 @@ def configure_logging(
         handlers=[console_handler, history_handler, run_handler],
         force=True,
     )
+    suppress_private_transport_logging()
+
+
+def suppress_private_transport_logging() -> None:
+    """Prevent dependency request tracing from exposing authenticated transport material."""
+
+    for name in PRIVATE_TRANSPORT_LOGGERS:
+        logging.getLogger(name).setLevel(PRIVATE_TRANSPORT_LOG_LEVEL)
 
 
 def shutdown_logging() -> None:

@@ -32,6 +32,7 @@ from app.infrastructure.binance.exceptions import (
     BinanceConfigurationError,
     BinanceNormalizationError,
     BinanceOrderRejectedError,
+    BinanceOrderTestPreflightError,
     BinanceRateLimitError,
     BinanceResponseError,
     BinanceTransportError,
@@ -92,6 +93,15 @@ class OrderIdentity:
             or self.created_at_ms < 0
         ):
             raise BinanceConfigurationError("order identity timestamp must be non-negative")
+
+
+@dataclass(frozen=True, slots=True)
+class OrderTestPreflightResult:
+    """Successful validation only; deliberately carries no exchange or financial identity."""
+
+    @property
+    def validated(self) -> bool:
+        return True
 
 
 @runtime_checkable
@@ -239,6 +249,64 @@ class BinanceSpotTestnetAdapter:
             ExchangeOrderStatus.ACKNOWLEDGED,
             transact_time,
         )
+
+    def test_market_order(
+        self,
+        *,
+        stream_key: MarketStreamKey,
+        side: ExchangeOrderSide,
+        base_quantity: Decimal,
+        client_order_id: str,
+    ) -> OrderTestPreflightResult:
+        """Validate one signed MARKET request without entering the durable order lifecycle."""
+
+        self._validate_stream(stream_key)
+        if not isinstance(side, ExchangeOrderSide):
+            raise BinanceConfigurationError("order-test side is invalid")
+        if (
+            not isinstance(base_quantity, Decimal)
+            or not base_quantity.is_finite()
+            or base_quantity <= 0
+        ):
+            raise BinanceConfigurationError("order-test quantity must be positive Decimal")
+        require_client_order_id(client_order_id)
+        parameters: list[tuple[str, ParameterValue]] = [
+            ("symbol", stream_key.symbol),
+            ("side", side.value),
+            ("type", "MARKET"),
+            ("quantity", base_quantity),
+            ("newClientOrderId", client_order_id),
+            ("newOrderRespType", "ACK"),
+            ("timestamp", self._timestamp()),
+            ("recvWindow", self._config.recv_window_ms),
+        ]
+        try:
+            response = self._send("POST", "/api/v3/order/test", parameters, signed=True)
+        except httpx.TimeoutException:
+            raise BinanceOrderTestPreflightError(category="timeout") from None
+        except httpx.RequestError:
+            raise BinanceOrderTestPreflightError(category="transport") from None
+        if response.status_code in {418, 429}:
+            self._raise_rate_limit(response)
+        if response.status_code >= 500:
+            raise BinanceOrderTestPreflightError(
+                category="http_5xx", status_code=response.status_code
+            )
+        if 300 <= response.status_code < 400:
+            raise BinanceOrderTestPreflightError(
+                category="redirect", status_code=response.status_code
+            )
+        error = self._error_payload(response)
+        if error is not None:
+            self._raise_private_error(response, *error, submit=False)
+        if response.status_code >= 400:
+            raise BinanceOrderTestPreflightError(
+                category="http_error", status_code=response.status_code
+            )
+        payload = self._json_object(response)
+        if payload:
+            raise BinanceNormalizationError("order-test success response must be empty")
+        return OrderTestPreflightResult()
 
     def query_order(self, *, stream_key: MarketStreamKey, client_order_id: str) -> OrderQueryResult:
         self._validate_stream(stream_key)

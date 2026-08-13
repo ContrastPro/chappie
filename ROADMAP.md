@@ -356,7 +356,7 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 
 ## Этап 4. Risk hardening и биржевое execution
 
-Статус: **in progress — M4.9 completed; final crash/restart safety review passed; M4.10 next**.
+Статус: **in progress — M4.9 completed; M4.10 preflight review passed, Phase 1 authorization pending**.
 
 ### Цель
 
@@ -479,14 +479,17 @@ recovery и изолированным testnet execution до отдельног
 - Deterministic offline torture extended production recovery to twenty NOT_FOUND restarts,
   later FOUND resolution, 100 same-process and ten cross-process duplicate decisions, twenty
   RECOVERY_ONLY/READY restarts, and fixed-seed crash schedules. No production safety defect was
-  found; M4.10 remains future controlled Testnet smoke.
+  found; M4.10 controlled Testnet smoke design is prepared and authorization is pending.
 
 #### M4.10 Controlled Binance Testnet Smoke
 
-Статус: **next; not started**.
+Статус: **security preflight completed; final preflight safety review passed; Phase 1 authorization pending** (2026-08-13).
 
-- После отдельного разрешения выполнить bounded BUY/SELL/restart/cancellation smoke
-  только на Testnet с проверкой endpoint и отсутствия secret leakage.
+- По отдельным разрешениям выполнить read-only authentication, `/api/v3/order/test`, bounded
+  BUY/SELL и restart/reconciliation smoke только на Spot Testnet. Cancellation остаётся
+  unsupported. План не разрешает credentials, network или order до отдельной phase authorization.
+- Central logging suppression and an isolated MockTransport-proven `/api/v3/order/test` adapter
+  contract are implemented. Neither capability performs an authenticated action by itself.
 
 #### M4.11 Stage 4 Completion
 
@@ -506,7 +509,8 @@ recovery и изолированным testnet execution до отдельног
 - Подключён Binance testnet adapter.
 - M4.8 completed; final safety review passed. Production Testnet composition,
   authoritative execution flow and durable reconciliation coverage horizon are implemented.
-  M4.9 completed; final crash/restart safety review passed. M4.10 is next and not started;
+  M4.9 completed; final crash/restart safety review passed. M4.10 security preflight is
+  completed and its final preflight safety review passed; Phase 1 authorization is pending and
   Stage 4 remains in progress.
 - Проведён paper/shadow run, достаточный для сбора требуемой выборки наблюдений.
 - Собрано достаточное для допуска количество наблюдений по утверждённым критериям качества.

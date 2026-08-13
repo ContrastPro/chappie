@@ -10,6 +10,17 @@ class BinanceTransportError(BinanceTestnetAdapterError):
     """A read-only request failed at the transport boundary."""
 
 
+class BinanceOrderTestPreflightError(BinanceTransportError):
+    """The non-executing order-test preflight did not produce a known safe success."""
+
+    def __init__(self, *, category: str, status_code: int | None = None) -> None:
+        self.category = category
+        self.status_code = status_code
+        super().__init__(
+            f"Binance order-test preflight failed; category={category} status={status_code}"
+        )
+
+
 class BinanceAmbiguousSubmissionError(BinanceTransportError):
     """Submission truth is unknown and reconciliation is required."""
 

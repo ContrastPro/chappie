@@ -45,8 +45,13 @@ process to perform a fresh readiness check; recovery-only does not promote itsel
 M4.9 offline crash/restart torture recreates fresh production graphs around file-backed SQLite and
 a deterministic fake exchange. Repeated NOT_FOUND, later FOUND, lost acknowledgements, duplicate
 decisions and settlement restarts remain no-resubmit/exact-once. This is automated safety evidence,
-not an authenticated Testnet smoke; M4.10 is next, not started and separately controlled, while
-LIVE is unsupported.
+not an authenticated Testnet smoke. M4.10 security preflight review passed, but Phase 1
+authorization remains pending; LIVE is unsupported.
+
+The M4.10 controlled Spot Testnet security preflight is completed and its final safety review
+passed; Phase 1 still awaits explicit authorization.
+See [`M4_10_TESTNET_SMOKE_PLAN.md`](M4_10_TESTNET_SMOKE_PLAN.md). Configuring credentials does not
+authorize an authenticated read, `/api/v3/order/test` or a real order; each is a separate gate.
 
 Important defaults:
 

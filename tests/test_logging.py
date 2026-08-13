@@ -6,7 +6,12 @@ import pytest
 
 import app.main as main_module
 from app.core.config import Settings
-from app.core.logger import configure_logging, shutdown_logging
+from app.core.logger import (
+    PRIVATE_TRANSPORT_LOG_LEVEL,
+    PRIVATE_TRANSPORT_LOGGERS,
+    configure_logging,
+    shutdown_logging,
+)
 
 RUN_ID = "test-run-0001"
 
@@ -66,6 +71,10 @@ def test_reconfigure_overwrites_run_log_but_appends_history(tmp_path: Path) -> N
     assert history.count("first message") == 1
     assert history.count("second message") == 1
     assert len(logging.getLogger().handlers) == 3
+    assert all(
+        logging.getLogger(name).level == PRIVATE_TRANSPORT_LOG_LEVEL
+        for name in PRIVATE_TRANSPORT_LOGGERS
+    )
 
 
 def test_console_filters_verbose_events_but_keeps_warnings(
@@ -75,7 +84,7 @@ def test_console_filters_verbose_events_but_keeps_warnings(
     _, run_file = configure_in(tmp_path)
 
     logging.getLogger("MarketEvents").info("CandleInserted open_time_ms=1")
-    logging.getLogger("httpx").info("HTTP Request: GET safe-public-url")
+    logging.getLogger("httpx").info("HTTP Request: GET signed-sensitive-url")
     logging.getLogger("MarketEvents").warning("MarketGapDetected")
     logging.getLogger("MarketEvents").error("MarketStreamFailed")
     logging.getLogger("PollingEngine").info("Polling cycle completed")
@@ -89,7 +98,24 @@ def test_console_filters_verbose_events_but_keeps_warnings(
     assert "MarketStreamFailed" in console
     assert "Polling cycle completed" in console
     assert "CandleInserted" in current
-    assert "HTTP Request" in current
+    assert "HTTP Request" not in current
+
+
+def test_private_transport_loggers_remain_suppressed_when_root_is_debug(tmp_path: Path) -> None:
+    _, run_file = configure_in(tmp_path)
+    logging.getLogger().setLevel(logging.DEBUG)
+
+    for name in PRIVATE_TRANSPORT_LOGGERS:
+        logger = logging.getLogger(name)
+        assert logger.level == PRIVATE_TRANSPORT_LOG_LEVEL
+        logger.critical("signed-url API_KEY_SHOULD_NEVER_LEAK signature=synthetic")
+    logging.getLogger("application-safe").error("safe application error remains available")
+    flush_handlers()
+
+    current = run_file.read_text(encoding="utf-8")
+    assert "API_KEY_SHOULD_NEVER_LEAK" not in current
+    assert "signature=synthetic" not in current
+    assert "safe application error remains available" in current
 
 
 def test_shadow_traceback_is_file_only(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:

@@ -4,6 +4,7 @@ from app.infrastructure.binance.exceptions import (
     BinanceConfigurationError,
     BinanceNormalizationError,
     BinanceOrderRejectedError,
+    BinanceOrderTestPreflightError,
     BinanceRateLimitError,
     BinanceResponseError,
     BinanceTestnetAdapterError,
@@ -17,6 +18,7 @@ from app.infrastructure.binance.testnet_execution import (
     BinanceSpotTestnetConfig,
     OrderIdentity,
     OrderIdentityResolver,
+    OrderTestPreflightResult,
     TimestampProvider,
 )
 
@@ -27,6 +29,7 @@ __all__ = [
     "BinanceConfigurationError",
     "BinanceNormalizationError",
     "BinanceOrderRejectedError",
+    "BinanceOrderTestPreflightError",
     "BinanceRateLimitError",
     "BinanceResponseError",
     "BinanceSpotTestnetAdapter",
@@ -36,6 +39,7 @@ __all__ = [
     "BinanceUnsupportedContractError",
     "OrderIdentity",
     "OrderIdentityResolver",
+    "OrderTestPreflightResult",
     "TimestampProvider",
     "encode_parameters",
     "sign_hmac_sha256",

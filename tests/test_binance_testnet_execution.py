@@ -1,6 +1,8 @@
 import copy
+import logging
 from dataclasses import FrozenInstanceError
 from decimal import Decimal
+from pathlib import Path
 from urllib.parse import parse_qs
 
 import httpx
@@ -19,6 +21,7 @@ from app.infrastructure.binance import (
     BinanceConfigurationError,
     BinanceNormalizationError,
     BinanceOrderRejectedError,
+    BinanceOrderTestPreflightError,
     BinanceRateLimitError,
     BinanceResponseError,
     BinanceSpotTestnetAdapter,
@@ -26,10 +29,12 @@ from app.infrastructure.binance import (
     BinanceTransportError,
     BinanceUnsupportedContractError,
     OrderIdentity,
+    OrderTestPreflightResult,
     encode_parameters,
     sign_hmac_sha256,
 )
 from app.market.models import MarketStreamKey
+from app.persistence import SQLiteExchangePersistence, SQLitePersistenceConfig
 
 D = Decimal
 KEY = MarketStreamKey("BTCUSDT", "1m")
@@ -37,6 +42,8 @@ CLIENT_ID = "ctt1t-abcdefghijklmnopqrstuvwxyz"
 COMMAND_KEY = "a" * 64
 API_KEY = "TEST_API_KEY_DO_NOT_LEAK_123"
 SECRET = "TEST_SECRET_DO_NOT_LEAK_456"
+LEAK_API_KEY = "API_KEY_SHOULD_NEVER_LEAK"
+LEAK_SECRET = "SECRET_SHOULD_NEVER_LEAK"
 
 
 class Resolver:
@@ -1076,6 +1083,293 @@ def test_trade_resolver_failure_is_typed_before_http() -> None:
         client.close()
     assert isinstance(captured.value.__cause__, LookupError)
     assert calls == 0
+
+
+@pytest.mark.parametrize("side", [ExchangeOrderSide.BUY, ExchangeOrderSide.SELL])
+def test_order_test_has_exact_signed_shape_and_no_real_order_fallback(
+    side: ExchangeOrderSide,
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.url.path == "/api/v3/order/test"
+        return httpx.Response(200, json={})
+
+    value, client = adapter(handler)
+    try:
+        result = value.test_market_order(
+            stream_key=KEY,
+            side=side,
+            base_quantity=D("0.00010"),
+            client_order_id=CLIENT_ID,
+        )
+    finally:
+        value.close()
+        client.close()
+
+    assert result == OrderTestPreflightResult()
+    assert result.validated
+    assert not hasattr(result, "accepted")
+    assert len(CLIENT_ID) == 32
+    assert len(requests) == 1
+    request = requests[0]
+    assert request.method == "POST"
+    assert request.url == "https://testnet.binance.vision/api/v3/order/test"
+    assert request.headers["X-MBX-APIKEY"] == API_KEY
+    unsigned, signature = request.content.decode().rsplit("&signature=", 1)
+    assert unsigned == (
+        f"symbol=BTCUSDT&side={side.value}&type=MARKET&quantity=0.00010&"
+        f"newClientOrderId={CLIENT_ID}&newOrderRespType=ACK&"
+        "timestamp=1700000000000&recvWindow=5000"
+    )
+    assert signature == sign_hmac_sha256(unsigned, SECRET)
+    assert len(signature) == 64
+    assert "/api/v3/order&" not in request.content.decode()
+    assert "quoteOrderQty" not in request.content.decode()
+
+
+@pytest.mark.parametrize(
+    ("failure", "error_type", "category"),
+    [
+        (
+            httpx.ReadTimeout("signed-url signature=synthetic"),
+            BinanceOrderTestPreflightError,
+            "timeout",
+        ),
+        (httpx.ConnectError("X-MBX-APIKEY sensitive"), BinanceOrderTestPreflightError, "transport"),
+        (httpx.ProtocolError("signed body sensitive"), BinanceOrderTestPreflightError, "transport"),
+        (
+            httpx.Response(500, text="raw-sensitive-private-response"),
+            BinanceOrderTestPreflightError,
+            "http_5xx",
+        ),
+        (
+            httpx.Response(400, json={"code": -1022, "msg": "raw-sensitive-private-response"}),
+            BinanceAuthenticationError,
+            None,
+        ),
+        (
+            httpx.Response(400, json={"code": -1021, "msg": "raw-sensitive-private-response"}),
+            BinanceAuthenticationError,
+            None,
+        ),
+        (httpx.Response(429, headers={"Retry-After": "7"}), BinanceRateLimitError, None),
+        (httpx.Response(418, headers={"Retry-After": "9"}), BinanceRateLimitError, None),
+        (
+            httpx.Response(307, headers={"Location": "/api/v3/order"}),
+            BinanceOrderTestPreflightError,
+            "redirect",
+        ),
+        (
+            httpx.Response(200, content=b"raw-sensitive-private-response"),
+            BinanceNormalizationError,
+            None,
+        ),
+    ],
+)
+def test_order_test_error_taxonomy_is_safe_and_never_retries(
+    failure: Exception | httpx.Response,
+    error_type: type[Exception],
+    category: str | None,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if isinstance(failure, Exception):
+            raise failure
+        return failure
+
+    value, client = adapter(
+        handler,
+        config_value=config(api_key=LEAK_API_KEY, api_secret=LEAK_SECRET),
+    )
+    with caplog.at_level(logging.DEBUG):
+        from app.core.logger import suppress_private_transport_logging
+
+        suppress_private_transport_logging()
+        try:
+            with pytest.raises(error_type) as captured:
+                value.test_market_order(
+                    stream_key=KEY,
+                    side=ExchangeOrderSide.BUY,
+                    base_quantity=D("0.00010"),
+                    client_order_id=CLIENT_ID,
+                )
+            logging.getLogger("TestnetPreflight").error(
+                "order-test failed safely",
+                exc_info=(type(captured.value), captured.value, captured.value.__traceback__),
+            )
+        finally:
+            value.close()
+            client.close()
+    assert calls == 1
+    if category is not None:
+        assert isinstance(captured.value, BinanceOrderTestPreflightError)
+        assert captured.value.category == category
+    rendered = repr(captured.value) + str(captured.value)
+    assert "raw-sensitive-private-response" not in rendered
+    assert "signed-url" not in rendered
+    assert "X-MBX-APIKEY sensitive" not in rendered
+    assert "signed body sensitive" not in rendered
+    for forbidden in (
+        LEAK_API_KEY,
+        LEAK_SECRET,
+        "raw-sensitive-private-response",
+        "signed-url",
+        "X-MBX-APIKEY sensitive",
+        "signed body sensitive",
+        "signature=",
+    ):
+        assert forbidden not in caplog.text
+
+
+@pytest.mark.parametrize("quantity", [1.0, D("0"), D("NaN")])
+def test_order_test_rejects_non_decimal_or_non_positive_quantity_before_http(
+    quantity: object,
+) -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, json={})
+
+    value, client = adapter(handler)
+    try:
+        with pytest.raises(BinanceConfigurationError):
+            value.test_market_order(
+                stream_key=KEY,
+                side=ExchangeOrderSide.BUY,
+                base_quantity=quantity,  # type: ignore[arg-type]
+                client_order_id=CLIENT_ID,
+            )
+    finally:
+        value.close()
+        client.close()
+    assert calls == 0
+
+
+def test_order_test_closed_adapter_rejects_without_http() -> None:
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        return httpx.Response(200, json={})
+
+    value, client = adapter(handler)
+    value.close()
+    try:
+        with pytest.raises(BinanceConfigurationError, match="closed"):
+            value.test_market_order(
+                stream_key=KEY,
+                side=ExchangeOrderSide.BUY,
+                base_quantity=D("0.00010"),
+                client_order_id=CLIENT_ID,
+            )
+    finally:
+        client.close()
+    assert calls == 0
+
+
+def test_order_test_has_no_persistence_or_portfolio_semantics(tmp_path: Path) -> None:
+    store = SQLiteExchangePersistence(
+        SQLitePersistenceConfig(tmp_path / "order-test.sqlite3", expected_schema_version=4)
+    )
+    before = {
+        table: store._connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+        for table in (
+            "exchange_orders",
+            "exchange_order_events",
+            "exchange_submission_attempts",
+            "exchange_reconciliation_runs",
+            "exchange_trade_settlements",
+            "exchange_portfolio_current",
+            "exchange_sessions",
+        )
+    }
+    value, client = adapter(lambda request: httpx.Response(200, json={}))
+    try:
+        value.test_market_order(
+            stream_key=KEY,
+            side=ExchangeOrderSide.BUY,
+            base_quantity=D("0.00010"),
+            client_order_id=CLIENT_ID,
+        )
+        after = {
+            table: store._connection.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+            for table in before
+        }
+    finally:
+        value.close()
+        client.close()
+        store.close()
+    assert after == before
+
+
+def test_signed_get_and_post_never_leak_under_global_debug(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    del tmp_path
+    from app.core.logger import suppress_private_transport_logging
+
+    synthetic_signature = sign_hmac_sha256("synthetic", LEAK_SECRET)
+    sensitive_response = {
+        "balances": [
+            {"asset": "BTC", "free": "1", "locked": "0"},
+            {"asset": "USDT", "free": "100", "locked": "0"},
+        ]
+    }
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.url.path == "/api/v3/account":
+            return httpx.Response(200, json=sensitive_response)
+        if request.url.path == "/api/v3/order/test":
+            return httpx.Response(200, json={})
+        raise AssertionError("unexpected path")
+
+    value, client = adapter(
+        handler,
+        config_value=config(api_key=LEAK_API_KEY, api_secret=LEAK_SECRET),
+    )
+    with caplog.at_level(logging.DEBUG):
+        suppress_private_transport_logging()
+        try:
+            assert len(value.read_balances(("BTC", "USDT"))) == 2
+            value.test_market_order(
+                stream_key=KEY,
+                side=ExchangeOrderSide.BUY,
+                base_quantity=D("0.00010"),
+                client_order_id=CLIENT_ID,
+            )
+        finally:
+            value.close()
+            client.close()
+    rendered = caplog.text
+    signed_material = [
+        request.url.query.decode() if request.url.query else request.content.decode()
+        for request in requests
+    ]
+    actual_signatures = [material.rsplit("signature=", 1)[1] for material in signed_material]
+    for forbidden in (
+        LEAK_API_KEY,
+        LEAK_SECRET,
+        synthetic_signature,
+        "X-MBX-APIKEY",
+        "signature=",
+        "recvWindow=5000",
+        "omitZeroBalances=false",
+        "raw-sensitive-private-response",
+        *signed_material,
+        *actual_signatures,
+    ):
+        assert forbidden not in rendered
 
 
 @pytest.mark.parametrize(
