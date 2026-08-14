@@ -232,6 +232,7 @@ def test_quantity_uses_fresh_decimal_rules() -> None:
         Decimal("0.00001"),
         Decimal(5),
         "rules-v1",
+        Decimal(1000),
     )
     quantity, notional = calculate_quantity(rules, Decimal("63849.22"))
     assert quantity == Decimal("0.00016")
@@ -239,7 +240,12 @@ def test_quantity_uses_fresh_decimal_rules() -> None:
     with pytest.raises(Phase3OperatorBlocked):
         calculate_quantity(rules, Decimal("NaN"))
     too_coarse = ExchangeInstrumentRules(
-        MarketStreamKey("BTCUSDT", "1m"), Decimal(1), Decimal(1), Decimal(5), "rules-v2"
+        MarketStreamKey("BTCUSDT", "1m"),
+        Decimal(1),
+        Decimal(1),
+        Decimal(5),
+        "rules-v2",
+        Decimal(1000),
     )
     with pytest.raises(Phase3OperatorBlocked, match="ceiling"):
         calculate_quantity(too_coarse, Decimal(100))
@@ -255,6 +261,7 @@ class _Reader:
             Decimal("0.00001"),
             Decimal(5),
             "rules",
+            Decimal(1000),
         )
         self.price = Decimal("63849.22")
         self.balances = (
@@ -451,6 +458,7 @@ def _responses(request: httpx.Request, *, post_mode: str = "ack") -> httpx.Respo
                                 "filterType": "MARKET_LOT_SIZE",
                                 "minQty": "0.00001",
                                 "stepSize": "0.00001",
+                                "maxQty": "1000",
                             },
                             {
                                 "filterType": "MIN_NOTIONAL",

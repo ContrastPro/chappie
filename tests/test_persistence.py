@@ -707,7 +707,7 @@ def test_persistence_configuration_validation(tmp_path: Path) -> None:
         {"database_path": tmp_path},
         {"database_path": ":memory:", "busy_timeout_ms": 0},
         {"database_path": ":memory:", "checkpoint_interval_transitions": True},
-        {"database_path": ":memory:", "expected_schema_version": 7},
+        {"database_path": ":memory:", "expected_schema_version": 8},
     )
     for values in invalid:
         with pytest.raises(PersistenceConfigurationError):

@@ -857,6 +857,8 @@ def test_module_has_no_transport_or_mutating_runtime_dependencies() -> None:
 
 def test_production_artifact_is_still_unchanged() -> None:
     assert _sha(PRODUCTION) == proof.EXPECTED_DATABASE_SHA256
-    assert not Path("logs/m4_10_recovery_proof.log").exists()
+    assert _sha(Path("logs/m4_10_recovery_proof.log")) == (
+        "b4611033201903980de341272232c119d330012979d209a7b3fd82db3412c997"
+    )
     assert not Path(str(PRODUCTION) + "-wal").exists()
     assert not Path(str(PRODUCTION) + "-shm").exists()

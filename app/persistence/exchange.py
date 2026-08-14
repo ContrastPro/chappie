@@ -26,6 +26,12 @@ from app.exchange_execution.phase3 import (
     ReviewedPhase3SmokeRequest,
     derive_phase3_economic_slot,
 )
+from app.exchange_execution.stage4_sell import (
+    ReviewedStage4ManagedSellRequest,
+    Stage4ManagedSellClaimReceipt,
+    Stage4ManagedSellProcessClaim,
+    derive_stage4_sell_economic_slot,
+)
 from app.market.models import MarketStreamKey
 from app.persistence.canonical import (
     canonical_json,
@@ -41,6 +47,10 @@ from app.persistence.exceptions import (
     Phase3LineageError,
     Phase3StaleControlError,
     Phase3StaleReconciliationError,
+    Stage4ManagedInventoryMismatchError,
+    Stage4ManagedSellAuthorityError,
+    Stage4ManagedSellStalePredecessorError,
+    Stage4ManagedSellStaleSafetyError,
 )
 from app.persistence.exchange_models import (
     DurableExchangeOrder,
@@ -57,7 +67,7 @@ from app.persistence.exchange_models import (
     TradeSettlementStatus,
 )
 from app.persistence.models import PortfolioState, SQLitePersistenceConfig
-from app.persistence.sqlite import SQLiteTradingPersistence
+from app.persistence.sqlite import SQLiteTradingPersistence, deserialize_portfolio_state
 
 
 def _order_payload(order: ExchangeOrder) -> dict[str, object]:
@@ -120,9 +130,9 @@ class SQLiteExchangePersistence:
     ) -> None:
         if not isinstance(
             config, SQLitePersistenceConfig
-        ) or config.expected_schema_version not in {2, 3, 4, 5, 6}:
+        ) or config.expected_schema_version not in {2, 3, 4, 5, 6, 7}:
             raise PersistenceIntegrityError(
-                "exchange persistence requires schema version 2, 3, 4, 5, or 6"
+                "exchange persistence requires schema version 2, 3, 4, 5, 6, or 7"
             )
         self._trading = SQLiteTradingPersistence(config)
         self._connection = self._trading._connection
@@ -131,6 +141,7 @@ class SQLiteExchangePersistence:
             raise PersistenceIntegrityError("failure_injector must be callable")
         self._failure_injector = failure_injector
         self._phase3_claims: dict[str, Phase3ProcessClaim] = {}
+        self._stage4_sell_claims: dict[str, Stage4ManagedSellProcessClaim] = {}
 
     def _hit(self, boundary: str) -> None:
         if self._failure_injector is not None:
@@ -712,6 +723,358 @@ class SQLiteExchangePersistence:
                 connection.rollback()
             raise
 
+    def authorize_stage4_managed_sell_command(
+        self, request: ReviewedStage4ManagedSellRequest
+    ) -> Stage4ManagedSellClaimReceipt:
+        """Atomically consume the sole managed-SELL authority and prepare its command."""
+        if self._trading.config.expected_schema_version != 7:
+            raise PersistenceIntegrityError("managed SELL authority requires schema version 7")
+        if not isinstance(request, ReviewedStage4ManagedSellRequest):
+            raise PersistenceIntegrityError("invalid reviewed managed SELL request")
+        command = request.command
+        client_id = DeterministicClientOrderIdFactory().create_client_order_id(
+            environment=ExecutionEnvironment.TESTNET,
+            venue="binance-spot",
+            account_fingerprint=request.account_fingerprint,
+            durable_command_key=command.durable_command_key,
+        )
+        order = ExchangeOrder(
+            command.durable_command_key,
+            client_id,
+            request.account_fingerprint,
+            command.stream_key,
+            command.side,
+            command.base_quantity,
+            ExchangeOrderStatus.PREPARED,
+            request.created_at_ms,
+        )
+        envelope_payload = canonical_json(asdict(request.envelope))
+        authority_values = {
+            "authority_id": request.authority_id,
+            "execution_root_id": request.execution_root_id,
+            "session_id": request.session_id,
+            "account_fingerprint": request.account_fingerprint,
+            "managed_portfolio_id": request.portfolio_id,
+            "predecessor_portfolio_version": request.portfolio_version,
+            "predecessor_portfolio_digest": request.portfolio_digest,
+            "exact_managed_quantity": serialize_decimal(request.exact_managed_quantity),
+            "expected_submission_count": request.expected_submission_count,
+            "permitted_submission_count": request.permitted_submission_count,
+            "control_generation": request.control_generation,
+            "reconciliation_generation": request.reconciliation_generation,
+            "settlement_state": "SYNCHRONIZED",
+            "settlement_state_digest": request.settlement_state_digest,
+            "source_buy_command_key": request.source_buy_command_key,
+            "source_buy_trade_id": request.source_buy_trade_id,
+            "operator_run_id": request.operator_run_id,
+            "economic_slot_key": request.economic_slot_key,
+            "policy_version": request.policy_version,
+            "rules_fingerprint": request.rules.rules_version,
+            "risk_fingerprint": request.risk_fingerprint,
+            "config_fingerprint": request.config_fingerprint,
+            "ownership_scope_digest": request.ownership_scope_digest,
+            "risk_envelope_digest": request.envelope.digest,
+            "consumed_durable_command_key": command.durable_command_key,
+            "created_at_ms": request.created_at_ms,
+            "consumed_at_ms": request.created_at_ms,
+            "status": "CONSUMED",
+        }
+        authority_payload = canonical_json(authority_values)
+        authority_digest = canonical_sha256(
+            authority_values, algorithm_version=request.policy_version
+        )
+        connection = self._connection
+        committed = False
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                "SELECT authority_id,consumed_durable_command_key,payload_digest "
+                "FROM exchange_managed_sell_authorities WHERE authority_id=? "
+                "OR economic_slot_key=? OR consumed_durable_command_key=? "
+                "OR (operator_run_id=? AND execution_root_id=?)",
+                (
+                    request.authority_id,
+                    request.economic_slot_key,
+                    command.durable_command_key,
+                    request.operator_run_id,
+                    request.execution_root_id,
+                ),
+            ).fetchone()
+            if existing is not None:
+                if tuple(existing) != (
+                    request.authority_id,
+                    command.durable_command_key,
+                    authority_digest,
+                ):
+                    raise Stage4ManagedSellAuthorityError("managed SELL authority conflicts")
+                connection.rollback()
+                claim = self._stage4_sell_claims.get(request.authority_id)
+                return Stage4ManagedSellClaimReceipt(
+                    request.authority_id,
+                    command.durable_command_key,
+                    client_id,
+                    claim,
+                    recovered=claim is None,
+                )
+            root = connection.execute(
+                "SELECT account_fingerprint,configuration_fingerprint FROM "
+                "exchange_execution_roots WHERE execution_root_id=?",
+                (request.execution_root_id,),
+            ).fetchone()
+            session = connection.execute(
+                "SELECT execution_root_id,account_fingerprint,state,submission_count,"
+                "submitted_notional,executed_turnover FROM exchange_sessions WHERE session_id=?",
+                (request.session_id,),
+            ).fetchone()
+            control = connection.execute(
+                "SELECT kill_switch_state,control_generation,reconciliation_generation FROM "
+                "exchange_control_state WHERE execution_root_id=?",
+                (request.execution_root_id,),
+            ).fetchone()
+            reconciliation = connection.execute(
+                "SELECT status,generation FROM exchange_reconciliation_current "
+                "WHERE execution_root_id=?",
+                (request.execution_root_id,),
+            ).fetchone()
+            portfolio = connection.execute(
+                "SELECT c.portfolio_version,c.state_payload,c.state_digest,r.portfolio_id,"
+                "r.config_fingerprint FROM exchange_portfolio_current c JOIN "
+                "exchange_portfolio_roots r ON r.portfolio_id=c.portfolio_id "
+                "WHERE r.execution_root_id=?",
+                (request.execution_root_id,),
+            ).fetchone()
+            if (
+                root is None
+                or session is None
+                or portfolio is None
+                or root[0] != request.account_fingerprint
+                or tuple(session[:3])
+                != (request.execution_root_id, request.account_fingerprint, "ACTIVE")
+                or portfolio[3] != request.portfolio_id
+            ):
+                raise Stage4ManagedSellStalePredecessorError("managed SELL lineage mismatch")
+            if root[1] != request.config_fingerprint or portfolio[4] != request.config_fingerprint:
+                raise Stage4ManagedSellStalePredecessorError("managed SELL config mismatch")
+            if (
+                control is None
+                or tuple(control)
+                != ("ACTIVE", request.control_generation, request.reconciliation_generation)
+                or reconciliation is None
+                or tuple(reconciliation) != ("SAFE", request.reconciliation_generation)
+            ):
+                raise Stage4ManagedSellStaleSafetyError("managed SELL safety generation is stale")
+            if session[3] != request.expected_submission_count:
+                raise Stage4ManagedSellStalePredecessorError("SELL session count is stale")
+            if (
+                deserialize_decimal(session[4]) != request.envelope.predecessor_submitted_notional
+                or deserialize_decimal(session[5]) != request.envelope.predecessor_turnover
+            ):
+                raise Stage4ManagedSellStalePredecessorError("SELL session economics are stale")
+            state = deserialize_portfolio_state(portfolio[1])
+            if (
+                portfolio[0] != request.portfolio_version
+                or portfolio[2] != request.portfolio_digest
+                or state.digest != request.portfolio_digest
+                or state.base_balance != request.exact_managed_quantity
+                or state.position is None
+                or state.position.quantity != request.exact_managed_quantity
+            ):
+                raise Stage4ManagedInventoryMismatchError("managed SELL predecessor is stale")
+            source = connection.execute(
+                "SELECT o.side,o.status,t.side,count(*),"
+                "sum(CASE WHEN s.status='SETTLED' OR r.resolution_id IS NOT NULL THEN 1 ELSE 0 END) "
+                "FROM exchange_orders o JOIN exchange_trades t ON "
+                "t.durable_command_key=o.durable_command_key LEFT JOIN "
+                "exchange_trade_settlements s ON s.durable_command_key=o.durable_command_key "
+                "AND s.exchange_trade_id=t.exchange_trade_id LEFT JOIN "
+                "exchange_trade_settlement_resolutions r ON "
+                "r.blocked_settlement_id=s.settlement_id WHERE o.durable_command_key=? "
+                "AND t.exchange_trade_id=? GROUP BY o.durable_command_key",
+                (request.source_buy_command_key, request.source_buy_trade_id),
+            ).fetchone()
+            if source is None or tuple(source) != ("BUY", "FILLED", "BUY", 1, 1):
+                raise Stage4ManagedInventoryMismatchError("managed BUY provenance is invalid")
+            unsettled = connection.execute(
+                "SELECT (SELECT count(*) FROM exchange_trades t LEFT JOIN "
+                "exchange_trade_settlements s ON s.exchange_trade_id=t.exchange_trade_id "
+                "WHERE s.settlement_id IS NULL),"
+                "(SELECT count(*) FROM exchange_trade_settlements s LEFT JOIN "
+                "exchange_trade_settlement_resolutions r ON "
+                "r.blocked_settlement_id=s.settlement_id WHERE "
+                "s.status='BLOCKED_UNSUPPORTED_FEE' AND r.resolution_id IS NULL)"
+            ).fetchone()
+            settlement_values = {
+                "portfolio_version": portfolio[0],
+                "portfolio_digest": portfolio[2],
+                "reconciliation_generation": request.reconciliation_generation,
+                "pending": unsettled[0],
+                "blocked": unsettled[1],
+                "status": "SYNCHRONIZED",
+            }
+            if (
+                tuple(unsettled) != (0, 0)
+                or canonical_sha256(
+                    settlement_values, algorithm_version="stage4-sell-settlement-state/v1"
+                )
+                != request.settlement_state_digest
+            ):
+                raise Stage4ManagedSellStaleSafetyError("SELL settlement state is stale")
+            open_counts = connection.execute(
+                "SELECT sum(CASE WHEN terminal=0 THEN 1 ELSE 0 END),"
+                "(SELECT count(*) FROM exchange_submission_attempts a JOIN exchange_orders x "
+                "ON x.durable_command_key=a.durable_command_key WHERE x.status='SUBMITTING') "
+                "FROM exchange_orders WHERE execution_root_id=?",
+                (request.execution_root_id,),
+            ).fetchone()
+            if (open_counts[0] or 0) != 0 or open_counts[1] != 0:
+                raise Stage4ManagedSellStaleSafetyError("managed SELL has pending competition")
+            self._hit("stage4_sell_before_authority")
+            connection.execute(
+                "INSERT INTO exchange_managed_sell_authorities VALUES(" + ",".join("?" * 36) + ")",
+                (
+                    request.authority_id,
+                    request.execution_root_id,
+                    request.session_id,
+                    request.account_fingerprint,
+                    request.portfolio_id,
+                    "binance-spot",
+                    "testnet",
+                    "BTCUSDT",
+                    "SELL",
+                    "MARKET",
+                    request.portfolio_version,
+                    request.portfolio_digest,
+                    serialize_decimal(request.exact_managed_quantity),
+                    request.expected_submission_count,
+                    request.permitted_submission_count,
+                    request.control_generation,
+                    request.reconciliation_generation,
+                    "SYNCHRONIZED",
+                    request.settlement_state_digest,
+                    request.source_buy_command_key,
+                    request.source_buy_trade_id,
+                    request.operator_run_id,
+                    request.economic_slot_key,
+                    request.policy_version,
+                    request.rules.rules_version,
+                    request.risk_fingerprint,
+                    request.config_fingerprint,
+                    request.ownership_scope_digest,
+                    envelope_payload,
+                    request.envelope.digest,
+                    command.durable_command_key,
+                    request.created_at_ms,
+                    request.created_at_ms,
+                    "CONSUMED",
+                    authority_payload,
+                    authority_digest,
+                ),
+            )
+            self._hit("stage4_sell_after_authority")
+            state_payload = canonical_json(_order_payload(order))
+            connection.execute(
+                "INSERT INTO exchange_orders VALUES(" + ",".join("?" * 26) + ")",
+                (
+                    order.durable_command_key,
+                    command.stable_decision_key,
+                    order.client_order_id,
+                    request.execution_root_id,
+                    request.session_id,
+                    request.account_fingerprint,
+                    order.venue,
+                    order.environment.value,
+                    order.stream_key.symbol,
+                    order.stream_key.interval,
+                    order.side.value,
+                    serialize_decimal(order.original_base_quantity),
+                    serialize_decimal(command.approved_notional),
+                    order.status.value,
+                    None,
+                    "0",
+                    "0",
+                    order.created_at_ms,
+                    None,
+                    None,
+                    None,
+                    0,
+                    1,
+                    _command_payload(command),
+                    state_payload,
+                    _order_digest(order),
+                ),
+            )
+            self._hit("stage4_sell_after_command")
+            self._append_event(
+                order,
+                None,
+                1,
+                ExchangeOrderEventSource.LOCAL_PREPARATION,
+                "stage4_managed_sell_prepared",
+                request.created_at_ms,
+            )
+            self._hit("stage4_sell_after_prepared_event")
+            self._hit("stage4_sell_after_reservation")
+            self._hit("stage4_sell_after_linkage")
+            event_values = {
+                "authority_id": request.authority_id,
+                "event_ordinal": 1,
+                "event_type": "CONSUMED",
+                "durable_command_key": command.durable_command_key,
+                "operator_run_id": request.operator_run_id,
+                "occurred_at_ms": request.created_at_ms,
+                "policy_version": request.policy_version,
+            }
+            event_payload = canonical_json(event_values)
+            event_id = canonical_sha256(
+                {"authority_id": request.authority_id, "event_ordinal": 1},
+                algorithm_version="stage4-managed-sell-event-id/v1",
+            )
+            connection.execute(
+                "INSERT INTO exchange_managed_sell_authority_events VALUES(NULL,?,?,?,?,?,?,?,?,?)",
+                (
+                    event_id,
+                    request.authority_id,
+                    1,
+                    "CONSUMED",
+                    command.durable_command_key,
+                    request.operator_run_id,
+                    request.created_at_ms,
+                    event_payload,
+                    canonical_sha256(
+                        event_values, algorithm_version="stage4-managed-sell-event/v1"
+                    ),
+                ),
+            )
+            self._hit("stage4_sell_after_audit")
+            self._hit("stage4_sell_before_commit")
+            connection.commit()
+            committed = True
+            claim = Stage4ManagedSellProcessClaim._issue(request)
+            self._stage4_sell_claims[request.authority_id] = claim
+            self._hit("stage4_sell_after_commit")
+            return Stage4ManagedSellClaimReceipt(
+                request.authority_id,
+                command.durable_command_key,
+                client_id,
+                claim,
+            )
+        except (PersistenceConflictError, sqlite3.IntegrityError) as error:
+            if not committed:
+                connection.rollback()
+            if isinstance(error, PersistenceConflictError):
+                raise
+            raise Stage4ManagedSellAuthorityError("managed SELL constraint conflict") from error
+        except sqlite3.Error as error:
+            if not committed:
+                connection.rollback()
+            raise PersistenceTransactionError(
+                "managed SELL authority transaction failed"
+            ) from error
+        except BaseException:
+            if not committed:
+                connection.rollback()
+            raise
+
     def begin_submission(
         self, durable_command_key: str, *, occurred_at_ms: int
     ) -> DurableExchangeOrder:
@@ -1005,11 +1368,20 @@ class SQLiteExchangePersistence:
                     "SELECT consumed_durable_command_key FROM exchange_smoke_authorities"
                 ).fetchall()
             }
+        stage4_sell_keys: set[str] = set()
+        if self._trading.config.expected_schema_version >= 7:
+            self._validate_stage4_sell_authorities()
+            stage4_sell_keys = {
+                row[0]
+                for row in self._connection.execute(
+                    "SELECT consumed_durable_command_key FROM exchange_managed_sell_authorities"
+                ).fetchall()
+            }
         prepared = tuple(
             v
             for v in orders
             if self.restart_disposition(v) is RestartDisposition.FIRST_SUBMISSION_ELIGIBLE
-            and v.order.durable_command_key not in phase3_keys
+            and v.order.durable_command_key not in phase3_keys | stage4_sell_keys
         )
         reconciliation = tuple(
             v
@@ -1017,7 +1389,7 @@ class SQLiteExchangePersistence:
             if self.restart_disposition(v) is RestartDisposition.RECONCILIATION_REQUIRED
             or (
                 v.order.status is ExchangeOrderStatus.PREPARED
-                and v.order.durable_command_key in phase3_keys
+                and v.order.durable_command_key in phase3_keys | stage4_sell_keys
             )
         )
         terminal = tuple(
@@ -1026,6 +1398,149 @@ class SQLiteExchangePersistence:
         return LocalExchangeRecoveryResult(
             LocalExchangeRecoveryStatus.CLEAN, prepared, reconciliation, terminal
         )
+
+    def _validate_stage4_sell_authorities(self) -> None:
+        rows = self._connection.execute(
+            "SELECT a.*,o.execution_root_id AS order_root,o.session_id AS order_session,"
+            "o.account_fingerprint AS order_account,o.side AS order_side,o.original_quantity,"
+            "o.client_order_id AS order_client_id,o.command_payload AS order_command_payload,"
+            "s.execution_root_id AS session_root,s.account_fingerprint AS session_account,"
+            "s.submission_count AS current_submission_count,"
+            "p.execution_root_id AS portfolio_root FROM exchange_managed_sell_authorities a "
+            "LEFT JOIN exchange_orders o ON "
+            "o.durable_command_key=a.consumed_durable_command_key LEFT JOIN "
+            "exchange_sessions s ON s.session_id=a.session_id LEFT JOIN "
+            "exchange_portfolio_roots p ON p.portfolio_id=a.managed_portfolio_id "
+            "ORDER BY a.authority_id"
+        ).fetchall()
+        for row in rows:
+            try:
+                payload = json.loads(row["payload"])
+                command = json.loads(row["order_command_payload"])
+                expected = {
+                    name: row[name]
+                    for name in (
+                        "authority_id",
+                        "execution_root_id",
+                        "session_id",
+                        "account_fingerprint",
+                        "managed_portfolio_id",
+                        "predecessor_portfolio_version",
+                        "predecessor_portfolio_digest",
+                        "exact_managed_quantity",
+                        "expected_submission_count",
+                        "permitted_submission_count",
+                        "control_generation",
+                        "reconciliation_generation",
+                        "settlement_state",
+                        "settlement_state_digest",
+                        "source_buy_command_key",
+                        "source_buy_trade_id",
+                        "operator_run_id",
+                        "economic_slot_key",
+                        "policy_version",
+                        "rules_fingerprint",
+                        "risk_fingerprint",
+                        "config_fingerprint",
+                        "ownership_scope_digest",
+                        "risk_envelope_digest",
+                        "consumed_durable_command_key",
+                        "created_at_ms",
+                        "consumed_at_ms",
+                        "status",
+                    )
+                }
+            except (TypeError, ValueError, json.JSONDecodeError) as error:
+                raise PersistenceIntegrityError(
+                    "managed SELL authority payload is invalid"
+                ) from error
+            if (
+                canonical_json(payload) != row["payload"]
+                or payload != json.loads(canonical_json(expected))
+                or canonical_sha256(payload, algorithm_version=row["policy_version"])
+                != row["payload_digest"]
+                or row["order_root"] != row["execution_root_id"]
+                or row["order_session"] != row["session_id"]
+                or row["order_account"] != row["account_fingerprint"]
+                or row["order_side"] != "SELL"
+                or deserialize_decimal(row["original_quantity"])
+                != deserialize_decimal(row["exact_managed_quantity"])
+                or row["portfolio_root"] != row["execution_root_id"]
+                or row["session_root"] != row["execution_root_id"]
+                or row["session_account"] != row["account_fingerprint"]
+                or row["current_submission_count"]
+                not in (row["expected_submission_count"], row["permitted_submission_count"])
+                or (row["expected_submission_count"], row["permitted_submission_count"]) != (1, 2)
+                or row["order_client_id"]
+                != DeterministicClientOrderIdFactory().create_client_order_id(
+                    environment=ExecutionEnvironment.TESTNET,
+                    venue="binance-spot",
+                    account_fingerprint=row["account_fingerprint"],
+                    durable_command_key=row["consumed_durable_command_key"],
+                )
+                or command.get("durable_command_key") != row["consumed_durable_command_key"]
+                or command.get("instrument_rules_fingerprint") != row["rules_fingerprint"]
+                or command.get("risk_authorization_fingerprint") != row["risk_fingerprint"]
+                or command.get("execution_configuration_fingerprint") != row["config_fingerprint"]
+                or row["economic_slot_key"]
+                != derive_stage4_sell_economic_slot(
+                    row["execution_root_id"],
+                    row["account_fingerprint"],
+                    row["managed_portfolio_id"],
+                    row["predecessor_portfolio_version"],
+                    row["predecessor_portfolio_digest"],
+                    row["source_buy_trade_id"],
+                )
+            ):
+                raise PersistenceIntegrityError("managed SELL authority linkage is corrupt")
+            envelope = json.loads(row["risk_envelope_payload"])
+            if (
+                canonical_json(envelope) != row["risk_envelope_payload"]
+                or canonical_sha256(envelope, algorithm_version="stage4-managed-sell-envelope/v1")
+                != row["risk_envelope_digest"]
+                or envelope.get("quantity") != {"$decimal": row["exact_managed_quantity"]}
+                or tuple(
+                    envelope.get(name)
+                    for name in (
+                        "max_incremental_submissions",
+                        "max_new_non_terminal",
+                        "max_new_in_flight",
+                    )
+                )
+                != (1, 1, 1)
+                or tuple(envelope.get(name) for name in ("symbol", "side", "order_type"))
+                != ("BTCUSDT", "SELL", "MARKET")
+            ):
+                raise PersistenceIntegrityError("managed SELL risk envelope is corrupt")
+            events = self._connection.execute(
+                "SELECT event_ordinal,event_type,durable_command_key,operator_run_id,payload,"
+                "payload_digest FROM exchange_managed_sell_authority_events WHERE authority_id=?",
+                (row["authority_id"],),
+            ).fetchall()
+            if len(events) != 1 or tuple(events[0][:4]) != (
+                1,
+                "CONSUMED",
+                row["consumed_durable_command_key"],
+                row["operator_run_id"],
+            ):
+                raise PersistenceIntegrityError("managed SELL authority event linkage is corrupt")
+            event_payload = json.loads(events[0][4])
+            expected_event = {
+                "authority_id": row["authority_id"],
+                "event_ordinal": 1,
+                "event_type": "CONSUMED",
+                "durable_command_key": row["consumed_durable_command_key"],
+                "operator_run_id": row["operator_run_id"],
+                "occurred_at_ms": row["consumed_at_ms"],
+                "policy_version": row["policy_version"],
+            }
+            if (
+                canonical_json(event_payload) != events[0][4]
+                or event_payload != expected_event
+                or canonical_sha256(event_payload, algorithm_version="stage4-managed-sell-event/v1")
+                != events[0][5]
+            ):
+                raise PersistenceIntegrityError("managed SELL authority event digest is corrupt")
 
     def _validate_phase3_authorities(self) -> None:
         rows = self._connection.execute(

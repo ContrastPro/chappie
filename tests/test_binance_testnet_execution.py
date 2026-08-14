@@ -1,7 +1,7 @@
 import copy
 import logging
 from dataclasses import FrozenInstanceError
-from decimal import Decimal
+from decimal import Decimal, localcontext
 from pathlib import Path
 from urllib.parse import parse_qs
 
@@ -549,10 +549,16 @@ def test_exchange_info_normalizes_market_filters_and_version() -> None:
             {
                 "symbol": "BTCUSDT",
                 "filters": [
-                    {"filterType": "LOT_SIZE", "minQty": "0.00001", "stepSize": "0.00001"},
+                    {
+                        "filterType": "LOT_SIZE",
+                        "minQty": "0.00001",
+                        "maxQty": "1000",
+                        "stepSize": "0.00001",
+                    },
                     {
                         "filterType": "MARKET_LOT_SIZE",
                         "minQty": "0.00010",
+                        "maxQty": "1000",
                         "stepSize": "0.00010",
                     },
                     {"filterType": "MIN_NOTIONAL", "minNotional": "5.00", "applyToMarket": True},
@@ -568,7 +574,210 @@ def test_exchange_info_normalizes_market_filters_and_version() -> None:
     assert rules.quantity_step == D("0.00010")
     assert rules.min_quantity == D("0.00010")
     assert rules.min_notional == D("5.00")
+    assert rules.max_quantity == D("1000")
     assert len(rules.rules_version) == 64
+
+
+def test_exchange_info_zero_max_is_explicitly_unbounded_and_context_stable() -> None:
+    payload = {
+        "symbols": [
+            {
+                "symbol": "BTCUSDT",
+                "filters": [
+                    {
+                        "filterType": "MARKET_LOT_SIZE",
+                        "minQty": "0.00010",
+                        "maxQty": "0.000000",
+                        "stepSize": "0.00010",
+                    },
+                    {"filterType": "MIN_NOTIONAL", "minNotional": "5.00", "applyToMarket": True},
+                ],
+            }
+        ]
+    }
+    value, client = adapter(lambda request: httpx.Response(200, json=payload))
+    try:
+        with localcontext() as context:
+            context.prec = 3
+            first = value.read_instrument_rules(KEY)
+        with localcontext() as context:
+            context.prec = 50
+            second = value.read_instrument_rules(KEY)
+    finally:
+        client.close()
+    assert first.max_quantity is None
+    assert first.rules_version == second.rules_version
+
+
+def test_rules_fingerprint_changes_for_every_bound_contract_field() -> None:
+    baseline = {
+        "symbols": [
+            {
+                "symbol": "BTCUSDT",
+                "filters": [
+                    {
+                        "filterType": "MARKET_LOT_SIZE",
+                        "minQty": "0.0001",
+                        "maxQty": "1000",
+                        "stepSize": "0.0001",
+                    },
+                    {"filterType": "MIN_NOTIONAL", "minNotional": "5", "applyToMarket": True},
+                ],
+            }
+        ]
+    }
+
+    def fingerprint(payload) -> str:
+        value, client = adapter(lambda request: httpx.Response(200, json=payload))
+        try:
+            return value.read_instrument_rules(KEY).rules_version
+        finally:
+            client.close()
+
+    expected = fingerprint(baseline)
+    variants = []
+    for field, changed in (
+        ("minQty", "0.0002"),
+        ("maxQty", "999"),
+        ("stepSize", "0.00005"),
+    ):
+        variant = copy.deepcopy(baseline)
+        variant["symbols"][0]["filters"][0][field] = changed
+        variants.append(variant)
+    notional = copy.deepcopy(baseline)
+    notional["symbols"][0]["filters"][1]["minNotional"] = "6"
+    variants.append(notional)
+    unbounded = copy.deepcopy(baseline)
+    unbounded["symbols"][0]["filters"][0]["maxQty"] = "0"
+    variants.append(unbounded)
+    fallback = copy.deepcopy(baseline)
+    fallback["symbols"][0]["filters"] = [
+        {"filterType": "MARKET_LOT_SIZE", "minQty": "0", "maxQty": "0", "stepSize": "0"},
+        {"filterType": "LOT_SIZE", "minQty": "0.0001", "maxQty": "1000", "stepSize": "0.0001"},
+        {"filterType": "MIN_NOTIONAL", "minNotional": "5", "applyToMarket": True},
+    ]
+    variants.append(fallback)
+    observed = {fingerprint(variant) for variant in variants}
+    assert expected not in observed
+    assert len(observed) == len(variants)
+
+
+def test_exchange_info_falls_back_as_one_complete_lot_size_tuple() -> None:
+    payload = {
+        "symbols": [
+            {
+                "symbol": "BTCUSDT",
+                "filters": [
+                    {
+                        "filterType": "MARKET_LOT_SIZE",
+                        "minQty": "0",
+                        "maxQty": "999",
+                        "stepSize": "0",
+                    },
+                    {
+                        "filterType": "LOT_SIZE",
+                        "minQty": "0.00002",
+                        "maxQty": "10",
+                        "stepSize": "0.00002",
+                    },
+                    {"filterType": "MIN_NOTIONAL", "minNotional": "5", "applyToMarket": True},
+                ],
+            }
+        ]
+    }
+    value, client = adapter(lambda request: httpx.Response(200, json=payload))
+    try:
+        rules = value.read_instrument_rules(KEY)
+    finally:
+        client.close()
+    assert (rules.min_quantity, rules.max_quantity, rules.quantity_step) == (
+        D("0.00002"),
+        D(10),
+        D("0.00002"),
+    )
+
+
+@pytest.mark.parametrize(
+    "market",
+    [
+        {"filterType": "MARKET_LOT_SIZE", "minQty": "0", "maxQty": "10", "stepSize": "0.1"},
+        {"filterType": "MARKET_LOT_SIZE", "minQty": "0.1", "maxQty": "10", "stepSize": "0"},
+    ],
+)
+def test_partially_disabled_market_lot_never_falls_back_or_mixes_fields(market) -> None:
+    payload = {
+        "symbols": [
+            {
+                "symbol": "BTCUSDT",
+                "filters": [
+                    market,
+                    {"filterType": "LOT_SIZE", "minQty": "0.2", "maxQty": "20", "stepSize": "0.2"},
+                    {"filterType": "MIN_NOTIONAL", "minNotional": "5", "applyToMarket": True},
+                ],
+            }
+        ]
+    }
+    value, client = adapter(lambda request: httpx.Response(200, json=payload))
+    try:
+        with pytest.raises(BinanceUnsupportedContractError, match="partially disabled"):
+            value.read_instrument_rules(KEY)
+    finally:
+        client.close()
+
+
+def test_duplicate_quantity_filter_is_ambiguous_and_fails_closed() -> None:
+    payload = {
+        "symbols": [
+            {
+                "symbol": "BTCUSDT",
+                "filters": [
+                    {
+                        "filterType": "MARKET_LOT_SIZE",
+                        "minQty": "0.1",
+                        "maxQty": "10",
+                        "stepSize": "0.1",
+                    },
+                    {
+                        "filterType": "MARKET_LOT_SIZE",
+                        "minQty": "0.2",
+                        "maxQty": "20",
+                        "stepSize": "0.2",
+                    },
+                    {"filterType": "MIN_NOTIONAL", "minNotional": "5", "applyToMarket": True},
+                ],
+            }
+        ]
+    }
+    value, client = adapter(lambda request: httpx.Response(200, json=payload))
+    try:
+        with pytest.raises(BinanceUnsupportedContractError, match="duplicate"):
+            value.read_instrument_rules(KEY)
+    finally:
+        client.close()
+
+
+@pytest.mark.parametrize("maximum", [None, "NaN", "Infinity", "-1", "0.15", "1E+999999", 10.0])
+def test_exchange_info_ambiguous_or_invalid_max_quantity_fails_closed(maximum) -> None:
+    lot = {"filterType": "MARKET_LOT_SIZE", "minQty": "0.1", "stepSize": "0.1"}
+    if maximum is not None:
+        lot["maxQty"] = maximum
+    payload = {
+        "symbols": [
+            {
+                "symbol": "BTCUSDT",
+                "filters": [
+                    lot,
+                    {"filterType": "MIN_NOTIONAL", "minNotional": "5", "applyToMarket": True},
+                ],
+            }
+        ]
+    }
+    value, client = adapter(lambda request: httpx.Response(200, json=payload))
+    try:
+        with pytest.raises((BinanceNormalizationError, BinanceUnsupportedContractError)):
+            value.read_instrument_rules(KEY)
+    finally:
+        client.close()
 
 
 def test_read_timeout_is_typed_and_has_no_retry() -> None:
@@ -657,6 +866,7 @@ def test_read_operations_use_only_expected_get_endpoints() -> None:
                             {
                                 "filterType": "MARKET_LOT_SIZE",
                                 "minQty": "0.0001",
+                                "maxQty": "1000",
                                 "stepSize": "0.0001",
                             },
                             {
@@ -960,7 +1170,12 @@ def test_instrument_rule_contract_gaps_fail_closed(payload: object) -> None:
 
 
 def test_unknown_and_richer_market_filters_fail_closed_and_disabled_market_lot_falls_back() -> None:
-    lot = {"filterType": "LOT_SIZE", "minQty": "0.00001", "stepSize": "0.00001"}
+    lot = {
+        "filterType": "LOT_SIZE",
+        "minQty": "0.00001",
+        "maxQty": "1000",
+        "stepSize": "0.00001",
+    }
     minimum = {"filterType": "MIN_NOTIONAL", "minNotional": "5", "applyToMarket": True}
     filter_sets = (
         [lot, minimum, {"filterType": "FUTURE_CRITICAL_FILTER", "value": "1"}],
@@ -1013,6 +1228,7 @@ def _exchange_info_rules_payload(extra_filters: list[dict[str, object]]) -> dict
                     {
                         "filterType": "MARKET_LOT_SIZE",
                         "minQty": "0.00001",
+                        "maxQty": "1000",
                         "stepSize": "0.00001",
                     },
                     {
@@ -1076,7 +1292,15 @@ def test_documented_symbol_filter_contract_preserves_executable_rules(
         candidate.close()
         baseline_client.close()
         candidate_client.close()
-    assert actual == expected
+    assert actual.stream_key == expected.stream_key
+    assert actual.quantity_step == expected.quantity_step
+    assert actual.min_quantity == expected.min_quantity
+    assert actual.max_quantity == expected.max_quantity
+    assert actual.min_notional == expected.min_notional
+    has_notional_override = any(
+        value.get("filterType") == "NOTIONAL" for value in documented_additional_filters
+    )
+    assert (actual.rules_version != expected.rules_version) is has_notional_override
 
 
 def test_response_helper_validation_and_safe_retry_after() -> None:

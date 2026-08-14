@@ -305,6 +305,8 @@ def calculate_quantity(rules: ExchangeInstrumentRules, price: Decimal) -> tuple[
         allowance = notional * MAX_FEE_RATE + notional * MAX_SLIPPAGE_BPS / Decimal(10_000)
     if quantity < rules.min_quantity or quantity % step != 0:
         raise Phase3OperatorBlocked("Phase 3 quantity violates exchange rules")
+    if rules.max_quantity is not None and quantity > rules.max_quantity:
+        raise Phase3OperatorBlocked("Phase 3 quantity exceeds exchange maxQty")
     if notional < rules.min_notional:
         raise Phase3OperatorBlocked("Phase 3 notional is below minNotional")
     if notional + allowance > MAX_NOTIONAL:

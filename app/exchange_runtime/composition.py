@@ -136,12 +136,18 @@ def build_production_testnet_components(
             encode_parameters(
                 [
                     ("symbol", stream.symbol),
+                    ("contractVersion", "binance-market-rules/v2"),
+                    ("quantityFilter", "MARKET_LOT_SIZE"),
                     ("stepSize", rules.quantity_step),
                     ("minQty", rules.min_quantity),
+                    ("maxQty", settings.instrument_max_quantity),
+                    ("notionalFilter", "MIN_NOTIONAL"),
                     ("minNotional", rules.min_notional),
+                    ("minNotionalAppliesToMarket", "true"),
                 ]
             ).encode()
         ).hexdigest(),
+        settings.instrument_max_quantity,
     )
     rules_fingerprint = fingerprint_instrument_rules(
         InstrumentRulesFingerprintInput(

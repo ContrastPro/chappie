@@ -122,6 +122,7 @@ class RemoteExchange:
                                 {
                                     "filterType": "MARKET_LOT_SIZE",
                                     "minQty": "0.00001",
+                                    "maxQty": "1000",
                                     "stepSize": "0.00001",
                                 },
                                 {

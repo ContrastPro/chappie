@@ -679,6 +679,54 @@ def test_three_part_sell_restart_matches_uninterrupted_exact_accounting(tmp_path
     final.close()
 
 
+@pytest.mark.parametrize(
+    ("fee_asset", "fee", "expected_status"),
+    [
+        ("USDT", "0", ExchangeSettlementStatus.SYNCHRONIZED),
+        ("BTC", "0", ExchangeSettlementStatus.SYNCHRONIZED),
+        ("BNB", "-0.000", ExchangeSettlementStatus.SYNCHRONIZED),
+        ("USDT", "0.09", ExchangeSettlementStatus.SYNCHRONIZED),
+        ("BTC", "0.00001", ExchangeSettlementStatus.BLOCKED_UNSUPPORTED_FEE),
+        ("BNB", "0.00001", ExchangeSettlementStatus.BLOCKED_UNSUPPORTED_FEE),
+    ],
+)
+def test_full_sell_fee_policy_is_side_aware_and_asset_neutral_only_at_exact_zero(
+    tmp_path: Path,
+    fee_asset: str,
+    fee: str,
+    expected_status: ExchangeSettlementStatus,
+) -> None:
+    value = store(tmp_path / f"sell-fee-{fee_asset}-{fee}.sqlite3")
+    sell_trades = multipart_sell_setup(value)
+    managed = portfolio()
+    service = settlement(value, managed)
+    service.initialize()
+    assert service.settle_pending().settled_count == 3
+    before_sell = managed.snapshot
+    full_sell = replace(
+        sell_trades[0],
+        quantity=D(1),
+        price=D("121.5"),
+        quote_quantity=D("121.5"),
+        commission=D(fee),
+        commission_asset=fee_asset,
+    )
+    value.persist_trades("7" * 64, (full_sell,))
+    result = service.settle_pending()
+    assert result.status is expected_status
+    if expected_status is ExchangeSettlementStatus.SYNCHRONIZED:
+        assert managed.snapshot.base_balance == 0
+        assert managed.snapshot.position is None
+        assert managed.snapshot.turnover == before_sell.turnover + D("121.5")
+        assert managed.snapshot.realised_pnl == D("121.5") - before_sell.position.cost_basis - D(
+            fee
+        )
+        assert managed.snapshot.total_fees == before_sell.total_fees + D(fee)
+    else:
+        assert managed.snapshot == before_sell
+    value.close()
+
+
 def test_unsupported_fee_blocks_without_mutating_portfolio(tmp_path: Path) -> None:
     value = store(tmp_path / "fee.sqlite3")
     persist_quote_fee_trade(value, "BNB")

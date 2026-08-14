@@ -51,7 +51,7 @@ ROOT = "root-m47"
 SESSION = "session-m47"
 COMMAND = "a" * 64
 CLIENT = "ctt1t-abcdefghijklmnopqrstuvwxyz"
-RULES = ExchangeInstrumentRules(KEY, D("0.00001"), D("0.00001"), D(5), "rules-v1")
+RULES = ExchangeInstrumentRules(KEY, D("0.00001"), D("0.00001"), D(5), "rules-v1", D("1000"))
 
 
 def command(key: str = COMMAND) -> ExchangeCommand:

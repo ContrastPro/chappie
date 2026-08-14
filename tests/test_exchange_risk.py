@@ -68,6 +68,27 @@ def approved_sell(*, base: str = "1", quote: str = "9900"):
     return decision, portfolio
 
 
+def test_exchange_quantity_ceiling_is_inclusive_and_smallest_excess_blocks() -> None:
+    decision, portfolio = approved_sell()
+    at_limit = with_candidate(decision, quantity="0.5")
+    allowed = evaluate_exchange_risk(
+        at_limit,
+        portfolio,
+        risk_context(portfolio=portfolio),
+        exchange_policy(max_order_quantity=D("0.5")),
+    )
+    assert allowed.outcome is ExchangeRiskOutcome.APPROVED
+    excess = with_candidate(decision, quantity="0.50001")
+    blocked = evaluate_exchange_risk(
+        excess,
+        portfolio,
+        risk_context(portfolio=portfolio),
+        exchange_policy(max_order_quantity=D("0.5")),
+    )
+    assert blocked.outcome is ExchangeRiskOutcome.BLOCKED
+    assert ExchangeRiskReason.MAX_QUANTITY_EXCEEDED in blocked.reasons
+
+
 def with_candidate(decision, *, quantity: str, required_quote: str | None = None):
     approved = decision.approved_order
     assert approved is not None

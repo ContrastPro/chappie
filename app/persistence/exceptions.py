@@ -54,6 +54,38 @@ class Phase3AuthorityCorruptionError(PersistenceIntegrityError):
     pass
 
 
+class Stage4ManagedSellAuthorityError(PersistenceConflictError):
+    pass
+
+
+class Stage4ManagedInventoryMismatchError(Stage4ManagedSellAuthorityError):
+    pass
+
+
+class Stage4ManagedSellExternalInventoryError(Stage4ManagedInventoryMismatchError):
+    pass
+
+
+class Stage4ManagedSellRestartRecoveryOnlyError(Stage4ManagedSellAuthorityError):
+    pass
+
+
+class Stage4ManagedSellStalePredecessorError(Stage4ManagedSellAuthorityError):
+    pass
+
+
+class Stage4ManagedSellStaleSafetyError(Stage4ManagedSellAuthorityError):
+    pass
+
+
+class Stage4ManagedSellEconomicSlotConflictError(Stage4ManagedSellAuthorityError):
+    pass
+
+
+class Stage4ManagedSellAuthorityCorruptionError(PersistenceIntegrityError):
+    pass
+
+
 class PersistenceSerializationError(PersistenceError):
     pass
 

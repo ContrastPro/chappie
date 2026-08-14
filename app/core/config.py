@@ -59,6 +59,7 @@ class Settings(BaseSettings):
     instrument_price_tick: Decimal = Decimal("0.01")
     instrument_quantity_step: Decimal = Decimal("0.00001")
     instrument_min_quantity: Decimal = Decimal("0.00001")
+    instrument_max_quantity: Decimal = Decimal(1000)
     instrument_min_notional: Decimal = Decimal(5)
     instrument_base_precision: int = Field(default=8, ge=0)
     instrument_quote_precision: int = Field(default=2, ge=0)
@@ -152,6 +153,7 @@ class Settings(BaseSettings):
             "instrument_price_tick",
             "instrument_quantity_step",
             "instrument_min_quantity",
+            "instrument_max_quantity",
             "instrument_min_notional",
             "risk_max_order_notional",
             "risk_max_position_notional",
@@ -170,6 +172,7 @@ class Settings(BaseSettings):
             "instrument_price_tick",
             "instrument_quantity_step",
             "instrument_min_quantity",
+            "instrument_max_quantity",
             "instrument_min_notional",
             "risk_max_order_notional",
             "risk_max_position_notional",
@@ -200,6 +203,7 @@ class Settings(BaseSettings):
         "instrument_price_tick",
         "instrument_quantity_step",
         "instrument_min_quantity",
+        "instrument_max_quantity",
         "instrument_min_notional",
         "risk_max_order_notional",
         "risk_max_position_notional",

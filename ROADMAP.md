@@ -359,8 +359,9 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 Статус: **BLOCKED — M4.10 COMPLETED — PASS; M4.11 evidence verdict completed;
 accepted controlled Testnet SELL evidence remains absent** (2026-08-14).
 
-Final closure design is `READY_FOR_STAGE4_SELL_SCHEMA_IMPLEMENTATION`; ADR-066 was accepted on
-2026-08-14. The next safe action is offline schema/domain/persistence implementation and tests,
+ADR-066 was accepted on 2026-08-14. Its schema-v7 rules/domain/persistence boundary is implemented
+and its final offline adversarial schema review passed. Stage 4 remains BLOCKED because no controlled
+managed SELL evidence exists; the next safe action is separate one-shot operator implementation,
 not production migration or execution.
 
 ### Цель
@@ -521,7 +522,8 @@ schema-v6 remediation and immutable fresh-process recovery proof passed.
   разрешит continuous Testnet или LIVE и не будет доказательством profitability.
 - Offline architecture selects an exact full-managed-position exit under fresh rules, a distinct
   additive schema-v7 one-shot authority and same-database recovery. See
-  `STAGE_4_MANAGED_SELL_CLOSURE_DESIGN.md`; ADR-066 is accepted, while migration 007 and SELL
+  `STAGE_4_MANAGED_SELL_CLOSURE_DESIGN.md`; ADR-066 is accepted, migration 007 is implemented
+  offline, while SELL
   execution remain not started.
 
 ### Планируемые результаты

@@ -163,6 +163,7 @@ def test_production_testnet_composition_recovers_blocked_then_wires_ready_coordi
                             {
                                 "filterType": "MARKET_LOT_SIZE",
                                 "minQty": "0.00001",
+                                "maxQty": "1000",
                                 "stepSize": "0.00001",
                             },
                             {
@@ -450,6 +451,7 @@ def test_full_testnet_builder_cleans_components_when_coordinator_start_fails(
                             {
                                 "filterType": "MARKET_LOT_SIZE",
                                 "minQty": "0.00001",
+                                "maxQty": "1000",
                                 "stepSize": "0.00001",
                             },
                             {

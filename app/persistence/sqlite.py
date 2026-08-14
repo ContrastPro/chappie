@@ -42,6 +42,7 @@ MIGRATION_NAMES = (
     "004_exchange_settlement.sql",
     "005_phase3_smoke_authority.sql",
     "006_zero_commission_resolution.sql",
+    "007_stage4_managed_sell_authority.sql",
 )
 
 

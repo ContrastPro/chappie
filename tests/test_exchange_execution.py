@@ -571,7 +571,12 @@ class FakeReader:
 
     def read_instrument_rules(self, stream_key: MarketStreamKey) -> ExchangeInstrumentRules:
         return ExchangeInstrumentRules(
-            stream_key, Decimal("0.00001"), Decimal("0.00001"), Decimal(5), "v1"
+            stream_key,
+            Decimal("0.00001"),
+            Decimal("0.00001"),
+            Decimal(5),
+            "v1",
+            Decimal(1000),
         )
 
 
@@ -834,11 +839,18 @@ def test_session_control_capability_and_port_dto_boundaries() -> None:
             replace(valid_observation, **{field: value})
     with pytest.raises(ExchangeExecutionInvariantError):
         AccountBalance("BTC", Decimal(0), Decimal(-1))
-    rules = ExchangeInstrumentRules(KEY, Decimal("0.00001"), Decimal("0.00001"), Decimal(5), "v1")
+    rules = ExchangeInstrumentRules(
+        KEY, Decimal("0.00001"), Decimal("0.00001"), Decimal(5), "v1", Decimal(1000)
+    )
     for field, value in (
         ("stream_key", MarketStreamKey("ETHUSDT", "1m")),
         ("quantity_step", Decimal(0)),
         ("rules_version", ""),
+        ("max_quantity", 1000.0),
+        ("max_quantity", Decimal(-1)),
+        ("max_quantity", Decimal("NaN")),
+        ("max_quantity", Decimal(0)),
+        ("max_quantity", Decimal("0.000015")),
     ):
         with pytest.raises(ValueError):
             replace(rules, **{field: value})

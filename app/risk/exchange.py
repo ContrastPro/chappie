@@ -92,6 +92,7 @@ class ExchangeRiskReason(StrEnum):
     SESSION_SUBMISSION_COUNT_LIMIT = "SESSION_SUBMISSION_COUNT_LIMIT"
     SESSION_FAILURE_LIMIT = "SESSION_FAILURE_LIMIT"
     DRAWDOWN_LIMIT = "DRAWDOWN_LIMIT"
+    MAX_QUANTITY_EXCEEDED = "MAX_QUANTITY_EXCEEDED"
 
 
 class ExchangeSubmissionReason(StrEnum):
@@ -121,6 +122,7 @@ class ExchangeRiskPolicy:
     max_non_terminal_orders: int = 1
     max_in_flight_submissions: int = 1
     policy_version: str = "exchange-risk/v1"
+    max_order_quantity: Decimal | None = None
 
     def __post_init__(self) -> None:
         for name in (
@@ -140,6 +142,17 @@ class ExchangeRiskPolicy:
             "min_cash_reserve",
             _decimal(self.min_cash_reserve, "min_cash_reserve", RiskConfigurationError),
         )
+        if self.max_order_quantity is not None:
+            object.__setattr__(
+                self,
+                "max_order_quantity",
+                _decimal(
+                    self.max_order_quantity,
+                    "max_order_quantity",
+                    RiskConfigurationError,
+                    positive=True,
+                ),
+            )
         for name in (
             "max_session_submission_count",
             "max_session_execution_failures",
@@ -433,6 +446,8 @@ def evaluate_exchange_risk(
         reasons.append(ExchangeRiskReason.POSITION_LIMIT)
     if approved.gross_notional > policy.max_order_notional:
         reasons.append(ExchangeRiskReason.ORDER_NOTIONAL_LIMIT)
+    if policy.max_order_quantity is not None and approved.quantity > policy.max_order_quantity:
+        reasons.append(ExchangeRiskReason.MAX_QUANTITY_EXCEEDED)
     projected_submitted = _add(session.cumulative_submitted_notional, approved.gross_notional)
     if projected_submitted > policy.max_session_submitted_notional:
         reasons.append(ExchangeRiskReason.SESSION_SUBMITTED_NOTIONAL_LIMIT)

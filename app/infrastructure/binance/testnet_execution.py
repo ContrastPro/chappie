@@ -26,6 +26,7 @@ from app.exchange_execution.ports import (
     MarketOrderSubmission,
     OrderQueryResult,
     SubmissionObservation,
+    quantity_is_step_aligned,
 )
 from app.infrastructure.binance.exceptions import (
     BinanceAuthenticationError,
@@ -502,11 +503,14 @@ class BinanceSpotTestnetAdapter:
         filters = symbol.get("filters")
         if not isinstance(filters, list):
             raise BinanceNormalizationError("exchangeInfo filters must be a list")
-        by_type = {
-            value.get("filterType"): value
-            for value in filters
-            if isinstance(value, dict) and isinstance(value.get("filterType"), str)
-        }
+        by_type: dict[str, dict[str, Any]] = {}
+        for value in filters:
+            if not isinstance(value, dict) or not isinstance(value.get("filterType"), str):
+                continue
+            filter_type_value = value["filterType"]
+            if filter_type_value in by_type:
+                raise BinanceUnsupportedContractError("duplicate Binance symbol filter")
+            by_type[filter_type_value] = value
         known_filters = {
             "PRICE_FILTER",
             "PERCENT_PRICE",
@@ -528,22 +532,47 @@ class BinanceSpotTestnetAdapter:
         if unknown_filters:
             raise BinanceUnsupportedContractError("unknown Binance symbol filter")
         lot = by_type.get("MARKET_LOT_SIZE")
-        if isinstance(lot, dict) and (
-            self._decimal(lot, "stepSize", non_negative=True).is_zero()
-            or self._decimal(lot, "minQty", non_negative=True).is_zero()
-        ):
-            lot = by_type.get("LOT_SIZE")
+        filter_type = "MARKET_LOT_SIZE"
+        if isinstance(lot, dict):
+            market_step = self._decimal(lot, "stepSize", non_negative=True)
+            market_minimum = self._decimal(lot, "minQty", non_negative=True)
+            if market_step.is_zero() != market_minimum.is_zero():
+                raise BinanceUnsupportedContractError(
+                    "market quantity filter is only partially disabled"
+                )
+            if market_step.is_zero() and market_minimum.is_zero():
+                lot = by_type.get("LOT_SIZE")
+                filter_type = "LOT_SIZE"
         if not isinstance(lot, dict):
             raise BinanceUnsupportedContractError("market quantity filter is missing")
         step = self._decimal(lot, "stepSize", positive=True)
         minimum = self._decimal(lot, "minQty", positive=True)
+        if "maxQty" not in lot:
+            raise BinanceUnsupportedContractError("market maximum quantity semantics are missing")
+        maximum_raw = self._decimal(lot, "maxQty", non_negative=True)
+        maximum = None if maximum_raw.is_zero() else maximum_raw
+        if not quantity_is_step_aligned(minimum, step) or (
+            maximum is not None
+            and (maximum < minimum or not quantity_is_step_aligned(maximum, step))
+        ):
+            raise BinanceUnsupportedContractError("market quantity tuple is invalid")
         notional = by_type.get("NOTIONAL") or by_type.get("MIN_NOTIONAL")
+        notional_type = "NOTIONAL" if "NOTIONAL" in by_type else "MIN_NOTIONAL"
         if not isinstance(notional, dict):
             raise BinanceUnsupportedContractError("market notional filter is missing")
         min_notional = self._decimal(notional, "minNotional", positive=True)
-        if notional.get("applyMinToMarket", notional.get("applyToMarket", True)) is False:
+        applicability_name = "applyMinToMarket" if notional_type == "NOTIONAL" else "applyToMarket"
+        applicability = notional.get(applicability_name)
+        if not isinstance(applicability, bool):
+            raise BinanceUnsupportedContractError("MARKET notional applicability is ambiguous")
+        if not applicability:
             raise BinanceUnsupportedContractError("minimum notional does not apply to MARKET")
-        if notional.get("applyMaxToMarket") is True:
+        max_applicability = notional.get("applyMaxToMarket", False)
+        if not isinstance(max_applicability, bool):
+            raise BinanceUnsupportedContractError(
+                "maximum MARKET notional applicability is ambiguous"
+            )
+        if max_applicability:
             max_notional = self._decimal(notional, "maxNotional", non_negative=True)
             if not max_notional.is_zero():
                 raise BinanceUnsupportedContractError(
@@ -552,13 +581,23 @@ class BinanceSpotTestnetAdapter:
         canonical = encode_parameters(
             [
                 ("symbol", stream_key.symbol),
+                ("contractVersion", "binance-market-rules/v2"),
+                ("quantityFilter", filter_type),
                 ("stepSize", step),
                 ("minQty", minimum),
+                ("maxQty", "UNBOUNDED" if maximum is None else maximum),
+                ("notionalFilter", notional_type),
                 ("minNotional", min_notional),
+                ("minNotionalAppliesToMarket", "true"),
             ]
         )
         return ExchangeInstrumentRules(
-            stream_key, step, minimum, min_notional, sha256(canonical.encode()).hexdigest()
+            stream_key,
+            step,
+            minimum,
+            min_notional,
+            sha256(canonical.encode()).hexdigest(),
+            maximum,
         )
 
     def _normalize_order(

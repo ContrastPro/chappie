@@ -27,6 +27,34 @@ from app.exchange_execution.models import (
 from app.market.models import MarketStreamKey
 
 
+def quantity_is_step_aligned(value: Decimal, step: Decimal) -> bool:
+    """Return exact base-10 divisibility without consulting Decimal context."""
+    if (
+        not isinstance(value, Decimal)
+        or not isinstance(step, Decimal)
+        or not value.is_finite()
+        or not step.is_finite()
+        or value < 0
+        or step <= 0
+    ):
+        return False
+    value_sign, value_digits, value_exponent = value.as_tuple()
+    step_sign, step_digits, step_exponent = step.as_tuple()
+    if (
+        value_sign
+        or step_sign
+        or len(value_digits) > 4096
+        or len(step_digits) > 4096
+        or abs(value_exponent) > 4096
+        or abs(step_exponent) > 4096
+    ):
+        return False
+    common_exponent = min(value_exponent, step_exponent)
+    value_integer = int("".join(map(str, value_digits))) * 10 ** (value_exponent - common_exponent)
+    step_integer = int("".join(map(str, step_digits))) * 10 ** (step_exponent - common_exponent)
+    return value_integer % step_integer == 0
+
+
 @dataclass(frozen=True, slots=True)
 class MarketOrderSubmission:
     durable_command_key: str
@@ -135,6 +163,7 @@ class ExchangeInstrumentRules:
     min_quantity: Decimal
     min_notional: Decimal
     rules_version: str
+    max_quantity: Decimal | None
 
     def __post_init__(self) -> None:
         if not isinstance(self.stream_key, MarketStreamKey) or self.stream_key.symbol != "BTCUSDT":
@@ -142,6 +171,18 @@ class ExchangeInstrumentRules:
         for name in ("quantity_step", "min_quantity", "min_notional"):
             require_decimal(getattr(self, name), name, positive=True)
         require_text(self.rules_version, "rules_version")
+        if not quantity_is_step_aligned(self.min_quantity, self.quantity_step):
+            raise ExchangeExecutionConfigurationError("min_quantity must align to quantity_step")
+        if self.max_quantity is not None:
+            require_decimal(self.max_quantity, "max_quantity", positive=True)
+            if self.max_quantity < self.min_quantity:
+                raise ExchangeExecutionConfigurationError(
+                    "max_quantity must not be below min_quantity"
+                )
+            if not quantity_is_step_aligned(self.max_quantity, self.quantity_step):
+                raise ExchangeExecutionConfigurationError(
+                    "max_quantity must align to quantity_step"
+                )
 
 
 @dataclass(frozen=True, slots=True)

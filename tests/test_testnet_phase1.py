@@ -51,7 +51,12 @@ def exchange_info() -> dict[str, object]:
                 "symbol": "BTCUSDT",
                 "filters": [
                     {"filterType": "PRICE_FILTER", "tickSize": "0.01"},
-                    {"filterType": "MARKET_LOT_SIZE", "stepSize": "0.00001", "minQty": "0.00001"},
+                    {
+                        "filterType": "MARKET_LOT_SIZE",
+                        "stepSize": "0.00001",
+                        "minQty": "0.00001",
+                        "maxQty": "1000",
+                    },
                     {"filterType": "MIN_NOTIONAL", "minNotional": "5", "applyToMarket": True},
                 ],
             }
@@ -128,7 +133,7 @@ class FakeReader:
         self.trades = trades
 
     def read_instrument_rules(self, stream_key):
-        return ExchangeInstrumentRules(KEY, D("0.00001"), D("0.00001"), D("5"), "rules")
+        return ExchangeInstrumentRules(KEY, D("0.00001"), D("0.00001"), D("5"), "rules", D("1000"))
 
     def read_balances(self, assets):
         return (AccountBalance("BTC", D("0"), D("0")), AccountBalance("USDT", D("10"), D("0")))

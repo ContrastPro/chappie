@@ -857,13 +857,14 @@ before/after checksum and creates exclusive sanitized evidence only after closin
 separately authorized production proof passed, so M4.10 is COMPLETED — PASS. M4.11 final
 aggregation completed with `STAGE_4_BLOCKED`: all evaluated safety/recovery criteria pass, but the
 accepted controlled Testnet BUY-and-SELL criterion still lacks a persisted SELL trade. The next
-managed-balance SELL evidence closure is neither started nor authorized; Stage 5 has not started.
+managed-balance SELL evidence is still absent and unauthorized; Stage 5 has not started.
 The fresh-process proof harness final offline adversarial safety review passed.
 
-The offline SELL-closure design is implementation-ready but does not change that verdict. It keeps
+The offline SELL-closure schema/domain/persistence boundary is implemented and does not change that verdict. It keeps
 raw exchange BTC outside Risk availability, selects only an exact full managed-position exit under
-fresh MARKET rules, and proposes an additive schema-v7 authority with an ACTIVE-switch, process-local
+fresh MARKET rules, and uses an additive schema-v7 authority with an ACTIVE-switch, process-local
 single-use claim. Schema-v5 BUY authority is not reused or weakened. ADR-066 was accepted after final
-design review; only offline schema/domain/persistence implementation is next. No production migration,
-network action, SELL execution or Stage 5 work is authorized. See
+design review; its offline implementation, tests and final adversarial schema review are complete.
+The one-shot operator remains the next unimplemented boundary.
+No production migration, network action, SELL execution or Stage 5 work is authorized. See
 `STAGE_4_MANAGED_SELL_CLOSURE_DESIGN.md`.

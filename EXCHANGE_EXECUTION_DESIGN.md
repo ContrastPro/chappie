@@ -1053,13 +1053,16 @@ passed and completed M4.10. M4.11 aggregation issued `STAGE_4_BLOCKED`: the dura
 the reviewed safety and recovery properties, but the accepted controlled BUY-and-SELL criterion still
 lacks SELL evidence. The managed-balance SELL closure and Stage 5 have not started.
 
-The final closure architecture is `READY_FOR_STAGE4_SELL_SCHEMA_IMPLEMENTATION`: use the same durable
+The final closure schema boundary implements the accepted architecture: use the same durable
 root/session/Portfolio, exact full managed inventory only when fresh effective MARKET rules accept it,
 and a new append-only schema-v7 authority consumed atomically with one PREPARED SELL command. The
 exchange account total is reconciliation evidence and cannot satisfy Risk. ACTIVE control remains
 durable; a distinct process-local claim permits only that exact command and is lost on restart.
 ADR-066 was accepted on 2026-08-14, authorizing offline schema/domain/persistence implementation and
-tests only; production migration and SELL execution remain separately unauthorized.
+tests only; production migration and SELL execution remain separately unauthorized. Migration 007,
+typed SELL authority/request/claim models, atomic PREPARED creation, recovery-only restart behavior,
+and the narrow final-gate exception are implemented offline; their final adversarial schema review
+passed. No network operator is included, so Stage 4 remains BLOCKED on controlled SELL evidence.
 See `STAGE_4_MANAGED_SELL_CLOSURE_DESIGN.md`.
 
 The committed lifecycle has one terminal state, CONSUMED. Transaction-local PREPARED cannot become

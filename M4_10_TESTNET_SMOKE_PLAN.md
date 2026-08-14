@@ -29,6 +29,11 @@ its final offline adversarial safety review passed; the separately authorized pr
 M4.10 is complete. M4.11 completed its evidence aggregation with `STAGE_4_BLOCKED` because the
 accepted Stage 4 BUY-and-SELL criterion still lacks controlled SELL evidence.
 
+ADR-066's schema-v7 managed-SELL rules/domain/persistence boundary is now implemented and validated
+offline, and its final adversarial schema review passed. It adds no operator or authorization: the
+production database is still schema v6, no SELL request has occurred, and Stage 4 remains BLOCKED
+pending separate one-shot operator work and later explicit execution authorization.
+
 Stage 4 remains in progress. This document authorizes no network access, credential use,
 additional `/api/v3/order/test` request or real Testnet order. Every phase below needs a new, explicit
 operator authorization naming that phase. Approval never carries forward.

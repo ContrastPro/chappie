@@ -9,6 +9,7 @@ from app.exchange_execution import (
     ExecutionEnvironment,
     PendingExposure,
     Phase3ProcessClaim,
+    Stage4ManagedSellProcessClaim,
     SubmissionCapability,
     aggregate_pending_exposure,
 )
@@ -100,6 +101,7 @@ class TestnetPreSubmitGate:
         expected_rules_fingerprint: str,
         now_ms: int,
         phase3_claim: Phase3ProcessClaim | None = None,
+        stage4_sell_claim: Stage4ManagedSellProcessClaim | None = None,
     ) -> PreSubmitGateResult:
         """Reread every mutable durable gate; never performs network I/O or mutation."""
         reasons: set[PreSubmitBlockReason] = set()
@@ -139,8 +141,12 @@ class TestnetPreSubmitGate:
         phase3_valid = self._phase3_claim_valid(
             phase3_claim, durable, bootstrap, reconciliation.generation
         )
+        stage4_sell_valid = self._stage4_sell_claim_valid(
+            stage4_sell_claim, durable, bootstrap, reconciliation.generation
+        )
+        exceptional_claim_valid = phase3_valid or stage4_sell_valid
         if bootstrap.control.reconciliation_generation != reconciliation.generation or (
-            bootstrap.control.kill_switch.state.value != "CLEARED" and not phase3_valid
+            bootstrap.control.kill_switch.state.value != "CLEARED" and not exceptional_claim_valid
         ):
             reasons.add(PreSubmitBlockReason.CONTROL_UNSAFE)
         unsettled, blocked = self._settlement_counts()
@@ -171,6 +177,7 @@ class TestnetPreSubmitGate:
             _pending_exposure(value)
             for value in orders
             if value.order.durable_command_key != durable_command_key
+            and not value.order.status.is_exchange_terminal
         )
         if (
             context.execution_session != session
@@ -181,7 +188,7 @@ class TestnetPreSubmitGate:
         ):
             reasons.add(PreSubmitBlockReason.RISK_CONTEXT_STALE)
         safety = None
-        if not phase3_valid:
+        if not exceptional_claim_valid:
             safety = evaluate_exchange_submission_safety(
                 assessment,
                 context,
@@ -192,13 +199,15 @@ class TestnetPreSubmitGate:
             )
         if assessment.outcome.value != "APPROVED":
             reasons.add(PreSubmitBlockReason.RISK_BLOCKED)
-        if not phase3_valid and (safety is None or not safety.authorized):
+        if not exceptional_claim_valid and (safety is None or not safety.authorized):
             reasons.add(PreSubmitBlockReason.CAPABILITY_INVALID)
         ordered = tuple(sorted(reasons, key=lambda value: value.value))
         if ordered:
             return PreSubmitGateResult(None, ordered)
         if phase3_valid and phase3_claim is not None:
             phase3_claim._consume()
+        if stage4_sell_valid and stage4_sell_claim is not None:
+            stage4_sell_claim._consume()
         return PreSubmitGateResult(
             PreSubmitAuthorization._issue(
                 execution_root_id=self._root_id,
@@ -259,6 +268,75 @@ class TestnetPreSubmitGate:
             and command["execution_configuration_fingerprint"] == claim.config_fingerprint
         )
 
+    def _stage4_sell_claim_valid(
+        self, claim, durable, bootstrap, reconciliation_generation: int
+    ) -> bool:
+        if not isinstance(claim, Stage4ManagedSellProcessClaim) or claim._consumed:
+            return False
+        if (
+            claim.command_key != durable.order.durable_command_key
+            or claim.execution_root_id != self._root_id
+            or claim.session_id != durable.session_id
+            or claim.account_fingerprint != durable.order.account_fingerprint
+            or durable.order.side.value != "SELL"
+            or claim.environment is not ExecutionEnvironment.TESTNET
+            or claim.control_generation != bootstrap.control.kill_switch.generation
+            or claim.reconciliation_generation != reconciliation_generation
+        ):
+            return False
+        command = json.loads(durable.command_payload)
+        current = self._persistence._connection.execute(
+            "SELECT portfolio_version,state_digest FROM exchange_portfolio_current "
+            "WHERE portfolio_id=?",
+            (claim.portfolio_id,),
+        ).fetchone()
+        session = self._persistence.load_session(claim.session_id)
+        row = self._persistence._connection.execute(
+            "SELECT 1 FROM exchange_managed_sell_authorities WHERE authority_id=? "
+            "AND consumed_durable_command_key=? AND execution_root_id=? AND session_id=? "
+            "AND account_fingerprint=? AND managed_portfolio_id=? "
+            "AND predecessor_portfolio_version=? AND predecessor_portfolio_digest=? "
+            "AND control_generation=? AND reconciliation_generation=? "
+            "AND settlement_state_digest=? AND economic_slot_key=? "
+            "AND rules_fingerprint=? AND risk_fingerprint=? AND config_fingerprint=? "
+            "AND risk_envelope_digest=? AND ownership_scope_digest=? "
+            "AND environment='testnet' AND venue='binance-spot' AND symbol='BTCUSDT' "
+            "AND side='SELL' AND order_type='MARKET' AND status='CONSUMED'",
+            (
+                claim.authority_id,
+                claim.command_key,
+                claim.execution_root_id,
+                claim.session_id,
+                claim.account_fingerprint,
+                claim.portfolio_id,
+                claim.portfolio_version,
+                claim.portfolio_digest,
+                claim.control_generation,
+                claim.reconciliation_generation,
+                claim.settlement_state_digest,
+                claim.economic_slot_key,
+                claim.rules_fingerprint,
+                claim.risk_fingerprint,
+                claim.config_fingerprint,
+                claim.envelope_digest,
+                claim.ownership_scope_digest,
+            ),
+        ).fetchone()
+        return (
+            row is not None
+            and current is not None
+            and tuple(current) == (claim.portfolio_version, claim.portfolio_digest)
+            and session.submission_count + 1
+            == self._persistence._connection.execute(
+                "SELECT permitted_submission_count FROM exchange_managed_sell_authorities "
+                "WHERE authority_id=?",
+                (claim.authority_id,),
+            ).fetchone()[0]
+            and command["instrument_rules_fingerprint"] == claim.rules_fingerprint
+            and command["risk_authorization_fingerprint"] == claim.risk_fingerprint
+            and command["execution_configuration_fingerprint"] == claim.config_fingerprint
+        )
+
     def authorize_and_submit(self, *args, **kwargs):
         result = self.authorize(*args, **kwargs)
         if not result.authorized:
@@ -267,6 +345,17 @@ class TestnetPreSubmitGate:
         return result, self._lifecycle._submit_authorized(result.authorization)
 
     def _settlement_counts(self) -> tuple[int, int]:
+        blocked_sql = (
+            "SELECT count(*) FROM exchange_trade_settlements s JOIN exchange_orders o ON "
+            "o.durable_command_key=s.durable_command_key LEFT JOIN "
+            "exchange_trade_settlement_resolutions r ON "
+            "r.blocked_settlement_id=s.settlement_id WHERE o.execution_root_id=? "
+            "AND s.status='BLOCKED_UNSUPPORTED_FEE' AND r.resolution_id IS NULL"
+            if self._persistence._trading.config.expected_schema_version >= 6
+            else "SELECT count(*) FROM exchange_trade_settlements s JOIN exchange_orders o ON "
+            "o.durable_command_key=s.durable_command_key WHERE o.execution_root_id=? "
+            "AND s.status='BLOCKED_UNSUPPORTED_FEE'"
+        )
         row = self._persistence._connection.execute(
             "SELECT "
             "(SELECT count(*) FROM exchange_trades t JOIN exchange_orders o ON "
@@ -274,10 +363,7 @@ class TestnetPreSubmitGate:
             "ON s.venue=t.venue AND s.environment=t.environment AND "
             "s.account_fingerprint=t.account_fingerprint AND s.symbol=t.symbol AND "
             "s.exchange_trade_id=t.exchange_trade_id WHERE o.execution_root_id=? "
-            "AND s.settlement_id IS NULL),"
-            "(SELECT count(*) FROM exchange_trade_settlements s JOIN exchange_orders o ON "
-            "o.durable_command_key=s.durable_command_key WHERE o.execution_root_id=? "
-            "AND s.status='BLOCKED_UNSUPPORTED_FEE')",
+            "AND s.settlement_id IS NULL),(" + blocked_sql + ")",
             (self._root_id, self._root_id),
         ).fetchone()
         return row[0], row[1]

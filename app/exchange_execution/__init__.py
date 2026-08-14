@@ -57,6 +57,15 @@ from app.exchange_execution.reconciliation import (
     ExchangeReconciliationReason,
     ExchangeReconciliationResult,
 )
+from app.exchange_execution.stage4_sell import (
+    ReviewedStage4ManagedSellRequest,
+    Stage4ManagedSellAuthority,
+    Stage4ManagedSellAuthorityEvent,
+    Stage4ManagedSellClaimReceipt,
+    Stage4ManagedSellProcessClaim,
+    Stage4ManagedSellRiskEnvelope,
+    derive_stage4_sell_economic_slot,
+)
 
 __all__ = [
     "AccountBalance",
@@ -92,7 +101,13 @@ __all__ = [
     "Phase3RiskEnvelope",
     "QueryResultKind",
     "ReviewedPhase3SmokeRequest",
+    "ReviewedStage4ManagedSellRequest",
     "SettlementClassification",
+    "Stage4ManagedSellAuthority",
+    "Stage4ManagedSellAuthorityEvent",
+    "Stage4ManagedSellClaimReceipt",
+    "Stage4ManagedSellProcessClaim",
+    "Stage4ManagedSellRiskEnvelope",
     "SubmissionCapability",
     "SubmissionObservation",
     "TradeAggregate",
@@ -104,6 +119,7 @@ __all__ = [
     "classify_settlement",
     "create_client_order_id",
     "derive_phase3_economic_slot",
+    "derive_stage4_sell_economic_slot",
     "status_after_transport",
     "transition_order",
 ]

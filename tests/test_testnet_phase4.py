@@ -63,6 +63,7 @@ def _phase3_response(request: httpx.Request) -> httpx.Response:
                                 "filterType": "MARKET_LOT_SIZE",
                                 "minQty": "0.00001",
                                 "stepSize": "0.00001",
+                                "maxQty": "1000",
                             },
                             {
                                 "filterType": "MIN_NOTIONAL",

@@ -91,15 +91,19 @@ authorization, immutable read-only SQLite access, full durable lineage/digest va
 database checksum enforcement and exclusive sanitized evidence. Its separately authorized production
 proof passed, completing M4.10. M4.11 evidence aggregation is complete with `STAGE_4_BLOCKED`:
 the accepted architecture still requires controlled Testnet SELL evidence in addition to the proven
-BUY. That SELL closure is not started or authorized; Stage 5, continuous Testnet and LIVE remain
-not started. See [`M4_11_STAGE_4_COMPLETION_REPORT.md`](M4_11_STAGE_4_COMPLETION_REPORT.md).
+BUY. Controlled SELL execution has not occurred or been authorized; Stage 5, continuous Testnet and
+LIVE remain not started. See
+[`M4_11_STAGE_4_COMPLETION_REPORT.md`](M4_11_STAGE_4_COMPLETION_REPORT.md).
 
 The offline design for the remaining managed-SELL evidence gap is
 [`STAGE_4_MANAGED_SELL_CLOSURE_DESIGN.md`](STAGE_4_MANAGED_SELL_CLOSURE_DESIGN.md). It is
-`READY_FOR_STAGE4_SELL_SCHEMA_IMPLEMENTATION`; ADR-066 was accepted on 2026-08-14. It permits only an
+implemented and validated offline under accepted ADR-066. Schema v7 adds a distinct append-only
+managed-SELL authority, exact managed-inventory checks, complete MARKET quantity limits and a
+single-use process claim; its final offline adversarial schema review passed. It permits only an
 exact full managed-position exit under fresh rules in the same durable
-lineage; external account BTC is never Risk inventory. No implementation, SELL authorization,
-continuous Testnet, LIVE or Stage 5 work has started.
+lineage; external account BTC is never Risk inventory. The SELL operator and execution remain
+unauthorized and unimplemented. The next safe work is the separate one-shot SELL operator
+implementation; continuous Testnet, LIVE and Stage 5 have not started.
 
 Important defaults:
 
