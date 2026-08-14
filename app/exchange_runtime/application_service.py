@@ -236,8 +236,7 @@ class TestnetExecutionApplicationService:
         durable_orders = tuple(
             value
             for value in self._persistence.list_orders()
-            if value.execution_root_id == self._root_id
-            and not value.order.status.is_exchange_terminal
+            if value.execution_root_id == self._root_id and not value.order.status.is_terminal
         )
         orders = tuple(value.order for value in durable_orders)
         pending = (

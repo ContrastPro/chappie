@@ -625,10 +625,26 @@
 
 ## ADR-067: Controlled recovery continuation for consumed PREPARED managed SELL
 
-- **Статус:** предложено
-- **Дата предложения:** 2026-08-14
+- **Статус:** принято
+- **Дата принятия:** 2026-08-14
 - **Контекст:** The single managed SELL invocation consumed its schema-v7 authority and committed the exact command/PREPARED order, then blocked before `SUBMITTING`. There are zero SELL attempts and no exchange order ID. Schema v8 records recovery-required and one disposition, but deliberately grants no submission capability.
 - **Предлагаемое решение:** Permit consideration of continuation only for the same authority, command, client ID, economic slot, quantity and Portfolio ownership lineage. A distinct `STAGE4_SELL_RECOVERY_AUTHORIZED=YES` ceremony must bind an audited, bounded, read-only exchange-absence review and all current durable gates to one process-local recovery claim. The durable `RECOVERY_CONTINUATION_ALLOWED` event is audit truth and can never reconstruct that claim after restart.
 - **Fail-closed rule:** Any identity, Portfolio, managed ownership, account, session, rules, Risk, configuration, control, reconciliation or settlement mismatch produces `DISPOSITION_REQUIRED`. Unknown exchange state or `NOT_FOUND` alone is not proof of absence and never permits submission. A lost recovery claim, ambiguous transport or committed `SUBMITTING` state is recovery/reconciliation-only.
 - **Identity/reservation:** The existing PREPARED command retains the sole reservation. New authority, command, client ID, quantity, price authority, economic slot or release/recreate cycle is prohibited.
-- **Последствия:** ADR-067 is not accepted and authorizes no implementation or production action. A future implementation needs a dedicated final gate and persist-before-side-effect recovery primitive, offline crash/concurrency review, sanitized evidence and separate production authorization. Stage 4 remains blocked; Stage 5 is not started. See `STAGE_4_SELL_RECOVERY_DISPOSITION_DESIGN.md`.
+- **Последствия:** ADR-067 authorizes the offline durable decision boundary only, never production action. ADR-068 supplies the separate claim, final gate and persist-before-side-effect continuation primitive. Stage 4 remains blocked; Stage 5 is not started. See `STAGE_4_SELL_RECOVERY_DISPOSITION_DESIGN.md`.
+
+## ADR-068: Controlled continuation of consumed PREPARED managed SELL
+
+- **Статус:** принято
+- **Дата принятия:** 2026-08-14
+- **Контекст:** The only managed SELL is an identity-preserving `PREPARED` command with a consumed authority, zero attempts, no `SUBMITTING`, and no exchange order ID. A disposition decision alone cannot safely create a submission capability after restart.
+- **Решение:** A bounded `ABSENCE_PROVEN` ceremony requires zero durable attempts, no `SUBMITTING`, no exchange ID, no matching preserved client ID in bounded observations, no conflict or transport ambiguity, and reviewed lifecycle evidence that the POST boundary was never reached. Exact `STAGE4_SELL_CONTINUATION_AUTHORIZED=YES` is distinct from initial SELL and recovery authorization. Only a newly committed `RECOVERY_CONTINUATION_ALLOWED` event may issue a process-local, single-use, non-copyable claim; replay never reissues it. The continuation-specific final gate must reread the same authority, command, client ID, slot, quantity, Portfolio/ownership/account/session lineage, SAFE reconciliation, SYNCHRONIZED settlement, rules, Risk, configuration and ACTIVE control generation before atomically recording `SUBMITTING` and attempt one.
+- **Fail-closed rule:** `NOT_FOUND` alone is insufficient. Timeout, unknown response, lost acknowledgement, lifecycle-evidence gap, any durable or remote drift, and any lost claim are recovery/reconciliation-only; they never cause another POST, replacement identity, resize or reprice. A crash after the decision commit but before claim delivery loses availability safely.
+- **Последствия:** Schema v8 is reused: ordinal-2 recovery truth remains append-only and the existing order-event/attempt journal records persist-before-POST. The offline implementation and tests introduce no operator entry point, network action, credential inspection or production mutation. Separate production authorization is still required, and Stage 4 remains BLOCKED.
+
+## ADR-069: Controlled disposition of an unsubmitted PREPARED managed SELL
+
+- **Статус:** принято
+- **Дата принятия:** 2026-08-14
+- **Решение:** A schema-v9-only, separately authorized local disposition may transition the exact consumed SELL authority's zero-attempt `PREPARED` order to `DISPOSED_NO_EXECUTION`. It records one append-only disposition linked to the unchanged authority, command, client ID, slot, quantity, Portfolio/session lineage and reason. The transaction revalidates ordinal-2 `DISPOSITION_REQUIRED`, no `SUBMITTING`, no exchange ID, no trade and unchanged Portfolio lineage; it never changes balances, fees, turnover, PnL, settlement or submission counters.
+- **Последствия:** `DISPOSED_NO_EXECUTION` is a local terminal state, not exchange cancellation/rejection. The original identity cannot resume after restart. A future SELL requires an independently reviewed new authority, command and economic slot. Implementation is offline only; Stage 4 remains BLOCKED and no SELL execution is authorized.

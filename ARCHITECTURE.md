@@ -878,7 +878,14 @@ disposition event under append-only triggers. This boundary does not contact Bin
 grant a recovery submission claim. The existing SELL identity is immutable, normal operator retry
 remains forbidden, and production schema-v8 migration/recovery execution require separate approval.
 
-ADR-067 is proposed, not accepted. It defines a possible continuation as a same-identity operation
+ADR-067 is accepted and ADR-068's offline continuation implementation defines a same-identity operation
 only after audited exchange-absence review and complete durable revalidation. Its proposed recovery
 claim is process-local and non-reconstructable; the schema-v8 decision event is never a capability.
 Unknown exchange state selects disposition. See `STAGE_4_SELL_RECOVERY_DISPOSITION_DESIGN.md`.
+
+ADR-069 implements the alternative terminal local path for the observed unsubmitted SELL: an exact
+schema-v9, append-only disposition can transition only a `DISPOSITION_REQUIRED`, zero-attempt
+`PREPARED` order to `DISPOSED_NO_EXECUTION`. It preserves the authority/command/client/slot and
+Portfolio/session lineage, releases only the local terminal reservation projection, and has no exchange,
+balance, fee, turnover, PnL, settlement, or submission-counter effect. The distinct disposition
+authorization is offline-only; production disposition and any later newly-authorized SELL remain blocked.

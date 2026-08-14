@@ -89,7 +89,7 @@ def order(
         "status": status,
         "created_at_ms": 100,
     }
-    if status is not ExchangeOrderStatus.PREPARED:
+    if status not in {ExchangeOrderStatus.PREPARED, ExchangeOrderStatus.DISPOSED_NO_EXECUTION}:
         values["submitted_at_ms"] = 101
     if status in {
         ExchangeOrderStatus.ACKNOWLEDGED,
@@ -678,6 +678,7 @@ def test_lifecycle_transition_matrix_is_exhaustive() -> None:
         ExchangeOrderStatus.PREPARED: {
             ExchangeOrderStatus.SUBMITTING,
             ExchangeOrderStatus.RECONCILIATION_REQUIRED,
+            ExchangeOrderStatus.DISPOSED_NO_EXECUTION,
         },
         ExchangeOrderStatus.SUBMITTING: {
             ExchangeOrderStatus.ACKNOWLEDGED,
@@ -714,6 +715,7 @@ def test_lifecycle_transition_matrix_is_exhaustive() -> None:
         ExchangeOrderStatus.CANCELED: set(),
         ExchangeOrderStatus.REJECTED: set(),
         ExchangeOrderStatus.EXPIRED: set(),
+        ExchangeOrderStatus.DISPOSED_NO_EXECUTION: set(),
     }
     assert {status: set(targets) for status, targets in ALLOWED_TRANSITIONS.items()} == expected
     for source in ExchangeOrderStatus:

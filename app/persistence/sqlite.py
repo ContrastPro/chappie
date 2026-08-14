@@ -44,6 +44,7 @@ MIGRATION_NAMES = (
     "006_zero_commission_resolution.sql",
     "007_stage4_managed_sell_authority.sql",
     "008_stage4_sell_recovery.sql",
+    "009_stage4_sell_disposition.sql",
 )
 
 

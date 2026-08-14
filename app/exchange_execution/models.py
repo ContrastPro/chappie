@@ -111,10 +111,15 @@ class ExchangeOrderStatus(StrEnum):
     REJECTED = "REJECTED"
     EXPIRED = "EXPIRED"
     RECONCILIATION_REQUIRED = "RECONCILIATION_REQUIRED"
+    DISPOSED_NO_EXECUTION = "DISPOSED_NO_EXECUTION"
 
     @property
     def is_exchange_terminal(self) -> bool:
         return self in {self.FILLED, self.CANCELED, self.REJECTED, self.EXPIRED}
+
+    @property
+    def is_terminal(self) -> bool:
+        return self.is_exchange_terminal or self is self.DISPOSED_NO_EXECUTION
 
 
 class TransportOutcomeKind(StrEnum):
@@ -303,6 +308,12 @@ class ExchangeOrder:
             raise ExchangeOrderStateError("FILLED requires exact original quantity")
         if self.status is self.status.REJECTED and executed != ZERO:
             raise ExchangeOrderStateError("REJECTED cannot contain executed quantity")
+        if self.status is self.status.DISPOSED_NO_EXECUTION and (
+            self.exchange_order_id is not None
+            or executed != ZERO
+            or self.submitted_at_ms is not None
+        ):
+            raise ExchangeOrderStateError("DISPOSED_NO_EXECUTION cannot contain exchange facts")
         require_text(self.model_version, "model_version")
         normalize_decimal_fields(
             self,

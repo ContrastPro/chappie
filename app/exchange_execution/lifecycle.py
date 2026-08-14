@@ -24,7 +24,11 @@ from app.exchange_execution.ports import SubmissionCapability
 
 ALLOWED_TRANSITIONS: dict[ExchangeOrderStatus, frozenset[ExchangeOrderStatus]] = {
     ExchangeOrderStatus.PREPARED: frozenset(
-        {ExchangeOrderStatus.SUBMITTING, ExchangeOrderStatus.RECONCILIATION_REQUIRED}
+        {
+            ExchangeOrderStatus.SUBMITTING,
+            ExchangeOrderStatus.RECONCILIATION_REQUIRED,
+            ExchangeOrderStatus.DISPOSED_NO_EXECUTION,
+        }
     ),
     ExchangeOrderStatus.SUBMITTING: frozenset(
         {
@@ -69,6 +73,7 @@ ALLOWED_TRANSITIONS: dict[ExchangeOrderStatus, frozenset[ExchangeOrderStatus]] =
     ExchangeOrderStatus.CANCELED: frozenset(),
     ExchangeOrderStatus.REJECTED: frozenset(),
     ExchangeOrderStatus.EXPIRED: frozenset(),
+    ExchangeOrderStatus.DISPOSED_NO_EXECUTION: frozenset(),
 }
 
 

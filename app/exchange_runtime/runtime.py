@@ -37,7 +37,7 @@ class TestnetRuntimeStartup:
         settled = self._settlement.settle_pending()
         bootstrap = self._persistence.load_bootstrap(self._root_id)
         non_terminal = sum(
-            not value.order.status.is_exchange_terminal
+            not value.order.status.is_terminal
             for value in self._persistence.list_orders()
             if value.execution_root_id == self._root_id
         )

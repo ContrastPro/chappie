@@ -32,6 +32,19 @@ from app.exchange_execution.stage4_sell import (
     Stage4ManagedSellProcessClaim,
     derive_stage4_sell_economic_slot,
 )
+from app.exchange_execution.stage4_sell_continuation import (
+    Stage4SellAbsenceProof,
+    Stage4SellContinuationAuthorization,
+    Stage4SellContinuationClaim,
+    Stage4SellContinuationFinalGateResult,
+    Stage4SellContinuationReceipt,
+    _issue_continuation_claim,
+)
+from app.exchange_execution.stage4_sell_disposition import (
+    DISPOSITION_POLICY_VERSION,
+    Stage4SellDisposition,
+    Stage4SellDispositionAuthorization,
+)
 from app.exchange_execution.stage4_sell_recovery import (
     RECOVERY_POLICY_VERSION,
     Stage4SellRecoveryAuthorization,
@@ -141,9 +154,9 @@ class SQLiteExchangePersistence:
     ) -> None:
         if not isinstance(
             config, SQLitePersistenceConfig
-        ) or config.expected_schema_version not in {2, 3, 4, 5, 6, 7, 8}:
+        ) or config.expected_schema_version not in {2, 3, 4, 5, 6, 7, 8, 9}:
             raise PersistenceIntegrityError(
-                "exchange persistence requires schema version 2 through 8"
+                "exchange persistence requires schema version 2 through 9"
             )
         self._trading = SQLiteTradingPersistence(config)
         self._connection = self._trading._connection
@@ -153,6 +166,7 @@ class SQLiteExchangePersistence:
         self._failure_injector = failure_injector
         self._phase3_claims: dict[str, Phase3ProcessClaim] = {}
         self._stage4_sell_claims: dict[str, Stage4ManagedSellProcessClaim] = {}
+        self._stage4_sell_continuation_claims: dict[str, Stage4SellContinuationClaim] = {}
 
     def _hit(self, boundary: str) -> None:
         if self._failure_injector is not None:
@@ -738,7 +752,7 @@ class SQLiteExchangePersistence:
         self, request: ReviewedStage4ManagedSellRequest
     ) -> Stage4ManagedSellClaimReceipt:
         """Atomically consume the sole managed-SELL authority and prepare its command."""
-        if self._trading.config.expected_schema_version not in {7, 8}:
+        if self._trading.config.expected_schema_version not in {7, 8, 9}:
             raise PersistenceIntegrityError("managed SELL authority requires schema version 7")
         if not isinstance(request, ReviewedStage4ManagedSellRequest):
             raise PersistenceIntegrityError("invalid reviewed managed SELL request")
@@ -1137,6 +1151,115 @@ class SQLiteExchangePersistence:
             current_rules_fingerprint=current_rules_fingerprint,
         )
 
+    def authorize_stage4_sell_continuation(
+        self,
+        proof: Stage4SellAbsenceProof,
+        *,
+        current_rules_fingerprint: str,
+        risk_compatible: bool,
+        configuration_compatible: bool,
+        managed_ownership_compatible: bool,
+        authorization: Stage4SellContinuationAuthorization,
+    ) -> Stage4SellContinuationReceipt:
+        """Commit ADR-068's sole decision and issue an in-memory claim only to its winner."""
+        if not isinstance(proof, Stage4SellAbsenceProof) or not proof.is_proven:
+            raise Stage4SellRecoveryPreconditionError("managed SELL exchange absence is not proven")
+        if not isinstance(authorization, Stage4SellContinuationAuthorization):
+            raise Stage4SellRecoveryConflictError("SELL continuation authorization is required")
+        if not all(
+            isinstance(value, bool)
+            for value in (risk_compatible, configuration_compatible, managed_ownership_compatible)
+        ):
+            raise Stage4SellRecoveryConflictError(
+                "continuation compatibility conclusions are invalid"
+            )
+        reasons = {Stage4SellRecoveryReason.VERIFIED_NO_EXCHANGE_ORDER.value}
+        if not risk_compatible:
+            reasons.add(Stage4SellRecoveryReason.RISK_INCOMPATIBLE.value)
+        if not configuration_compatible:
+            reasons.add(Stage4SellRecoveryReason.CONFIGURATION_CHANGED.value)
+        if not managed_ownership_compatible:
+            reasons.add(Stage4SellRecoveryReason.OWNERSHIP_CHANGED.value)
+        order = self.load_order(proof.durable_command_key)
+        if order.order.client_order_id != proof.client_order_id:
+            raise Stage4SellRecoveryPreconditionError("absence proof client identity differs")
+        lifecycle = proof.lifecycle
+        attempts = self._connection.execute(
+            "SELECT count(*) FROM exchange_submission_attempts WHERE durable_command_key=?",
+            (proof.durable_command_key,),
+        ).fetchone()[0]
+        submitting = self._connection.execute(
+            "SELECT count(*) FROM exchange_order_events WHERE durable_command_key=? "
+            "AND new_status='SUBMITTING'",
+            (proof.durable_command_key,),
+        ).fetchone()[0]
+        if (
+            lifecycle.durable_command_key != proof.durable_command_key
+            or lifecycle.client_order_id != order.order.client_order_id
+            or lifecycle.submission_attempt_count != attempts
+            or lifecycle.submitting_event_count != submitting
+            or lifecycle.exchange_order_id != order.order.exchange_order_id
+            or lifecycle.post_boundary_reached != bool(attempts or submitting)
+        ):
+            raise Stage4SellRecoveryPreconditionError(
+                "absence proof lifecycle evidence does not match durable state"
+            )
+        event = self._append_stage4_sell_recovery_event(
+            proof.durable_command_key,
+            event_type=(
+                Stage4SellRecoveryEventType.CONTINUATION_ALLOWED
+                if len(reasons) == 1
+                else Stage4SellRecoveryEventType.DISPOSITION_REQUIRED
+            ),
+            reasons=tuple(sorted(reasons)),
+            snapshot_stage="RECOVERY",
+            snapshot_digest=proof.digest,
+            occurred_at_ms=proof.observed_at_ms,
+            authorization=authorization,
+            current_rules_fingerprint=current_rules_fingerprint,
+            evidence=proof.evidence,
+        )
+        # Never mint a capability from a replayed durable fact.  A crash after
+        # commit is intentionally availability-loss rather than claim recovery.
+        claim = None
+        if (
+            event.event_type is Stage4SellRecoveryEventType.CONTINUATION_ALLOWED
+            and not event.replayed
+        ):
+            row = self._connection.execute(
+                "SELECT authority_id,consumed_durable_command_key,account_fingerprint,"
+                "managed_portfolio_id,predecessor_portfolio_version,predecessor_portfolio_digest,"
+                "exact_managed_quantity,session_id,control_generation,reconciliation_generation,"
+                "settlement_state_digest,economic_slot_key,rules_fingerprint,risk_fingerprint,"
+                "config_fingerprint,ownership_scope_digest FROM exchange_managed_sell_authorities "
+                "WHERE authority_id=?",
+                (event.authority_id,),
+            ).fetchone()
+            if row is None:
+                raise PersistenceIntegrityError("managed SELL continuation authority is absent")
+            claim = _issue_continuation_claim(
+                authority_id=row["authority_id"],
+                durable_command_key=row["consumed_durable_command_key"],
+                client_order_id=event.client_order_id,
+                economic_slot_key=row["economic_slot_key"],
+                exact_quantity=deserialize_decimal(row["exact_managed_quantity"]),
+                absence_proof_digest=proof.digest,
+                portfolio_id=row["managed_portfolio_id"],
+                portfolio_version=row["predecessor_portfolio_version"],
+                portfolio_digest=row["predecessor_portfolio_digest"],
+                ownership_scope_digest=row["ownership_scope_digest"],
+                rules_fingerprint=row["rules_fingerprint"],
+                risk_fingerprint=row["risk_fingerprint"],
+                config_fingerprint=row["config_fingerprint"],
+                reconciliation_generation=row["reconciliation_generation"],
+                settlement_state_digest=row["settlement_state_digest"],
+                account_fingerprint=row["account_fingerprint"],
+                session_id=row["session_id"],
+                control_generation=row["control_generation"],
+            )
+            self._stage4_sell_continuation_claims[event.authority_id] = claim
+        return Stage4SellContinuationReceipt(event, claim)
+
     def _append_stage4_sell_recovery_event(
         self,
         durable_command_key: str,
@@ -1146,10 +1269,11 @@ class SQLiteExchangePersistence:
         snapshot_stage: str,
         snapshot_digest: str | None,
         occurred_at_ms: int,
-        authorization: Stage4SellRecoveryAuthorization | None,
+        authorization: Stage4SellRecoveryAuthorization | Stage4SellContinuationAuthorization | None,
         current_rules_fingerprint: str | None,
+        evidence: dict[str, object] | None = None,
     ) -> Stage4SellRecoveryEvent:
-        if self._trading.config.expected_schema_version != 8:
+        if self._trading.config.expected_schema_version not in {8, 9}:
             raise PersistenceIntegrityError("managed SELL recovery requires schema version 8")
         if snapshot_stage not in {"SNAPSHOT_B", "FINAL_GATE", "RECOVERY"}:
             raise Stage4SellRecoveryConflictError("invalid recovery snapshot stage")
@@ -1288,6 +1412,8 @@ class SQLiteExchangePersistence:
                 "policy_version": RECOVERY_POLICY_VERSION,
             }
             payload_values = {**values, "reason_codes": reasons}
+            if evidence is not None:
+                payload_values["continuation_evidence"] = evidence
             payload = canonical_json(payload_values)
             payload_digest = canonical_sha256(
                 payload_values, algorithm_version=RECOVERY_POLICY_VERSION
@@ -1359,8 +1485,238 @@ class SQLiteExchangePersistence:
             replayed,
         )
 
+    def dispose_stage4_sell_no_execution(
+        self,
+        durable_command_key: str,
+        *,
+        reason_code: str,
+        occurred_at_ms: int,
+        authorization: Stage4SellDispositionAuthorization,
+    ) -> Stage4SellDisposition:
+        if self._trading.config.expected_schema_version != 9:
+            raise Stage4SellRecoveryPreconditionError("SELL disposition requires schema version 9")
+        if not isinstance(authorization, Stage4SellDispositionAuthorization):
+            raise Stage4SellRecoveryPreconditionError("SELL disposition authorization is required")
+        # Consume before any durable read/write.  A lost or reused ceremony can only
+        # lose availability; it must never commit a disposition and report failure.
+        authorization._consume()
+        current = self.load_order(durable_command_key)
+        connection = self._connection
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            authority = connection.execute(
+                "SELECT authority_id,economic_slot_key,exact_managed_quantity,managed_portfolio_id,"
+                "predecessor_portfolio_version,predecessor_portfolio_digest,session_id "
+                ",account_fingerprint,expected_submission_count,reconciliation_generation,"
+                "settlement_state,settlement_state_digest,status,side,ownership_scope_digest "
+                "FROM exchange_managed_sell_authorities WHERE consumed_durable_command_key=?",
+                (durable_command_key,),
+            ).fetchone()
+            disposition_event = connection.execute(
+                "SELECT 1 FROM exchange_managed_sell_recovery_events WHERE authority_id=? "
+                "AND event_ordinal=2 AND event_type='DISPOSITION_REQUIRED'",
+                (authority["authority_id"],) if authority is not None else (None,),
+            ).fetchone()
+            attempts = connection.execute(
+                "SELECT count(*) FROM exchange_submission_attempts WHERE durable_command_key=?",
+                (durable_command_key,),
+            ).fetchone()[0]
+            submitting = connection.execute(
+                "SELECT count(*) FROM exchange_order_events WHERE durable_command_key=? "
+                "AND new_status='SUBMITTING'",
+                (durable_command_key,),
+            ).fetchone()[0]
+            trades = connection.execute(
+                "SELECT count(*) FROM exchange_trades WHERE durable_command_key=?",
+                (durable_command_key,),
+            ).fetchone()[0]
+            portfolio = connection.execute(
+                "SELECT portfolio_version,state_digest,state_payload FROM exchange_portfolio_current WHERE portfolio_id=?",
+                (authority["managed_portfolio_id"],) if authority is not None else (None,),
+            ).fetchone()
+            session = connection.execute(
+                "SELECT submission_count FROM exchange_sessions WHERE session_id=?",
+                (authority["session_id"],) if authority is not None else (None,),
+            ).fetchone()
+            reconciliation = connection.execute(
+                "SELECT status,generation FROM exchange_reconciliation_current WHERE execution_root_id=?",
+                (current.execution_root_id,),
+            ).fetchone()
+            unsettled = connection.execute(
+                "SELECT (SELECT count(*) FROM exchange_trades t LEFT JOIN "
+                "exchange_trade_settlements s ON s.exchange_trade_id=t.exchange_trade_id "
+                "WHERE s.settlement_id IS NULL),(SELECT count(*) FROM "
+                "exchange_trade_settlements s LEFT JOIN exchange_trade_settlement_resolutions x "
+                "ON x.blocked_settlement_id=s.settlement_id WHERE "
+                "s.status='BLOCKED_UNSUPPORTED_FEE' AND x.resolution_id IS NULL)"
+            ).fetchone()
+            existing = connection.execute(
+                "SELECT d.*,a.consumed_durable_command_key,a.economic_slot_key AS authority_slot,"
+                "a.exact_managed_quantity AS authority_quantity,a.managed_portfolio_id AS authority_portfolio_id,"
+                "a.predecessor_portfolio_version,a.predecessor_portfolio_digest,a.session_id AS authority_session_id,"
+                "o.client_order_id AS order_client_id,o.status AS order_status,o.exchange_order_id "
+                "FROM exchange_managed_sell_dispositions d JOIN exchange_managed_sell_authorities a "
+                "ON a.authority_id=d.authority_id JOIN exchange_orders o "
+                "ON o.durable_command_key=d.durable_command_key WHERE d.durable_command_key=?",
+                (durable_command_key,),
+            ).fetchone()
+            if existing is not None:
+                if existing["reason_code"] != reason_code:
+                    raise Stage4SellRecoveryConflictError("conflicting SELL disposition")
+                self._validate_stage4_sell_disposition(existing)
+                connection.rollback()
+                return Stage4SellDisposition(
+                    existing["disposition_id"],
+                    existing["authority_id"],
+                    durable_command_key,
+                    existing["client_order_id"],
+                    existing["reason_code"],
+                    existing["occurred_at_ms"],
+                    True,
+                )
+            if (
+                authority is None
+                or disposition_event is None
+                or current.order.status is not ExchangeOrderStatus.PREPARED
+                or current.order.side is not ExchangeOrderSide.SELL
+                or current.order.account_fingerprint != authority["account_fingerprint"]
+                or current.order.original_base_quantity
+                != deserialize_decimal(authority["exact_managed_quantity"])
+                or current.order.exchange_order_id is not None
+                or attempts != 0
+                or submitting != 0
+                or trades != 0
+                or portfolio is None
+                or session is None
+                or session["submission_count"] != authority["expected_submission_count"]
+                or reconciliation is None
+                or reconciliation["status"] != "SAFE"
+                or reconciliation["generation"] != authority["reconciliation_generation"]
+                or authority["settlement_state"] != "SYNCHRONIZED"
+                or authority["status"] != "CONSUMED"
+                or authority["side"] != "SELL"
+                or deserialize_portfolio_state(portfolio["state_payload"]).base_balance
+                != deserialize_decimal(authority["exact_managed_quantity"])
+                or tuple(unsettled) != (0, 0)
+                or canonical_sha256(
+                    {
+                        "portfolio_version": portfolio["portfolio_version"],
+                        "portfolio_digest": portfolio["state_digest"],
+                        "reconciliation_generation": reconciliation["generation"],
+                        "pending": unsettled[0],
+                        "blocked": unsettled[1],
+                        "status": "SYNCHRONIZED",
+                    },
+                    algorithm_version="stage4-sell-settlement-state/v1",
+                )
+                != authority["settlement_state_digest"]
+                or (
+                    portfolio["portfolio_version"],
+                    portfolio["state_digest"],
+                )
+                != (
+                    authority["predecessor_portfolio_version"],
+                    authority["predecessor_portfolio_digest"],
+                )
+            ):
+                raise Stage4SellRecoveryPreconditionError("SELL disposition requires review")
+            payload = {
+                "authority_id": authority["authority_id"],
+                "durable_command_key": durable_command_key,
+                "client_order_id": current.order.client_order_id,
+                "economic_slot_key": authority["economic_slot_key"],
+                "exact_quantity": authority["exact_managed_quantity"],
+                "portfolio_id": authority["managed_portfolio_id"],
+                "portfolio_version": authority["predecessor_portfolio_version"],
+                "portfolio_digest": authority["predecessor_portfolio_digest"],
+                "session_id": authority["session_id"],
+                "reason_code": reason_code,
+                "submission_attempt_count": 0,
+                "submitting_event_count": 0,
+                "exchange_order_id": None,
+                "sell_trade_count": 0,
+                "occurred_at_ms": occurred_at_ms,
+                "policy_version": DISPOSITION_POLICY_VERSION,
+            }
+            disposition_id = canonical_sha256(payload, algorithm_version=DISPOSITION_POLICY_VERSION)
+            connection.execute(
+                "INSERT INTO exchange_managed_sell_dispositions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    disposition_id,
+                    authority["authority_id"],
+                    durable_command_key,
+                    current.order.client_order_id,
+                    authority["economic_slot_key"],
+                    authority["exact_managed_quantity"],
+                    authority["managed_portfolio_id"],
+                    authority["predecessor_portfolio_version"],
+                    authority["predecessor_portfolio_digest"],
+                    authority["session_id"],
+                    reason_code,
+                    occurred_at_ms,
+                    DISPOSITION_POLICY_VERSION,
+                    canonical_json(payload),
+                    canonical_sha256(payload, algorithm_version=DISPOSITION_POLICY_VERSION),
+                ),
+            )
+            next_order = transition_order(
+                current.order, status=ExchangeOrderStatus.DISPOSED_NO_EXECUTION
+            )
+            self._write_transition(
+                current,
+                next_order,
+                ExchangeOrderEventSource.RECONCILIATION,
+                "stage4_sell_disposed_no_execution",
+                occurred_at_ms,
+                evidence=payload,
+            )
+            self._hit("stage4_sell_disposition_before_commit")
+            connection.commit()
+            return Stage4SellDisposition(
+                disposition_id,
+                authority["authority_id"],
+                durable_command_key,
+                current.order.client_order_id,
+                reason_code,
+                occurred_at_ms,
+            )
+        except BaseException:
+            connection.rollback()
+            raise
+
     def begin_submission(
         self, durable_command_key: str, *, occurred_at_ms: int
+    ) -> DurableExchangeOrder:
+        """Generic primitive; schema-v8 recovery candidates are always rejected here."""
+        return self._begin_submission(durable_command_key, occurred_at_ms=occurred_at_ms)
+
+    def begin_stage4_sell_continuation_submission(
+        self,
+        durable_command_key: str,
+        *,
+        final_gate_result: Stage4SellContinuationFinalGateResult,
+        occurred_at_ms: int,
+    ) -> DurableExchangeOrder:
+        """ADR-068's sole persist-before-POST entry point for the existing SELL identity."""
+        if not isinstance(final_gate_result, Stage4SellContinuationFinalGateResult):
+            raise Stage4ManagedSellRestartRecoveryOnlyError(
+                "gate-issued SELL continuation result is required"
+            )
+        claim = final_gate_result.claim
+        return self._begin_submission(
+            durable_command_key,
+            occurred_at_ms=occurred_at_ms,
+            continuation_claim=claim,
+            continuation_final_gate_result=final_gate_result,
+        )
+
+    def _begin_submission(
+        self,
+        durable_command_key: str,
+        *,
+        occurred_at_ms: int,
+        continuation_claim: Stage4SellContinuationClaim | None = None,
+        continuation_final_gate_result: Stage4SellContinuationFinalGateResult | None = None,
     ) -> DurableExchangeOrder:
         current = self.load_order(durable_command_key)
         if current.order.status is not ExchangeOrderStatus.PREPARED:
@@ -1382,7 +1738,34 @@ class SQLiteExchangePersistence:
                     if self._trading.config.expected_schema_version >= 8
                     else 0
                 )
-                if claim is None or not claim._consumed or recovery_events:
+                continuation = self._stage4_sell_continuation_claims.get(authority[0])
+                continuation_event = (
+                    self._connection.execute(
+                        "SELECT durable_command_key,client_order_id,event_type FROM "
+                        "exchange_managed_sell_recovery_events WHERE authority_id=? "
+                        "AND event_ordinal=2",
+                        (authority[0],),
+                    ).fetchone()
+                    if recovery_events
+                    else None
+                )
+                continuation_valid = (
+                    continuation_claim is continuation
+                    and continuation is not None
+                    and not continuation._consumed
+                    and continuation.durable_command_key == durable_command_key
+                    and continuation.client_order_id == current.order.client_order_id
+                    and continuation.authority_id == authority[0]
+                    and continuation_event is not None
+                    and tuple(continuation_event)
+                    == (
+                        durable_command_key,
+                        current.order.client_order_id,
+                        Stage4SellRecoveryEventType.CONTINUATION_ALLOWED.value,
+                    )
+                )
+                legacy_valid = claim is not None and claim._consumed and not recovery_events
+                if not (continuation_valid or legacy_valid):
                     raise Stage4ManagedSellRestartRecoveryOnlyError(
                         "managed SELL PREPARED state is recovery-only"
                     )
@@ -1400,6 +1783,18 @@ class SQLiteExchangePersistence:
         connection = self._connection
         try:
             connection.execute("BEGIN IMMEDIATE")
+            if continuation_claim is not None:
+                if (
+                    continuation_final_gate_result is None
+                    or continuation_final_gate_result.claim is not continuation_claim
+                    or continuation_final_gate_result._consumed
+                ):
+                    raise Stage4ManagedSellRestartRecoveryOnlyError(
+                        "SELL continuation final-gate result is invalid"
+                    )
+                self._validate_stage4_sell_continuation_final_gate(
+                    durable_command_key, continuation_claim
+                )
             connection.execute(
                 "INSERT INTO exchange_submission_attempts VALUES(?,?,?,?,?,?,?)",
                 (
@@ -1417,8 +1812,28 @@ class SQLiteExchangePersistence:
                 current,
                 next_order,
                 ExchangeOrderEventSource.TRANSPORT,
-                "submission_attempt_started",
+                (
+                    "stage4_sell_continuation_final_gate_passed"
+                    if continuation_claim is not None
+                    else "submission_attempt_started"
+                ),
                 occurred_at_ms,
+                evidence=(
+                    {
+                        "final_gate_result": "PASSED",
+                        "authority_id": continuation_claim.authority_id,
+                        "absence_proof_digest": continuation_claim.absence_proof_digest,
+                        "economic_slot_key": continuation_claim.economic_slot_key,
+                        "exact_quantity": continuation_claim.exact_quantity,
+                        "portfolio_id": continuation_claim.portfolio_id,
+                        "portfolio_version": continuation_claim.portfolio_version,
+                        "portfolio_digest": continuation_claim.portfolio_digest,
+                        "session_id": continuation_claim.session_id,
+                        "control_generation": continuation_claim.control_generation,
+                    }
+                    if continuation_claim is not None
+                    else None
+                ),
             )
             self._hit("attempt_after_order")
             connection.execute(
@@ -1437,6 +1852,10 @@ class SQLiteExchangePersistence:
             self._hit("attempt_after_counters")
             self._hit("attempt_before_commit")
             connection.commit()
+            if continuation_claim is not None:
+                continuation_claim._consume()
+                assert continuation_final_gate_result is not None
+                continuation_final_gate_result._consume()
             self._hit("attempt_after_commit")
             return self.load_order(durable_command_key)
         except sqlite3.IntegrityError as error:
@@ -1448,6 +1867,132 @@ class SQLiteExchangePersistence:
         except BaseException:
             connection.rollback()
             raise
+
+    def _validate_stage4_sell_continuation_final_gate(
+        self, durable_command_key: str, claim: Stage4SellContinuationClaim
+    ) -> None:
+        """Reread ADR-068's durable graph under the submission writer transaction."""
+        row = self._connection.execute(
+            "SELECT a.authority_id,a.consumed_durable_command_key,a.account_fingerprint,a.session_id,"
+            "a.managed_portfolio_id,a.predecessor_portfolio_version,"
+            "a.predecessor_portfolio_digest,a.exact_managed_quantity,"
+            "a.expected_submission_count,a.control_generation,a.reconciliation_generation,"
+            "a.settlement_state_digest,a.economic_slot_key,a.rules_fingerprint,a.risk_fingerprint,"
+            "a.config_fingerprint,a.ownership_scope_digest,o.client_order_id,o.status,o.side,o.original_quantity,"
+            "o.exchange_order_id,p.portfolio_version,p.state_digest,p.state_payload,"
+            "s.submission_count,r.status AS reconciliation_status,"
+            "c.control_generation AS current_control_generation,"
+            "c.kill_switch_state,c.reconciliation_generation AS control_reconciliation_generation "
+            "FROM exchange_managed_sell_authorities a JOIN exchange_orders o ON "
+            "o.durable_command_key=a.consumed_durable_command_key JOIN "
+            "exchange_portfolio_current p ON p.portfolio_id=a.managed_portfolio_id JOIN "
+            "exchange_sessions s ON s.session_id=a.session_id JOIN "
+            "exchange_reconciliation_current r ON r.execution_root_id=a.execution_root_id JOIN "
+            "exchange_control_state c ON c.execution_root_id=a.execution_root_id "
+            "WHERE a.consumed_durable_command_key=?",
+            (durable_command_key,),
+        ).fetchone()
+        continuation = self._connection.execute(
+            "SELECT client_order_id,rules_fingerprint,portfolio_id,portfolio_version,"
+            "portfolio_digest,session_id,session_submission_count,reconciliation_generation,"
+            "reconciliation_status,control_generation,risk_fingerprint,config_fingerprint "
+            "FROM exchange_managed_sell_recovery_events WHERE authority_id=? "
+            "AND event_ordinal=2 AND event_type='RECOVERY_CONTINUATION_ALLOWED'",
+            (claim.authority_id,),
+        ).fetchone()
+        attempts = self._connection.execute(
+            "SELECT count(*) FROM exchange_submission_attempts WHERE durable_command_key=?",
+            (durable_command_key,),
+        ).fetchone()[0]
+        submitting = self._connection.execute(
+            "SELECT count(*) FROM exchange_order_events WHERE durable_command_key=? "
+            "AND new_status='SUBMITTING'",
+            (durable_command_key,),
+        ).fetchone()[0]
+        if row is None or continuation is None:
+            raise Stage4ManagedSellRestartRecoveryOnlyError(
+                "managed SELL continuation lineage is absent"
+            )
+        state = deserialize_portfolio_state(row["state_payload"])
+        expected_event = (
+            row["client_order_id"],
+            row["rules_fingerprint"],
+            row["managed_portfolio_id"],
+            row["portfolio_version"],
+            row["state_digest"],
+            row["session_id"],
+            row["submission_count"],
+            row["reconciliation_generation"],
+            "SAFE",
+            row["control_generation"],
+            row["risk_fingerprint"],
+            row["config_fingerprint"],
+        )
+        if (
+            claim.authority_id != row["authority_id"]
+            or claim.durable_command_key != durable_command_key
+            or claim.client_order_id != row["client_order_id"]
+            or claim.economic_slot_key != row["economic_slot_key"]
+            or claim.exact_quantity != deserialize_decimal(row["exact_managed_quantity"])
+            or claim.portfolio_id != row["managed_portfolio_id"]
+            or claim.portfolio_version != row["predecessor_portfolio_version"]
+            or claim.portfolio_digest != row["predecessor_portfolio_digest"]
+            or claim.ownership_scope_digest != row["ownership_scope_digest"]
+            or claim.rules_fingerprint != row["rules_fingerprint"]
+            or claim.risk_fingerprint != row["risk_fingerprint"]
+            or claim.config_fingerprint != row["config_fingerprint"]
+            or claim.reconciliation_generation != row["reconciliation_generation"]
+            or claim.settlement_state_digest != row["settlement_state_digest"]
+            or claim.account_fingerprint != row["account_fingerprint"]
+            or claim.session_id != row["session_id"]
+            or claim.control_generation != row["control_generation"]
+            or row["consumed_durable_command_key"] != durable_command_key
+            or row["status"] != "PREPARED"
+            or row["side"] != "SELL"
+            or row["exchange_order_id"] is not None
+            or deserialize_decimal(row["original_quantity"])
+            != deserialize_decimal(row["exact_managed_quantity"])
+            or row["portfolio_version"] != row["predecessor_portfolio_version"]
+            or row["state_digest"] != row["predecessor_portfolio_digest"]
+            or state.base_balance != deserialize_decimal(row["exact_managed_quantity"])
+            or row["submission_count"] != row["expected_submission_count"]
+            or row["reconciliation_status"] != "SAFE"
+            or row["current_control_generation"] != row["control_generation"]
+            or row["control_reconciliation_generation"] != row["reconciliation_generation"]
+            or row["kill_switch_state"] != "ACTIVE"
+            or attempts != 0
+            or submitting != 0
+            or tuple(continuation) != expected_event
+        ):
+            raise Stage4ManagedSellRestartRecoveryOnlyError(
+                "managed SELL continuation final gate rejected durable drift"
+            )
+        unsettled = self._connection.execute(
+            "SELECT (SELECT count(*) FROM exchange_trades t LEFT JOIN "
+            "exchange_trade_settlements s ON s.exchange_trade_id=t.exchange_trade_id "
+            "WHERE s.settlement_id IS NULL),(SELECT count(*) FROM "
+            "exchange_trade_settlements s LEFT JOIN exchange_trade_settlement_resolutions x "
+            "ON x.blocked_settlement_id=s.settlement_id WHERE "
+            "s.status='BLOCKED_UNSUPPORTED_FEE' AND x.resolution_id IS NULL)"
+        ).fetchone()
+        settlement_values = {
+            "portfolio_version": row["portfolio_version"],
+            "portfolio_digest": row["state_digest"],
+            "reconciliation_generation": row["reconciliation_generation"],
+            "pending": unsettled[0],
+            "blocked": unsettled[1],
+            "status": "SYNCHRONIZED",
+        }
+        if (
+            tuple(unsettled) != (0, 0)
+            or canonical_sha256(
+                settlement_values, algorithm_version="stage4-sell-settlement-state/v1"
+            )
+            != row["settlement_state_digest"]
+        ):
+            raise Stage4ManagedSellRestartRecoveryOnlyError(
+                "managed SELL continuation settlement is stale"
+            )
 
     def record_status(
         self,
@@ -1464,6 +2009,10 @@ class SQLiteExchangePersistence:
         source: ExchangeOrderEventSource = ExchangeOrderEventSource.TRANSPORT,
         count_failure: bool = False,
     ) -> DurableExchangeOrder:
+        if status is ExchangeOrderStatus.DISPOSED_NO_EXECUTION:
+            raise PersistenceConflictError(
+                "DISPOSED_NO_EXECUTION requires the ADR-069 disposition service"
+            )
         current = self.load_order(durable_command_key)
         supplied = {
             "exchange_order_id": exchange_order_id,
@@ -1684,6 +2233,18 @@ class SQLiteExchangePersistence:
             }
         if self._trading.config.expected_schema_version >= 8:
             self._validate_stage4_sell_recovery_events()
+        if self._trading.config.expected_schema_version >= 9:
+            dispositions = self._connection.execute(
+                "SELECT d.*,a.consumed_durable_command_key,a.economic_slot_key AS authority_slot,"
+                "a.exact_managed_quantity AS authority_quantity,a.managed_portfolio_id AS authority_portfolio_id,"
+                "a.predecessor_portfolio_version,a.predecessor_portfolio_digest,a.session_id AS authority_session_id,"
+                "o.client_order_id AS order_client_id,o.status AS order_status,o.exchange_order_id "
+                "FROM exchange_managed_sell_dispositions d JOIN exchange_managed_sell_authorities a "
+                "ON a.authority_id=d.authority_id JOIN exchange_orders o "
+                "ON o.durable_command_key=d.durable_command_key ORDER BY d.authority_id"
+            ).fetchall()
+            for disposition in dispositions:
+                self._validate_stage4_sell_disposition(disposition)
         prepared = tuple(
             v
             for v in orders
@@ -1705,6 +2266,74 @@ class SQLiteExchangePersistence:
         return LocalExchangeRecoveryResult(
             LocalExchangeRecoveryStatus.CLEAN, prepared, reconciliation, terminal
         )
+
+    def _validate_stage4_sell_disposition(self, row: sqlite3.Row) -> None:
+        """Validate ADR-069's immutable local no-execution terminal record."""
+        try:
+            payload = json.loads(row["payload"])
+        except (TypeError, json.JSONDecodeError) as error:
+            raise PersistenceIntegrityError(
+                "managed SELL disposition payload is invalid"
+            ) from error
+        expected = {
+            "authority_id": row["authority_id"],
+            "durable_command_key": row["durable_command_key"],
+            "client_order_id": row["client_order_id"],
+            "economic_slot_key": row["economic_slot_key"],
+            "exact_quantity": row["exact_quantity"],
+            "portfolio_id": row["portfolio_id"],
+            "portfolio_version": row["portfolio_version"],
+            "portfolio_digest": row["portfolio_digest"],
+            "session_id": row["session_id"],
+            "reason_code": row["reason_code"],
+            "submission_attempt_count": 0,
+            "submitting_event_count": 0,
+            "exchange_order_id": None,
+            "sell_trade_count": 0,
+            "occurred_at_ms": row["occurred_at_ms"],
+            "policy_version": DISPOSITION_POLICY_VERSION,
+        }
+        if (
+            row["policy_version"] != DISPOSITION_POLICY_VERSION
+            or payload != expected
+            or canonical_json(payload) != row["payload"]
+            or canonical_sha256(payload, algorithm_version=DISPOSITION_POLICY_VERSION)
+            != row["payload_digest"]
+            or row["disposition_id"]
+            != canonical_sha256(payload, algorithm_version=DISPOSITION_POLICY_VERSION)
+            or row["authority_id"] is None
+            or row["consumed_durable_command_key"] != row["durable_command_key"]
+            or row["authority_slot"] != row["economic_slot_key"]
+            or row["authority_quantity"] != row["exact_quantity"]
+            or row["authority_portfolio_id"] != row["portfolio_id"]
+            or row["predecessor_portfolio_version"] != row["portfolio_version"]
+            or row["predecessor_portfolio_digest"] != row["portfolio_digest"]
+            or row["authority_session_id"] != row["session_id"]
+            or row["order_client_id"] != row["client_order_id"]
+            or row["order_status"] != ExchangeOrderStatus.DISPOSED_NO_EXECUTION.value
+            or row["exchange_order_id"] is not None
+        ):
+            raise PersistenceIntegrityError("managed SELL disposition integrity mismatch")
+        recovery = self._connection.execute(
+            "SELECT 1 FROM exchange_managed_sell_recovery_events WHERE authority_id=? "
+            "AND event_ordinal=2 AND event_type='DISPOSITION_REQUIRED'",
+            (row["authority_id"],),
+        ).fetchone()
+        attempts = self._connection.execute(
+            "SELECT count(*) FROM exchange_submission_attempts WHERE durable_command_key=?",
+            (row["durable_command_key"],),
+        ).fetchone()[0]
+        submitting = self._connection.execute(
+            "SELECT count(*) FROM exchange_order_events WHERE durable_command_key=? "
+            "AND new_status='SUBMITTING'",
+            (row["durable_command_key"],),
+        ).fetchone()[0]
+        trades = self._connection.execute(
+            "SELECT count(*) FROM exchange_trades WHERE durable_command_key=?",
+            (row["durable_command_key"],),
+        ).fetchone()[0]
+        if recovery is None or attempts != 0 or submitting != 0 or trades != 0:
+            raise PersistenceIntegrityError("managed SELL disposition has execution facts")
 
     def _validate_stage4_sell_recovery_events(self) -> None:
         rows = self._connection.execute(
@@ -1754,6 +2383,13 @@ class SQLiteExchangePersistence:
                 )
             }
             expected["reason_codes"] = payload.get("reason_codes")
+            if row["event_ordinal"] == 2:
+                evidence = payload.get("continuation_evidence")
+                if not isinstance(evidence, dict):
+                    raise PersistenceIntegrityError("continuation proof evidence is invalid")
+                if evidence.get("absence_proof_digest") != row["snapshot_digest"]:
+                    raise PersistenceIntegrityError("continuation proof digest is invalid")
+                expected["continuation_evidence"] = evidence
             if (
                 canonical_json(payload) != row["payload"]
                 or payload != expected
@@ -2073,7 +2709,7 @@ class SQLiteExchangePersistence:
     def restart_disposition(value: DurableExchangeOrder) -> RestartDisposition:
         if value.order.status is ExchangeOrderStatus.PREPARED:
             return RestartDisposition.FIRST_SUBMISSION_ELIGIBLE
-        if value.order.status.is_exchange_terminal:
+        if value.order.status.is_terminal:
             return RestartDisposition.TERMINAL
         return RestartDisposition.RECONCILIATION_REQUIRED
 
@@ -2542,6 +3178,7 @@ class SQLiteExchangePersistence:
         reason_code: str,
         occurred_at_ms: int,
         exchange_timestamp_ms: int | None = None,
+        evidence: dict[str, object] | None = None,
     ) -> None:
         version = current.version + 1
         payload = canonical_json(_order_payload(order))
@@ -2558,7 +3195,7 @@ class SQLiteExchangePersistence:
                 order.submitted_at_ms,
                 order.acknowledged_at_ms,
                 order.latest_exchange_update_ms,
-                int(order.status.is_exchange_terminal),
+                int(order.status.is_terminal),
                 version,
                 payload,
                 digest,
@@ -2576,6 +3213,7 @@ class SQLiteExchangePersistence:
             reason_code,
             occurred_at_ms,
             exchange_timestamp_ms,
+            evidence,
         )
 
     def _append_event(
@@ -2587,6 +3225,7 @@ class SQLiteExchangePersistence:
         reason_code: str,
         occurred_at_ms: int,
         exchange_timestamp_ms: int | None = None,
+        evidence: dict[str, object] | None = None,
     ) -> None:
         event_payload = {
             "durable_command_key": order.durable_command_key,
@@ -2601,6 +3240,8 @@ class SQLiteExchangePersistence:
             "exchange_timestamp_ms": exchange_timestamp_ms,
             "occurred_at_ms": occurred_at_ms,
         }
+        if evidence is not None:
+            event_payload["continuation_evidence"] = evidence
         payload = canonical_json(event_payload)
         digest = canonical_sha256(event_payload, algorithm_version="exchange-order-event/v1")
         event_id = canonical_sha256(

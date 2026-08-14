@@ -257,7 +257,7 @@ def build_production_testnet_components(
             else ExchangeSettlementStatus.SYNCHRONIZED
         )
         non_terminal_order_count = sum(
-            not value.order.status.is_exchange_terminal
+            not value.order.status.is_terminal
             for value in store.list_orders()
             if value.execution_root_id == root.execution_root_id
         )

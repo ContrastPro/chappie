@@ -1174,9 +1174,18 @@ process-local claim. The decision API requires distinct exact recovery authoriza
 returns no submission capability. Production migration and recovery disposition remain separately
 unauthorized.
 
-Proposed ADR-067 leaves schema-v8 disposition facts non-capability-bearing. A future continuation
-transaction may return one process-local recovery claim only while committing the sole ordinal-2
-continuation decision after exact durable and exchange-absence validation. That claim is never
-reconstructed from the event. Crash after decision commit but before `SUBMITTING` therefore loses
-availability without permitting a second identity or decision. The existing PREPARED record remains
-the sole managed-BTC reservation throughout.
+ADR-068 reuses schema-v8 disposition facts without making them a capability. The bounded
+`ABSENCE_PROVEN` ceremony and exact distinct continuation authorization can issue one process-local
+recovery claim only following a newly committed ordinal-2 continuation decision; replay never
+reissues it. A continuation-specific primitive rereads the durable graph, then commits the existing
+order's sole `SUBMITTING` transition and attempt before the transport boundary. Crash after the
+decision commit but before claim delivery loses availability without permitting a second identity,
+attempt or decision. The existing PREPARED record remains the sole managed-BTC reservation throughout.
+
+ADR-069 adds schema-v9 `exchange_managed_sell_dispositions` for the terminal non-execution alternative.
+Its unique authority/command links and append-only triggers permit one audited `DISPOSED_NO_EXECUTION`
+transition only after a `DISPOSITION_REQUIRED` event, zero attempts, no `SUBMITTING`, no exchange ID or
+SELL trade, and unchanged Portfolio/session/reconciliation/settlement lineage. The single transaction
+persists the canonical reason and digest, writes the local terminal event, and changes no economic or
+exchange-submission projection. Replays with the same reason return the same disposition; conflicts and
+all drift fail closed. A disposed identity cannot regain a claim or submit after restart.
