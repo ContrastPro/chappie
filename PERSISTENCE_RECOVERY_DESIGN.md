@@ -1159,5 +1159,7 @@ authority. A fresh process can reconcile/settle that command but can never recon
 ADR-066 is accepted; the offline schema/persistence implementation and final adversarial review are
 complete. The hardened migration 007 checksum is
 `5133bf077d65093820e111deafd5332b83b15d3bc808ab43f5aaf8ad5e4d32fa`; migrations 001–006 remain
-byte-identical. The operator, production migration and SELL remain unauthorized. See
+byte-identical. The offline operator now uses only the reviewed atomic API and proves that PREPARED
+or SUBMITTING restart cannot restore its process claim. Its final offline adversarial review passed;
+production migration and SELL remain unauthorized. See
 `STAGE_4_MANAGED_SELL_CLOSURE_DESIGN.md`.

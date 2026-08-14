@@ -129,9 +129,9 @@ PASS. M4.11 is documentation-only and does not rerun those accepted suites.
 
 The proven scope is safe bounded Testnet BUY execution and recovery. It does not prove
 profitability, authorize continuous or signal-driven Testnet execution, authorize LIVE,
-or support cancellation. The schema-v7 managed-SELL authority boundary is now implemented and
-validated offline and its final adversarial schema review passed, but the operator and controlled
-execution remain unimplemented and unauthorized. The exact next work is separate one-shot SELL
-operator implementation. Stage 5 Production Readiness
+or support cancellation. The schema-v7 managed-SELL authority boundary and dedicated one-shot
+operator are now implemented and validated offline, and the operator final offline adversarial review
+passed. Controlled execution remains unauthorized and no SELL evidence exists. The exact next work
+is separate production execution authorization preparation. Stage 5 Production Readiness
 must remain not started until the missing accepted Stage 4 criterion is closed and a new
 completion verdict is issued.

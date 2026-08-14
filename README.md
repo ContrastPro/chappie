@@ -101,9 +101,13 @@ implemented and validated offline under accepted ADR-066. Schema v7 adds a disti
 managed-SELL authority, exact managed-inventory checks, complete MARKET quantity limits and a
 single-use process claim; its final offline adversarial schema review passed. It permits only an
 exact full managed-position exit under fresh rules in the same durable
-lineage; external account BTC is never Risk inventory. The SELL operator and execution remain
-unauthorized and unimplemented. The next safe work is the separate one-shot SELL operator
-implementation; continuous Testnet, LIVE and Stage 5 have not started.
+lineage; external account BTC is never Risk inventory. The dedicated one-shot operator is now
+implemented and reviewed offline with a two-snapshot preflight, exact managed quantity, the
+schema-v7 claim, the existing final gate, SUBMITTING-before-network and an eleven-request hard
+budget (ten GETs plus at most one POST). Execution remains unauthorized and no SELL evidence exists.
+Its final offline adversarial review passed after hardening managed-history provenance and atomic,
+PASS-last evidence publication after resource close. The next safe action is separate production
+execution authorization preparation; continuous Testnet, LIVE and Stage 5 have not started.
 
 Important defaults:
 

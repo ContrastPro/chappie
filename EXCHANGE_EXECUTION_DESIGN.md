@@ -1062,7 +1062,11 @@ ADR-066 was accepted on 2026-08-14, authorizing offline schema/domain/persistenc
 tests only; production migration and SELL execution remain separately unauthorized. Migration 007,
 typed SELL authority/request/claim models, atomic PREPARED creation, recovery-only restart behavior,
 and the narrow final-gate exception are implemented offline; their final adversarial schema review
-passed. No network operator is included, so Stage 4 remains BLOCKED on controlled SELL evidence.
+passed. A dedicated one-shot operator now composes that boundary offline with fresh snapshot A/B,
+both Risk layers, a fixed Testnet endpoint allowlist, one deterministic identity and at most one
+POST. The operator final offline adversarial review passed after binding observed managed history to
+the durable FILLED BUY and making evidence atomic, exclusive, PASS-last and post-close. Separate
+execution authorization remains pending, so Stage 4 remains BLOCKED on controlled SELL evidence.
 See `STAGE_4_MANAGED_SELL_CLOSURE_DESIGN.md`.
 
 The committed lifecycle has one terminal state, CONSUMED. Transaction-local PREPARED cannot become

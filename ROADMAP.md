@@ -360,9 +360,11 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 accepted controlled Testnet SELL evidence remains absent** (2026-08-14).
 
 ADR-066 was accepted on 2026-08-14. Its schema-v7 rules/domain/persistence boundary is implemented
-and its final offline adversarial schema review passed. Stage 4 remains BLOCKED because no controlled
-managed SELL evidence exists; the next safe action is separate one-shot operator implementation,
-not production migration or execution.
+and its final offline adversarial schema review passed. The dedicated one-shot SELL operator is now
+implemented and tested offline; production execution remains unauthorized. Stage 4 remains BLOCKED
+because no controlled managed SELL evidence exists. The operator final offline adversarial review
+passed; the next safe action is separate production execution authorization preparation, not an
+implicit migration or execution.
 
 ### Цель
 

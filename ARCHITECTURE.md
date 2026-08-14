@@ -865,6 +865,9 @@ raw exchange BTC outside Risk availability, selects only an exact full managed-p
 fresh MARKET rules, and uses an additive schema-v7 authority with an ACTIVE-switch, process-local
 single-use claim. Schema-v5 BUY authority is not reused or weakened. ADR-066 was accepted after final
 design review; its offline implementation, tests and final adversarial schema review are complete.
-The one-shot operator remains the next unimplemented boundary.
+The one-shot operator is also implemented offline: exact authorization precedes credential/DB/transport
+access, two bounded five-GET snapshots surround authority creation, and the existing gate commits
+SUBMITTING before the sole allowed POST. Its final offline adversarial review passed with exact
+durable-BUY/exchange-history provenance and atomic PASS-last evidence after owned resources close.
 No production migration, network action, SELL execution or Stage 5 work is authorized. See
 `STAGE_4_MANAGED_SELL_CLOSURE_DESIGN.md`.
