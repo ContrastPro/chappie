@@ -81,15 +81,18 @@ INCOMPLETE because Binance labeled an exact zero commission as BTC. ADR-065 acce
 zero as asset-neutral while preserving the original trade and blocked audit record. Schema-v6
 append-only resolution is implemented offline and its final offline safety review passed; production
 remediation subsequently completed under separate authorization and produced synchronized durable
-truth; M4.10 is not yet complete pending the final fresh-process proof. The dedicated
+truth. The dedicated
 `python -m app.tools.testnet_phase4_remediate_zero_fee` harness is implemented offline: it has no
 HTTP/credential dependency, accepts only its exact remediation token, validates the known durable
 shape, and writes a new exclusive remediation evidence file only after local synchronized truth. Its
 final offline safety review passed. The observation-only
 `python -m app.tools.testnet_m410_recovery_proof` harness is now implemented with a distinct exact
 authorization, immutable read-only SQLite access, full durable lineage/digest validation, unchanged
-database checksum enforcement and exclusive sanitized evidence. Its production execution remains
-unauthorized after its final offline adversarial safety review passed; M4.11 has not started.
+database checksum enforcement and exclusive sanitized evidence. Its separately authorized production
+proof passed, completing M4.10. M4.11 evidence aggregation is complete with `STAGE_4_BLOCKED`:
+the accepted architecture still requires controlled Testnet SELL evidence in addition to the proven
+BUY. That SELL closure is not started or authorized; Stage 5, continuous Testnet and LIVE remain
+not started. See [`M4_11_STAGE_4_COMPLETION_REPORT.md`](M4_11_STAGE_4_COMPLETION_REPORT.md).
 
 Important defaults:
 

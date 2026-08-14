@@ -975,13 +975,13 @@ same-process and cross-process decisions, recovery-only/READY restart stress and
 fixed-seed schedules preserve one durable command/client ID/attempt and at most one gateway call.
 Existing transaction failpoint matrices cover all four exception families around submission,
 status, reconciliation and settlement commits. No new ADR or exchange capability was required.
-See `M4_9_CRASH_RESTART_REPORT.md`; Stage 4 remains in progress and M4.10 security preflight is
-completed with final safety review passed, Phase 1 authenticated read-only PASS and Phase 2
-authorization pending.
+See `M4_9_CRASH_RESTART_REPORT.md` for the preceding offline review. M4.10 subsequently completed
+its bounded BUY, settlement and fresh-process recovery proof. M4.11 is complete with
+`STAGE_4_BLOCKED` because the accepted controlled SELL evidence remains absent.
 
 ### M4.10 controlled smoke design status
 
-Status: **Phase 1 authenticated read-only PASS; Phase 2 signed order-test PASS; Phase 3 schema-v5 PASS; operator harness completed; final offline operator safety review passed; execution authorization pending** (2026-08-13). The authorization ladder in
+Status: **M4.10 COMPLETED — PASS; M4.11 COMPLETED — STAGE_4_BLOCKED** (2026-08-14). The authorization ladder in
 `M4_10_TESTNET_SMOKE_PLAN.md` keeps authenticated reads, `/api/v3/order/test`, one real Testnet
 order and restart reconciliation under distinct approvals. Central dependency-log suppression and
 an explicit no-fallback order-test adapter contract are implemented. The Phase 0 read-harness gap
@@ -1048,8 +1048,10 @@ authorization, fixes the production database/evidence paths, opens SQLite with `
 and `query_only`, validates the authority/audit/order/event/attempt/trade/block/resolution/reconciliation/
 Portfolio/session digest chain and requires an identical database checksum after close. It has no
 transport, credential, submission, cancellation or settlement mutation dependency. Its implementation
-and final offline adversarial safety review are complete. This does not authorize production proof
-execution or complete M4.10.
+and final offline adversarial safety review are complete. Its separately authorized production run
+passed and completed M4.10. M4.11 aggregation issued `STAGE_4_BLOCKED`: the durable BUY path satisfies
+the reviewed safety and recovery properties, but the accepted controlled BUY-and-SELL criterion still
+lacks SELL evidence. The managed-balance SELL closure and Stage 5 have not started.
 
 The committed lifecycle has one terminal state, CONSUMED. Transaction-local PREPARED cannot become
 visible without the linked command; stale authorization fails before insert, so EXPIRED/CANCELED

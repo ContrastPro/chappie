@@ -356,7 +356,8 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 
 ## Этап 4. Risk hardening и биржевое execution
 
-Статус: **in progress — M4.10 Phase 1/2 PASS; Phase 3 submission PASS; Phase 4 reconciliation SAFE; schema-v6 production remediation PASS; final fresh-process proof harness completed and final offline safety review passed, with execution authorization pending**.
+Статус: **BLOCKED — M4.10 COMPLETED — PASS; M4.11 evidence verdict completed;
+accepted controlled Testnet SELL evidence remains absent** (2026-08-14).
 
 ### Цель
 
@@ -483,7 +484,8 @@ recovery и изолированным testnet execution до отдельног
 
 #### M4.10 Controlled Binance Testnet Smoke
 
-Статус: **Phase 1/2 PASS; Phase 3 one-shot submission PASS; Phase 4 reconciliation SAFE; ADR-065/schema-v6 production remediation PASS; final immutable read-only fresh-process recovery proof harness completed and final offline safety review passed, execution authorization pending** (2026-08-14).
+Статус: **completed — PASS** (2026-08-14). One-shot BUY, SAFE reconciliation,
+schema-v6 remediation and immutable fresh-process recovery proof passed.
 
 - По отдельным разрешениям выполнить read-only authentication, `/api/v3/order/test`, bounded
   BUY/SELL и restart/reconciliation smoke только на Spot Testnet. Cancellation остаётся
@@ -505,8 +507,14 @@ recovery и изолированным testnet execution до отдельног
 
 #### M4.11 Stage 4 Completion
 
-- Свести automated и controlled Testnet evidence. Завершение Stage 4 не разрешает LIVE;
-  live-readiness остаётся отдельным будущим review.
+Статус: **completed — STAGE_4_BLOCKED** (2026-08-14).
+
+- Automated и controlled Testnet evidence сведены в `M4_11_STAGE_4_COMPLETION_REPORT.md`.
+  Все проверенные критерии пройдены, кроме принятого требования controlled Testnet SELL
+  с persisted exchange trade: durable evidence содержит ровно один BUY и ни одного SELL.
+- Следующая работа — отдельное, ещё не начатое и не авторизованное закрытие controlled
+  managed-balance SELL evidence. Stage 5 не начат. Завершение Stage 4 в любом случае не
+  разрешит continuous Testnet или LIVE и не будет доказательством profitability.
 
 ### Планируемые результаты
 
@@ -523,8 +531,9 @@ recovery и изолированным testnet execution до отдельног
   authoritative execution flow and durable reconciliation coverage horizon are implemented.
   M4.9 completed; final crash/restart safety review passed. M4.10 security preflight is
   completed and its final preflight safety review passed; Phase 1 authenticated read-only PASS,
-  Phase 2 signed order-test PASS, Phase 3 schema v5 and its final adversarial review complete with
-  execution unauthorized, and Stage 4 remains in progress.
+  Phase 2 signed order-test PASS, one-shot BUY/settlement/recovery PASS and M4.10 completed.
+  M4.11 evidence aggregation completed with Stage 4 BLOCKED solely on missing accepted
+  controlled-SELL evidence; Stage 5 has not started.
 - Проведён paper/shadow run, достаточный для сбора требуемой выборки наблюдений.
 - Собрано достаточное для допуска количество наблюдений по утверждённым критериям качества.
 

@@ -1143,5 +1143,8 @@ the normal writable persistence adapter: authorization and evidence collision pr
 then the fixed database opens through SQLite URI `mode=ro&immutable=1` plus `query_only`. It validates
 schema v6, canonical payload/digest chains, exact cardinalities, lineage, synchronized economic state,
 and byte-identical before/after database SHA-256; WAL/SHM is forbidden. Exclusive sanitized evidence is
-written only after the connection closes. Production proof execution remains unauthorized.
-The harness final offline adversarial safety review passed.
+written only after the connection closes. The harness final offline adversarial safety review and its
+separately authorized production execution passed with the database identity unchanged, completing
+M4.10. M4.11 found persistence/recovery criteria satisfied but issued `STAGE_4_BLOCKED` because the
+separate accepted controlled-SELL evidence is absent. No SELL closure or Stage 5 implementation has
+started.

@@ -1,6 +1,9 @@
 # M4.10 Controlled Binance Spot Testnet Smoke Plan
 
-Status: **Phase 1 PASS; Phase 2 PASS; Phase 3 one-shot submission PASS; Phase 4 reconciliation SAFE; ADR-065 production remediation PASS; final fresh-process recovery proof harness completed and final offline safety review passed; proof execution authorization pending** (2026-08-14).
+Status: **COMPLETED — PASS** (2026-08-14). Phase 1/2 passed, the Phase 3 one-shot BUY
+filled, Phase 4 reconciled SAFE, ADR-065/schema-v6 remediation synchronized durable truth,
+and the immutable fresh-process recovery proof passed. M4.11's final aggregation nevertheless
+blocks Stage 4 on the separate accepted controlled-SELL evidence criterion.
 
 Phase 4 uses `python -m app.tools.testnet_phase4` to reopen the same smoke database. It is GET-only,
 cannot reconstruct submission authority, and settles only normalized authoritative trades through the
@@ -22,8 +25,9 @@ exact `M4_10_RECOVERY_PROOF_AUTHORIZED=YES`, opens only the fixed database throu
 read-only/query-only mode, reconstructs the complete authority/order/trade/resolution/Portfolio/session
 chain, and requires an unchanged database checksum with no WAL/SHM. It creates exclusive sanitized
 `logs/m4_10_recovery_proof.log` only after validation and close. The harness is implemented offline;
-its final offline adversarial safety review passed; production proof execution remains separately
-unauthorized. M4.10 is not complete and M4.11 has not started.
+its final offline adversarial safety review passed; the separately authorized production proof passed.
+M4.10 is complete. M4.11 completed its evidence aggregation with `STAGE_4_BLOCKED` because the
+accepted Stage 4 BUY-and-SELL criterion still lacks controlled SELL evidence.
 
 Stage 4 remains in progress. This document authorizes no network access, credential use,
 additional `/api/v3/order/test` request or real Testnet order. Every phase below needs a new, explicit

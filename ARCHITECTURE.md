@@ -853,6 +853,9 @@ service. The harness passed final offline safety review and the separately autho
 completed with globally synchronized durable truth. The final
 `app.tools.testnet_m410_recovery_proof` composition is observation-only: it uses immutable read-only
 SQLite, reconstructs every durable digest and identity from the fixed database, enforces unchanged
-before/after checksum and creates exclusive sanitized evidence only after closing the database. Its
-production execution remains unauthorized; M4.10 remains incomplete and M4.11 has not started.
+before/after checksum and creates exclusive sanitized evidence only after closing the database. The
+separately authorized production proof passed, so M4.10 is COMPLETED — PASS. M4.11 final
+aggregation completed with `STAGE_4_BLOCKED`: all evaluated safety/recovery criteria pass, but the
+accepted controlled Testnet BUY-and-SELL criterion still lacks a persisted SELL trade. The next
+managed-balance SELL evidence closure is neither started nor authorized; Stage 5 has not started.
 The fresh-process proof harness final offline adversarial safety review passed.
