@@ -69,9 +69,13 @@ from app.exchange_execution.stage4_sell import (
 from app.exchange_execution.stage4_sell_recovery import (
     RECOVERY_AUTHORIZATION_ENV,
     Stage4SellRecoveryAuthorization,
+    Stage4SellRecoveryDecisionStore,
     Stage4SellRecoveryEvent,
     Stage4SellRecoveryEventType,
+    Stage4SellRecoveryExchangeState,
     Stage4SellRecoveryReason,
+    Stage4SellRecoveryReview,
+    evaluate_stage4_sell_recovery,
 )
 
 __all__ = [
@@ -117,9 +121,12 @@ __all__ = [
     "Stage4ManagedSellProcessClaim",
     "Stage4ManagedSellRiskEnvelope",
     "Stage4SellRecoveryAuthorization",
+    "Stage4SellRecoveryDecisionStore",
     "Stage4SellRecoveryEvent",
     "Stage4SellRecoveryEventType",
+    "Stage4SellRecoveryExchangeState",
     "Stage4SellRecoveryReason",
+    "Stage4SellRecoveryReview",
     "SubmissionCapability",
     "SubmissionObservation",
     "TradeAggregate",
@@ -132,6 +139,7 @@ __all__ = [
     "create_client_order_id",
     "derive_phase3_economic_slot",
     "derive_stage4_sell_economic_slot",
+    "evaluate_stage4_sell_recovery",
     "status_after_transport",
     "transition_order",
 ]

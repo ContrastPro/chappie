@@ -8,6 +8,9 @@ import pytest
 from app.exchange_execution import (
     Stage4SellRecoveryAuthorization,
     Stage4SellRecoveryEventType,
+    Stage4SellRecoveryExchangeState,
+    Stage4SellRecoveryReview,
+    evaluate_stage4_sell_recovery,
 )
 from app.exchange_execution.exceptions import ExchangeCapabilityError
 from app.exchange_execution.stage4_sell_recovery import Stage4SellRecoveryError, reason_set_digest
@@ -38,6 +41,25 @@ def candidate(path: Path, *, failure_injector=None) -> tuple[SQLiteExchangePersi
 def authorization() -> Stage4SellRecoveryAuthorization:
     return Stage4SellRecoveryAuthorization.from_environment(
         {"STAGE4_SELL_RECOVERY_AUTHORIZED": "YES"}
+    )
+
+
+def recovery_review(
+    *,
+    exchange_state: Stage4SellRecoveryExchangeState = Stage4SellRecoveryExchangeState.ABSENCE_PROVEN,
+    risk_compatible: bool = True,
+    configuration_compatible: bool = True,
+    managed_ownership_compatible: bool = True,
+    operator_approves_continuation: bool = True,
+) -> Stage4SellRecoveryReview:
+    return Stage4SellRecoveryReview(
+        snapshot_digest="c" * 64,
+        current_rules_fingerprint="a" * 64,
+        exchange_state=exchange_state,
+        risk_compatible=risk_compatible,
+        configuration_compatible=configuration_compatible,
+        managed_ownership_compatible=managed_ownership_compatible,
+        operator_approves_continuation=operator_approves_continuation,
     )
 
 
@@ -171,6 +193,61 @@ def test_one_audited_disposition_and_no_submission_capability(tmp_path: Path) ->
         ).fetchone()[0]
         == 0
     )
+    store.close()
+
+
+def test_high_level_recovery_review_allows_only_a_non_capability_decision(tmp_path: Path) -> None:
+    store, key = candidate(tmp_path / "service-continuation.sqlite3")
+    store.record_stage4_sell_recovery_required(
+        key,
+        reasons=("FINAL_GATE_REJECTED",),
+        snapshot_stage="FINAL_GATE",
+        snapshot_digest="b" * 64,
+        occurred_at_ms=5000,
+    )
+    event = evaluate_stage4_sell_recovery(
+        store, key, review=recovery_review(), occurred_at_ms=6000, authorization=authorization()
+    )
+    assert event.event_type is Stage4SellRecoveryEventType.CONTINUATION_ALLOWED
+    assert not hasattr(event, "claim")
+    assert store.load_order(key).order.status.value == "PREPARED"
+    assert (
+        store._connection.execute(
+            "SELECT count(*) FROM exchange_submission_attempts WHERE durable_command_key=?", (key,)
+        ).fetchone()[0]
+        == 0
+    )
+    store.close()
+
+
+@pytest.mark.parametrize(
+    "review",
+    [
+        recovery_review(exchange_state=Stage4SellRecoveryExchangeState.UNKNOWN),
+        recovery_review(exchange_state=Stage4SellRecoveryExchangeState.ORDER_PRESENT),
+        recovery_review(risk_compatible=False),
+        recovery_review(configuration_compatible=False),
+        recovery_review(managed_ownership_compatible=False),
+        recovery_review(operator_approves_continuation=False),
+    ],
+)
+def test_high_level_recovery_review_fails_closed_to_disposition(
+    tmp_path: Path, review: Stage4SellRecoveryReview
+) -> None:
+    store, key = candidate(tmp_path / f"service-{review.reasons[0]}.sqlite3")
+    store.record_stage4_sell_recovery_required(
+        key,
+        reasons=("FINAL_GATE_REJECTED",),
+        snapshot_stage="FINAL_GATE",
+        snapshot_digest="b" * 64,
+        occurred_at_ms=5000,
+    )
+    event = evaluate_stage4_sell_recovery(
+        store, key, review=review, occurred_at_ms=6000, authorization=authorization()
+    )
+    assert event.event_type is Stage4SellRecoveryEventType.DISPOSITION_REQUIRED
+    assert event.block_reason_code == review.reasons[0]
+    assert store.load_order(key).order.status.value == "PREPARED"
     store.close()
 
 
