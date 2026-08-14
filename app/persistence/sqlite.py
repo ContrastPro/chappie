@@ -440,6 +440,10 @@ class SQLiteTradingPersistence:
                     "another application owns the paper persistence database"
                 ) from error
             raise PersistenceConnectionError("failed to open SQLite persistence") from error
+        except BaseException:
+            if hasattr(self, "_connection"):
+                self._connection.close()
+            raise
 
     def _require_open(self) -> None:
         if self._closed:

@@ -552,6 +552,50 @@ def test_v5_to_v6_upgrade_is_additive_idempotent_and_failure_rolls_back(
     still_v5.close()
 
 
+@pytest.mark.parametrize("crash", [RuntimeError, KeyboardInterrupt, SystemExit, GeneratorExit])
+@pytest.mark.parametrize("timing", ["before", "after"])
+def test_v5_to_v6_baseexception_closes_writer_and_leaves_atomic_schema(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    crash: type[BaseException],
+    timing: str,
+) -> None:
+    path = tmp_path / f"migration-{timing}-{crash.__name__}.sqlite3"
+    legacy = SQLiteExchangePersistence(SQLitePersistenceConfig(path, expected_schema_version=5))
+    legacy.close()
+    original = SQLiteTradingPersistence._migrate
+
+    def interrupted(self) -> None:
+        if timing == "before":
+            raise crash("migration interrupted before execution")
+        original(self)
+        raise crash("migration commit acknowledgement lost")
+
+    monkeypatch.setattr(SQLiteTradingPersistence, "_migrate", interrupted)
+    with pytest.raises(crash):
+        SQLiteExchangePersistence(SQLitePersistenceConfig(path, expected_schema_version=6))
+    monkeypatch.setattr(SQLiteTradingPersistence, "_migrate", original)
+    expected = 5 if timing == "before" else 6
+    reopened = SQLiteExchangePersistence(
+        SQLitePersistenceConfig(path, expected_schema_version=expected)
+    )
+    assert (
+        reopened._connection.execute("SELECT max(version) FROM schema_migrations").fetchone()[0]
+        == expected
+    )
+    assert reopened._connection.execute(
+        "SELECT count(*) FROM sqlite_master "
+        "WHERE type='table' AND name='exchange_trade_settlement_resolutions'"
+    ).fetchone()[0] == (expected == 6)
+    assert (
+        reopened._connection.execute("SELECT count(*) FROM exchange_trade_settlements").fetchone()[
+            0
+        ]
+        == 0
+    )
+    reopened.close()
+
+
 @pytest.mark.parametrize(
     ("column", "value", "message"),
     [

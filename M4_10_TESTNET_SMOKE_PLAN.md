@@ -1,6 +1,6 @@
 # M4.10 Controlled Binance Spot Testnet Smoke Plan
 
-Status: **Phase 1 PASS; Phase 2 PASS; Phase 3 one-shot submission PASS; Phase 4 real reconciliation SAFE but settlement INCOMPLETE for authoritative `0 BTC` commission; ADR-065 schema-v6 resolution implemented offline and final offline safety review passed; production remediation authorization pending** (2026-08-14).
+Status: **Phase 1 PASS; Phase 2 PASS; Phase 3 one-shot submission PASS; Phase 4 real reconciliation SAFE but settlement INCOMPLETE for authoritative `0 BTC` commission; ADR-065 schema-v6 resolution and the offline remediation harness passed final offline safety review; production remediation authorization pending** (2026-08-14).
 
 Phase 4 uses `python -m app.tools.testnet_phase4` to reopen the same smoke database. It is GET-only,
 cannot reconstruct submission authority, and settles only normalized authoritative trades through the
@@ -9,8 +9,12 @@ existing exactly-once machinery. Production Phase 4 execution remains unauthoriz
 The first authorized Phase 4 pass preserved one complete FILLED trade and correctly appended
 `BLOCKED_UNSUPPORTED_FEE`: Binance reported exact zero commission with asset label BTC. ADR-065 accepts
 exact finite Decimal zero as asset-neutral, but no production state is resolved by that decision alone.
-Schema-v6 implementation is complete offline and awaits final safety review, commit/push and separate
-same-database remediation authority. No additional order, cancellation or fee conversion is permitted.
+Schema-v6 implementation passed its final offline review. The dedicated local-only remediation entrypoint
+is `python -m app.tools.testnet_phase4_remediate_zero_fee`; it requires exact
+`M4_10_PHASE4_REMEDIATION_AUTHORIZED=YES`, opens only the fixed smoke database, performs no credential
+or network access, and exclusively creates `logs/m4_10_phase4_remediation.log`. Its implementation is
+complete and its final offline safety review passed, but same-database production remediation remains unauthorized. No additional order,
+cancellation or fee conversion is permitted.
 
 Stage 4 remains in progress. This document authorizes no network access, credential use,
 additional `/api/v3/order/test` request or real Testnet order. Every phase below needs a new, explicit

@@ -843,3 +843,11 @@ its final offline safety review passed; production execution authorization remai
 the sole durable identity, validates normalized order/trade and external-balance facts, and reuses
 exactly-once settlement.
 It has no submission capability or POST path and remains unauthorized for production execution.
+
+ADR-065 schema v6 and its final offline safety review are complete. The separate
+`app.tools.testnet_phase4_remediate_zero_fee` composition is persistence-only: it imports no Binance or
+HTTP component, reads no credentials, fixes the production database/evidence paths, and requires
+`M4_10_PHASE4_REMEDIATION_AUTHORIZED=YES` before writable database acquisition. It validates the exact
+known durable Phase 3/4 shape and delegates the only mutation to the append-only exactly-once settlement
+service. The harness passed final offline safety review; production remediation remains unauthorized, M4.10 remains
+incomplete pending remediation plus fresh recovery proof, and M4.11 has not started.

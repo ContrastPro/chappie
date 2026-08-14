@@ -1128,3 +1128,12 @@ recomputes session turnover. Any orphan, duplicate, digest mismatch or cross-tab
 Migration 006 and the offline resolution service now implement this design. Migration 006 SHA-256 is
 `7b6543b489fd9ca67435093e3e34f5fde48101803e65cd502ae5c1004af80f1d`; migrations 001–005 remain
 byte-identical. Implementation status does not authorize production migration or remediation.
+
+The local-only M4.10 remediation harness is implemented over this service. It fixes the production path,
+requires a distinct exact authorization token before writable acquisition, rejects an existing dedicated
+evidence path, and validates the accepted authority/order/trade/block/reconciliation/Portfolio/session
+shape before resolution. It neither imports network code nor reads credentials. Evidence is exclusive;
+if evidence creation fails after commit, schema-v6 durable truth remains authoritative and replay is
+idempotent. Production remediation and its evidence remain separately unauthorized.
+The remediation harness final offline safety review passed; v5/v6 migration interruption releases the
+writer and leaves an atomic schema, while competing actors converge on one economic transition.

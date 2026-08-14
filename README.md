@@ -80,7 +80,11 @@ The first real Phase 4 observation proved a complete FILLED trade and SAFE recon
 INCOMPLETE because Binance labeled an exact zero commission as BTC. ADR-065 accepts exact finite Decimal
 zero as asset-neutral while preserving the original trade and blocked audit record. Schema-v6
 append-only resolution is implemented offline and its final offline safety review passed; production
-remediation is not authorized and M4.10 is not yet complete.
+remediation is not authorized and M4.10 is not yet complete. The dedicated
+`python -m app.tools.testnet_phase4_remediate_zero_fee` harness is implemented offline: it has no
+HTTP/credential dependency, accepts only its exact remediation token, validates the known durable
+shape, and writes a new exclusive remediation evidence file only after local synchronized truth. Its
+final offline safety review passed; production authorization remains pending.
 
 Important defaults:
 

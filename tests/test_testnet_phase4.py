@@ -2,16 +2,21 @@ import ast
 import json
 import shutil
 import socket
+import threading
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from urllib.parse import parse_qs
 
 import httpx
 import pytest
 
 import app.tools.testnet_phase4 as phase4
+import app.tools.testnet_phase4_remediate_zero_fee as remediation
 from app.exchange_runtime.identity import SQLiteOrderIdentityResolver
 from app.infrastructure.binance import BinanceSpotTestnetAdapter, BinanceSpotTestnetConfig
+from app.persistence.exceptions import PersistenceIntegrityError
 from app.persistence.exchange import SQLiteExchangePersistence
 from app.persistence.models import SQLitePersistenceConfig
 from app.tools.testnet_phase3 import (
@@ -797,3 +802,572 @@ def test_main_closes_store_when_client_construction_fails(monkeypatch) -> None:
     )
     assert phase4.main() == 1
     assert store.close_count == 1
+
+
+def zero_fee_blocked_database(
+    path: Path, *, commission: str = "0", commission_asset: str = "BTC"
+) -> None:
+    """Build the accepted durable shape without running schema-v6 resolution."""
+    phase3_database(path)
+    store = SQLiteExchangePersistence(SQLitePersistenceConfig(path, expected_schema_version=5))
+    guard = Phase4ReadOnlyTransport(
+        httpx.MockTransport(
+            lambda request: phase4_response(
+                request,
+                fee_asset=commission_asset,
+                quote_value="10.109264",
+                commission_value=commission,
+            )
+        )
+    )
+    client = httpx.Client(base_url="https://testnet.binance.vision", transport=guard)
+    adapter = BinanceSpotTestnetAdapter(
+        BinanceSpotTestnetConfig("key", "secret", "phase3-account"),
+        client=client,
+        timestamp_provider=lambda: 2000,
+        identity_resolver=SQLiteOrderIdentityResolver(store),
+    )
+    result = run_phase4(
+        store,
+        adapter,
+        guard,
+        expected_account="phase3-account",
+        run_id="phase4-zero-fee-block",
+        now_ms=iter(range(2000, 2100)).__next__,
+    )
+    assert result.outcome is Phase4Outcome.INCOMPLETE
+    adapter.close()
+    client.close()
+    store.close()
+
+
+def run_local_remediation(path: Path, *, failure_injector=None):
+    store = SQLiteExchangePersistence(SQLitePersistenceConfig(path, expected_schema_version=6))
+    try:
+        result = remediation.run_remediation(
+            store,
+            run_id="offline-remediation",
+            now_ms=iter(range(3000, 3200)).__next__,
+            failure_injector=failure_injector,
+        )
+        return result
+    finally:
+        store.close()
+
+
+def test_remediation_authorization_precedes_database_and_evidence(tmp_path) -> None:
+    database = tmp_path / "smoke.sqlite3"
+    evidence = tmp_path / "remediation.log"
+    with pytest.raises(remediation.RemediationBlocked, match="authorization"):
+        remediation.validate_startup({}, database=database, evidence=evidence)
+    database.write_text("not opened", encoding="utf-8")
+    evidence.write_text("preserved", encoding="utf-8")
+    with pytest.raises(remediation.RemediationBlocked, match="evidence"):
+        remediation.validate_startup(
+            {remediation.AUTHORIZATION_ENV: "YES"}, database=database, evidence=evidence
+        )
+    assert remediation.AUTHORIZATION_ENV not in {
+        "M4_10_PHASE3_AUTHORIZED",
+        "M4_10_PHASE4_AUTHORIZED",
+    }
+    evidence.unlink()
+    remediation.validate_startup(
+        {remediation.AUTHORIZATION_ENV: "YES"}, database=database, evidence=evidence
+    )
+    database.unlink()
+    with pytest.raises(remediation.RemediationBlocked, match="database"):
+        remediation.validate_startup(
+            {remediation.AUTHORIZATION_ENV: "YES"}, database=database, evidence=evidence
+        )
+
+
+def test_remediation_requires_schema_six(tmp_path) -> None:
+    path = tmp_path / "schema-five.sqlite3"
+    zero_fee_blocked_database(path)
+    store = SQLiteExchangePersistence(SQLitePersistenceConfig(path, expected_schema_version=5))
+    with pytest.raises(remediation.RemediationBlocked, match="schema version 6"):
+        remediation.run_remediation(
+            store,
+            run_id="schema-five",
+            now_ms=iter(range(3000, 3200)).__next__,
+        )
+    store.close()
+
+
+def test_committed_v6_migration_alone_has_no_economic_effect_and_can_resume(tmp_path) -> None:
+    path = tmp_path / "migration-only.sqlite3"
+    zero_fee_blocked_database(path)
+    migrated = SQLiteExchangePersistence(SQLitePersistenceConfig(path, expected_schema_version=6))
+    assert (
+        migrated._connection.execute("SELECT max(version) FROM schema_migrations").fetchone()[0]
+        == 6
+    )
+    assert (
+        migrated._connection.execute(
+            "SELECT count(*) FROM exchange_trade_settlement_resolutions"
+        ).fetchone()[0]
+        == 0
+    )
+    current = migrated._connection.execute(
+        "SELECT portfolio_version,state_payload FROM exchange_portfolio_current"
+    ).fetchone()
+    assert current["portfolio_version"] == 0
+    payload = json.loads(current["state_payload"])
+    assert payload["base_balance"] == {"$decimal": "0"}
+    assert payload["quote_balance"] == {"$decimal": "25"}
+    assert (
+        migrated._connection.execute("SELECT status FROM exchange_trade_settlements").fetchone()[0]
+        == "BLOCKED_UNSUPPORTED_FEE"
+    )
+    migrated.close()
+    resumed = run_local_remediation(path)
+    assert resumed.outcome is remediation.RemediationOutcome.PASS
+    assert resumed.portfolio_version_after == 1
+
+
+def test_zero_fee_remediation_is_exact_and_idempotent(tmp_path) -> None:
+    path = tmp_path / "remediation.sqlite3"
+    zero_fee_blocked_database(path)
+    first = run_local_remediation(path)
+    assert first.outcome is remediation.RemediationOutcome.PASS
+    assert first.idempotent is False
+    assert first.portfolio_version_before == 0
+    assert first.portfolio_version_after == 1
+    assert first.btc_after == Decimal("0.00016")
+    assert first.usdt_after == Decimal("14.890736")
+    assert first.turnover_after == Decimal("10.109264")
+    second = run_local_remediation(path)
+    assert second.outcome is remediation.RemediationOutcome.PASS
+    assert second.idempotent is True
+    assert second.portfolio_version_before == second.portfolio_version_after == 1
+    assert second.resolution_id == first.resolution_id
+    store = SQLiteExchangePersistence(SQLitePersistenceConfig(path, expected_schema_version=6))
+    assert (
+        store._connection.execute(
+            "SELECT count(*) FROM exchange_trade_settlement_resolutions"
+        ).fetchone()[0]
+        == 1
+    )
+    assert tuple(
+        store._connection.execute(
+            "SELECT commission,commission_asset FROM exchange_trades"
+        ).fetchone()
+    ) == ("0", "BTC")
+    assert (
+        store._connection.execute("SELECT status FROM exchange_trade_settlements").fetchone()[0]
+        == "BLOCKED_UNSUPPORTED_FEE"
+    )
+    store.close()
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "resolution_before_record",
+        "resolution_after_record",
+        "resolution_after_current",
+        "resolution_after_turnover",
+        "resolution_before_commit",
+    ],
+)
+@pytest.mark.parametrize("crash", [RuntimeError, KeyboardInterrupt, SystemExit, GeneratorExit])
+def test_remediation_precommit_crash_rolls_back_and_recovers_once(
+    tmp_path, boundary, crash
+) -> None:
+    path = tmp_path / f"remediation-{boundary}-{crash.__name__}.sqlite3"
+    zero_fee_blocked_database(path)
+
+    def fail(point: str) -> None:
+        if point == boundary:
+            raise crash()
+
+    with pytest.raises(crash):
+        run_local_remediation(path, failure_injector=fail)
+    recovered = run_local_remediation(path)
+    assert recovered.outcome is remediation.RemediationOutcome.PASS
+    assert recovered.idempotent is False
+
+
+def test_remediation_lost_commit_ack_recovers_idempotently(tmp_path) -> None:
+    path = tmp_path / "remediation-lost-ack.sqlite3"
+    zero_fee_blocked_database(path)
+
+    def fail(point: str) -> None:
+        if point == "resolution_after_commit":
+            raise RuntimeError("lost commit acknowledgement")
+
+    with pytest.raises(RuntimeError, match="lost commit"):
+        run_local_remediation(path, failure_injector=fail)
+    recovered = run_local_remediation(path)
+    assert recovered.idempotent is True
+    assert recovered.portfolio_version_after == 1
+
+
+def test_remediation_rejects_conflicting_already_resolved_truth(tmp_path) -> None:
+    path = tmp_path / "resolved-conflict.sqlite3"
+    zero_fee_blocked_database(path)
+    run_local_remediation(path)
+    store = SQLiteExchangePersistence(SQLitePersistenceConfig(path, expected_schema_version=6))
+    store._connection.execute("UPDATE exchange_sessions SET executed_turnover='11'")
+    store._connection.commit()
+    with pytest.raises(remediation.RemediationBlocked, match="existing resolution"):
+        remediation.run_remediation(
+            store,
+            run_id="resolved-conflict",
+            now_ms=iter(range(3000, 3200)).__next__,
+        )
+    store.close()
+
+
+def test_remediation_rejects_invalid_root_and_missing_current(tmp_path) -> None:
+    for case in ("root", "current"):
+        path = tmp_path / f"invalid-{case}.sqlite3"
+        zero_fee_blocked_database(path)
+        store = SQLiteExchangePersistence(SQLitePersistenceConfig(path, expected_schema_version=6))
+        if case == "root":
+            row = store._connection.execute(
+                "SELECT portfolio_id,state_payload FROM exchange_portfolio_roots"
+            ).fetchone()
+            state = remediation.deserialize_portfolio_state(row["state_payload"])
+            changed = replace(
+                state,
+                quote_balance=Decimal(24),
+                initial_equity=Decimal(24),
+                current_equity=Decimal(24),
+                peak_equity=Decimal(24),
+            )
+            store._connection.execute(
+                "UPDATE exchange_portfolio_roots SET state_payload=?,state_digest=? "
+                "WHERE portfolio_id=?",
+                (changed.canonical_payload, changed.digest, row["portfolio_id"]),
+            )
+            message = "managed Portfolio"
+            error = PersistenceIntegrityError
+        else:
+            store._connection.execute("DELETE FROM exchange_portfolio_current")
+            message = "current state is absent"
+            error = remediation.RemediationBlocked
+        store._connection.commit()
+        try:
+            with pytest.raises(error, match=message):
+                remediation.run_remediation(
+                    store,
+                    run_id=f"invalid-{case}",
+                    now_ms=iter(range(3000, 3200)).__next__,
+                )
+        finally:
+            store.close()
+
+
+def test_remediation_requires_single_root_and_exact_postcondition(tmp_path, monkeypatch) -> None:
+    missing = tmp_path / "missing-root.sqlite3"
+    zero_fee_blocked_database(missing)
+    store = SQLiteExchangePersistence(SQLitePersistenceConfig(missing, expected_schema_version=6))
+    store._connection.execute("PRAGMA foreign_keys=OFF")
+    store._connection.execute("DELETE FROM exchange_portfolio_roots")
+    store._connection.commit()
+    with pytest.raises(remediation.RemediationBlocked, match="exactly one"):
+        remediation._managed_portfolio(store)
+    store.close()
+
+    path = tmp_path / "invalid-postcondition.sqlite3"
+    zero_fee_blocked_database(path)
+    store = SQLiteExchangePersistence(SQLitePersistenceConfig(path, expected_schema_version=6))
+
+    class IncompleteSettlement:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def _coverage_is_complete(self, reconciliation):
+            return True
+
+        def initialize(self):
+            pass
+
+        def settle_pending(self):
+            return SimpleNamespace(status=remediation.ExchangeSettlementStatus.PENDING)
+
+    monkeypatch.setattr(remediation, "SQLiteExchangeSettlement", IncompleteSettlement)
+    with pytest.raises(remediation.RemediationFailed, match="synchronized durable truth"):
+        remediation.run_remediation(
+            store,
+            run_id="invalid-postcondition",
+            now_ms=iter(range(3000, 3200)).__next__,
+        )
+    store.close()
+
+
+@pytest.mark.parametrize(
+    ("mutation", "error", "message"),
+    [
+        (
+            "UPDATE exchange_reconciliation_current SET status='REQUIRED'",
+            PersistenceIntegrityError,
+            "reconciliation state digest mismatch",
+        ),
+        (
+            "UPDATE exchange_sessions SET executed_turnover='1'",
+            remediation.RemediationBlocked,
+            "Portfolio/session",
+        ),
+    ],
+)
+def test_remediation_wrong_state_fails_closed(tmp_path, mutation, error, message) -> None:
+    path = tmp_path / "wrong.sqlite3"
+    zero_fee_blocked_database(path)
+    store = SQLiteExchangePersistence(SQLitePersistenceConfig(path, expected_schema_version=6))
+    store._connection.execute(mutation)
+    store._connection.commit()
+    with pytest.raises(error, match=message):
+        remediation.run_remediation(
+            store,
+            run_id="wrong-state",
+            now_ms=iter(range(3000, 3200)).__next__,
+        )
+    assert (
+        store._connection.execute(
+            "SELECT count(*) FROM exchange_trade_settlement_resolutions"
+        ).fetchone()[0]
+        == 0
+    )
+    store.close()
+
+
+@pytest.mark.parametrize("asset", ["BTC", "BNB", "ETH"])
+def test_positive_unsupported_fee_remediation_remains_blocked(tmp_path, asset) -> None:
+    path = tmp_path / f"positive-{asset}.sqlite3"
+    zero_fee_blocked_database(path, commission="0.00000001", commission_asset=asset)
+    store = SQLiteExchangePersistence(SQLitePersistenceConfig(path, expected_schema_version=6))
+    with pytest.raises(remediation.RemediationBlocked, match="trade/block lineage"):
+        remediation.run_remediation(
+            store,
+            run_id="positive-fee",
+            now_ms=iter(range(3000, 3200)).__next__,
+        )
+    assert (
+        store._connection.execute(
+            "SELECT count(*) FROM exchange_trade_settlement_resolutions"
+        ).fetchone()[0]
+        == 0
+    )
+    store.close()
+
+
+@pytest.mark.parametrize(
+    ("trigger", "table"),
+    [
+        ("exchange_trade_settlements_no_delete", "exchange_trade_settlements"),
+        ("exchange_reconciliation_coverage_no_delete", "exchange_reconciliation_coverage"),
+        ("exchange_smoke_authority_events_no_delete", "exchange_smoke_authority_events"),
+    ],
+)
+def test_remediation_missing_durable_authority_fails_before_resolution(
+    tmp_path, trigger, table
+) -> None:
+    path = tmp_path / f"missing-{table}.sqlite3"
+    zero_fee_blocked_database(path)
+    store = SQLiteExchangePersistence(SQLitePersistenceConfig(path, expected_schema_version=6))
+    store._connection.execute(f"DROP TRIGGER {trigger}")
+    store._connection.execute(f"DELETE FROM {table}")
+    store._connection.commit()
+    with pytest.raises((PersistenceIntegrityError, remediation.RemediationBlocked)):
+        remediation.run_remediation(
+            store,
+            run_id="missing-authority",
+            now_ms=iter(range(3000, 3200)).__next__,
+        )
+    assert (
+        store._connection.execute(
+            "SELECT count(*) FROM exchange_trade_settlement_resolutions"
+        ).fetchone()[0]
+        == 0
+    )
+    store.close()
+
+
+def test_remediation_architecture_is_local_only() -> None:
+    path = Path("app/tools/testnet_phase4_remediate_zero_fee.py")
+    text = path.read_text(encoding="utf-8")
+    tree = ast.parse(text)
+    imported = {
+        node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module
+    }
+    direct = {
+        alias.name
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Import)
+        for alias in node.names
+    }
+    assert not imported & {
+        "app.main",
+        "app.infrastructure.binance",
+        "app.exchange_runtime.submission",
+        "app.exchange_runtime.consumer",
+        "app.exchange_execution.phase3",
+    }
+    assert not direct & {"httpx", "socket"}
+    for forbidden in (
+        "BINANCE_TESTNET_API_KEY",
+        "BINANCE_TESTNET_SECRET_KEY",
+        "submit_market_order(",
+        "POST",
+        "cancel",
+        "Phase3SmokeClaim",
+    ):
+        assert forbidden not in text
+
+
+def test_remediation_main_evidence_is_exclusive_and_secret_free(tmp_path, monkeypatch) -> None:
+    database = tmp_path / "smoke.sqlite3"
+    evidence = tmp_path / "remediation.log"
+    zero_fee_blocked_database(database)
+    monkeypatch.setattr(remediation, "DATABASE_PATH", database)
+    monkeypatch.setattr(remediation, "EVIDENCE_PATH", evidence)
+    monkeypatch.setenv(remediation.AUTHORIZATION_ENV, "YES")
+    monkeypatch.setenv("BINANCE_TESTNET_API_KEY", "must-not-be-read")
+    monkeypatch.setenv("BINANCE_TESTNET_SECRET_KEY", "must-not-be-read")
+    assert remediation.main() == 0
+    rendered = evidence.read_text(encoding="utf-8")
+    assert "outcome=PASS" in rendered
+    assert rendered.splitlines()[-1] == "outcome=PASS"
+    assert "must-not-be-read" not in rendered
+    preserved = rendered
+    assert remediation.main() == 2
+    assert evidence.read_text(encoding="utf-8") == preserved
+
+
+def test_remediation_evidence_collision_after_commit_preserves_durable_truth(
+    tmp_path, monkeypatch
+) -> None:
+    database = tmp_path / "smoke.sqlite3"
+    evidence = tmp_path / "remediation.log"
+    zero_fee_blocked_database(database)
+    monkeypatch.setattr(remediation, "DATABASE_PATH", database)
+    monkeypatch.setattr(remediation, "EVIDENCE_PATH", evidence)
+    monkeypatch.setenv(remediation.AUTHORIZATION_ENV, "YES")
+    original = remediation.run_remediation
+
+    def collide(*args, **kwargs):
+        result = original(*args, **kwargs)
+        evidence.write_text("collision", encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(remediation, "run_remediation", collide)
+    assert remediation.main() == 1
+    assert evidence.read_text(encoding="utf-8") == "collision"
+    recovered = run_local_remediation(database)
+    assert recovered.idempotent is True
+    assert recovered.portfolio_version_after == 1
+
+
+def test_short_evidence_write_cannot_leave_pass_marker(tmp_path, monkeypatch) -> None:
+    database = tmp_path / "smoke.sqlite3"
+    zero_fee_blocked_database(database)
+
+    class ShortEvidence:
+        content = ""
+        parent = None
+
+        def __init__(self):
+            self.parent = self
+
+        def exists(self):
+            return False
+
+        def mkdir(self, **kwargs):
+            pass
+
+        def open(self, *args, **kwargs):
+            return self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def write(self, value):
+            self.content = value[:-20]
+            return len(self.content)
+
+    evidence = ShortEvidence()
+    monkeypatch.setattr(remediation, "DATABASE_PATH", database)
+    monkeypatch.setattr(remediation, "EVIDENCE_PATH", evidence)
+    monkeypatch.setenv(remediation.AUTHORIZATION_ENV, "YES")
+    assert remediation.main() == 1
+    assert "outcome=PASS" not in evidence.content
+    recovered = run_local_remediation(database)
+    assert recovered.idempotent is True
+
+
+def test_two_independent_remediation_actors_apply_one_economic_transition(tmp_path) -> None:
+    path = tmp_path / "concurrent-remediation.sqlite3"
+    zero_fee_blocked_database(path)
+    migrated = SQLiteExchangePersistence(SQLitePersistenceConfig(path, expected_schema_version=6))
+    migrated.close()
+    barrier = threading.Barrier(2)
+    results = []
+
+    def actor(index: int) -> None:
+        store = None
+        try:
+            store = SQLiteExchangePersistence(
+                SQLitePersistenceConfig(path, expected_schema_version=6)
+            )
+            barrier.wait(timeout=5)
+            results.append(
+                remediation.run_remediation(
+                    store,
+                    run_id=f"concurrent-{index}",
+                    now_ms=iter(range(4000 + index * 100, 4100 + index * 100)).__next__,
+                )
+            )
+        finally:
+            if store is not None:
+                store.close()
+
+    threads = [threading.Thread(target=actor, args=(index,)) for index in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+    assert all(not thread.is_alive() for thread in threads)
+    assert len(results) == 2
+    assert sum(not result.idempotent for result in results) == 1
+    store = SQLiteExchangePersistence(SQLitePersistenceConfig(path, expected_schema_version=6))
+    assert (
+        store._connection.execute(
+            "SELECT count(*) FROM exchange_trade_settlement_resolutions"
+        ).fetchone()[0]
+        == 1
+    )
+    current = store._connection.execute(
+        "SELECT portfolio_version,state_payload FROM exchange_portfolio_current"
+    ).fetchone()
+    assert current["portfolio_version"] == 1
+    assert json.loads(current["state_payload"])["turnover"] == {"$decimal": "10.109264"}
+    store.close()
+
+
+def test_remediation_main_preserves_interrupt_and_classifies_local_block(
+    tmp_path, monkeypatch
+) -> None:
+    database = tmp_path / "smoke.sqlite3"
+    evidence = tmp_path / "remediation.log"
+    zero_fee_blocked_database(database)
+    monkeypatch.setattr(remediation, "DATABASE_PATH", database)
+    monkeypatch.setattr(remediation, "EVIDENCE_PATH", evidence)
+    monkeypatch.setenv(remediation.AUTHORIZATION_ENV, "YES")
+    monkeypatch.setattr(
+        remediation,
+        "run_remediation",
+        lambda *args, **kwargs: (_ for _ in ()).throw(remediation.RemediationBlocked("local")),
+    )
+    assert remediation.main() == 2
+    monkeypatch.setattr(
+        remediation,
+        "run_remediation",
+        lambda *args, **kwargs: (_ for _ in ()).throw(KeyboardInterrupt()),
+    )
+    with pytest.raises(KeyboardInterrupt):
+        remediation.main()

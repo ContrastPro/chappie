@@ -1034,6 +1034,13 @@ predicate—terminal order, complete base and quote trade truth, SAFE complete c
 pending/block, and synchronized Portfolio/session—not a test of newly blocked rows in one invocation.
 Schema-v6 and the offline resolution service now implement this predicate and append-only policy; the
 final offline safety review passed, while separately authorized production remediation remains pending.
+The dedicated remediation composition imports no exchange adapter or HTTP client. Authorization and
+evidence collision checks precede writable database acquisition; after opening schema v6 it validates
+the sole Phase 3 authority/order/trade/block, exact zero-BTC fee, SAFE complete reconciliation and the
+zero-BTC/25-USDT version-zero managed root before calling the existing settlement service. An exact
+already-resolved state returns idempotent PASS, while any conflicting state fails closed.
+The harness final offline safety review passed, including migration interruption, concurrent writer,
+lost-commit-acknowledgement and partial-evidence-write proofs. This status grants no remediation authority.
 
 The committed lifecycle has one terminal state, CONSUMED. Transaction-local PREPARED cannot become
 visible without the linked command; stale authorization fails before insert, so EXPIRED/CANCELED
