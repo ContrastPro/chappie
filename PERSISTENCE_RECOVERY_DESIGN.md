@@ -1148,3 +1148,13 @@ separately authorized production execution passed with the database identity unc
 M4.10. M4.11 found persistence/recovery criteria satisfied but issued `STAGE_4_BLOCKED` because the
 separate accepted controlled-SELL evidence is absent. No SELL closure or Stage 5 implementation has
 started.
+
+The managed SELL closure must extend this same database and Portfolio version chain. Schema v6 cannot
+reuse the BUY-only `exchange_smoke_authorities` contract, so the offline design proposes additive
+schema-v7 managed-SELL authority/event tables. One transaction revalidates version/digest, source BUY
+provenance, managed quantity, external baseline, SAFE reconciliation, SYNCHRONIZED settlement and
+ACTIVE control before inserting the authority and sole PREPARED SELL command and consuming the
+authority. A fresh process can reconcile/settle that command but can never reconstruct its claim.
+ADR-066 is accepted; migration 007 is not implemented and production migration/SELL remain
+unauthorized. See
+`STAGE_4_MANAGED_SELL_CLOSURE_DESIGN.md`.

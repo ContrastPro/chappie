@@ -94,6 +94,13 @@ the accepted architecture still requires controlled Testnet SELL evidence in add
 BUY. That SELL closure is not started or authorized; Stage 5, continuous Testnet and LIVE remain
 not started. See [`M4_11_STAGE_4_COMPLETION_REPORT.md`](M4_11_STAGE_4_COMPLETION_REPORT.md).
 
+The offline design for the remaining managed-SELL evidence gap is
+[`STAGE_4_MANAGED_SELL_CLOSURE_DESIGN.md`](STAGE_4_MANAGED_SELL_CLOSURE_DESIGN.md). It is
+`READY_FOR_STAGE4_SELL_SCHEMA_IMPLEMENTATION`; ADR-066 was accepted on 2026-08-14. It permits only an
+exact full managed-position exit under fresh rules in the same durable
+lineage; external account BTC is never Risk inventory. No implementation, SELL authorization,
+continuous Testnet, LIVE or Stage 5 work has started.
+
 Important defaults:
 
 - market: Binance Spot;
