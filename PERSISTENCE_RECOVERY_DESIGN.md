@@ -1134,6 +1134,14 @@ requires a distinct exact authorization token before writable acquisition, rejec
 evidence path, and validates the accepted authority/order/trade/block/reconciliation/Portfolio/session
 shape before resolution. It neither imports network code nor reads credentials. Evidence is exclusive;
 if evidence creation fails after commit, schema-v6 durable truth remains authoritative and replay is
-idempotent. Production remediation and its evidence remain separately unauthorized.
+idempotent. The separately authorized production remediation completed with one durable resolution.
 The remediation harness final offline safety review passed; v5/v6 migration interruption releases the
 writer and leaves an atomic schema, while competing actors converge on one economic transition.
+
+The final M4.10 proof harness is implemented as a fresh observation-only process. It never constructs
+the normal writable persistence adapter: authorization and evidence collision precede database access,
+then the fixed database opens through SQLite URI `mode=ro&immutable=1` plus `query_only`. It validates
+schema v6, canonical payload/digest chains, exact cardinalities, lineage, synchronized economic state,
+and byte-identical before/after database SHA-256; WAL/SHM is forbidden. Exclusive sanitized evidence is
+written only after the connection closes. Production proof execution remains unauthorized.
+The harness final offline adversarial safety review passed.

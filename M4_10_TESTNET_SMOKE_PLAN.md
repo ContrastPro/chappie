@@ -1,6 +1,6 @@
 # M4.10 Controlled Binance Spot Testnet Smoke Plan
 
-Status: **Phase 1 PASS; Phase 2 PASS; Phase 3 one-shot submission PASS; Phase 4 real reconciliation SAFE but settlement INCOMPLETE for authoritative `0 BTC` commission; ADR-065 schema-v6 resolution and the offline remediation harness passed final offline safety review; production remediation authorization pending** (2026-08-14).
+Status: **Phase 1 PASS; Phase 2 PASS; Phase 3 one-shot submission PASS; Phase 4 reconciliation SAFE; ADR-065 production remediation PASS; final fresh-process recovery proof harness completed and final offline safety review passed; proof execution authorization pending** (2026-08-14).
 
 Phase 4 uses `python -m app.tools.testnet_phase4` to reopen the same smoke database. It is GET-only,
 cannot reconstruct submission authority, and settles only normalized authoritative trades through the
@@ -13,8 +13,17 @@ Schema-v6 implementation passed its final offline review. The dedicated local-on
 is `python -m app.tools.testnet_phase4_remediate_zero_fee`; it requires exact
 `M4_10_PHASE4_REMEDIATION_AUTHORIZED=YES`, opens only the fixed smoke database, performs no credential
 or network access, and exclusively creates `logs/m4_10_phase4_remediation.log`. Its implementation is
-complete and its final offline safety review passed, but same-database production remediation remains unauthorized. No additional order,
+complete and its final offline safety review passed. The separately authorized remediation completed
+with globally synchronized durable truth. No additional order,
 cancellation or fee conversion is permitted.
+
+The final observation-only entrypoint is `python -m app.tools.testnet_m410_recovery_proof`. It requires
+exact `M4_10_RECOVERY_PROOF_AUTHORIZED=YES`, opens only the fixed database through immutable SQLite
+read-only/query-only mode, reconstructs the complete authority/order/trade/resolution/Portfolio/session
+chain, and requires an unchanged database checksum with no WAL/SHM. It creates exclusive sanitized
+`logs/m4_10_recovery_proof.log` only after validation and close. The harness is implemented offline;
+its final offline adversarial safety review passed; production proof execution remains separately
+unauthorized. M4.10 is not complete and M4.11 has not started.
 
 Stage 4 remains in progress. This document authorizes no network access, credential use,
 additional `/api/v3/order/test` request or real Testnet order. Every phase below needs a new, explicit

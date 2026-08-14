@@ -1033,14 +1033,23 @@ existing accounting; positive BTC/BNB/other fees remain unsupported. Completion 
 predicate—terminal order, complete base and quote trade truth, SAFE complete coverage, no unresolved
 pending/block, and synchronized Portfolio/session—not a test of newly blocked rows in one invocation.
 Schema-v6 and the offline resolution service now implement this predicate and append-only policy; the
-final offline safety review passed, while separately authorized production remediation remains pending.
+final offline safety review passed; the separately authorized production remediation then completed
+with one resolution and globally synchronized Portfolio/session truth.
 The dedicated remediation composition imports no exchange adapter or HTTP client. Authorization and
 evidence collision checks precede writable database acquisition; after opening schema v6 it validates
 the sole Phase 3 authority/order/trade/block, exact zero-BTC fee, SAFE complete reconciliation and the
 zero-BTC/25-USDT version-zero managed root before calling the existing settlement service. An exact
 already-resolved state returns idempotent PASS, while any conflicting state fails closed.
 The harness final offline safety review passed, including migration interruption, concurrent writer,
-lost-commit-acknowledgement and partial-evidence-write proofs. This status grants no remediation authority.
+lost-commit-acknowledgement and partial-evidence-write proofs.
+
+The final fresh-process proof is a separate observation-only composition. It accepts only its own exact
+authorization, fixes the production database/evidence paths, opens SQLite with `mode=ro`, `immutable=1`
+and `query_only`, validates the authority/audit/order/event/attempt/trade/block/resolution/reconciliation/
+Portfolio/session digest chain and requires an identical database checksum after close. It has no
+transport, credential, submission, cancellation or settlement mutation dependency. Its implementation
+and final offline adversarial safety review are complete. This does not authorize production proof
+execution or complete M4.10.
 
 The committed lifecycle has one terminal state, CONSUMED. Transaction-local PREPARED cannot become
 visible without the linked command; stale authorization fails before insert, so EXPIRED/CANCELED

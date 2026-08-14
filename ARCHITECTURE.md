@@ -838,16 +838,21 @@ and the final adversarial safety review passed. The isolated one-shot operator h
 and its final offline operator safety review passed, while Phase 3 execution authorization remains pending.
 
 Phase 3 subsequently reached ACK with its sole durable identity; ACK remains non-settlement evidence.
-Phase 4 is a distinct fresh-process, same-database GET-only recovery graph. Its harness is complete and
-its final offline safety review passed; production execution authorization remains pending. It derives
+Phase 4 is a distinct fresh-process, same-database GET-only recovery graph. Its harness and authorized
+production reconciliation run completed safely. It derives
 the sole durable identity, validates normalized order/trade and external-balance facts, and reuses
 exactly-once settlement.
-It has no submission capability or POST path and remains unauthorized for production execution.
+It has no submission capability or POST path; authorization did not carry into remediation or proof.
 
 ADR-065 schema v6 and its final offline safety review are complete. The separate
 `app.tools.testnet_phase4_remediate_zero_fee` composition is persistence-only: it imports no Binance or
 HTTP component, reads no credentials, fixes the production database/evidence paths, and requires
 `M4_10_PHASE4_REMEDIATION_AUTHORIZED=YES` before writable database acquisition. It validates the exact
 known durable Phase 3/4 shape and delegates the only mutation to the append-only exactly-once settlement
-service. The harness passed final offline safety review; production remediation remains unauthorized, M4.10 remains
-incomplete pending remediation plus fresh recovery proof, and M4.11 has not started.
+service. The harness passed final offline safety review and the separately authorized remediation
+completed with globally synchronized durable truth. The final
+`app.tools.testnet_m410_recovery_proof` composition is observation-only: it uses immutable read-only
+SQLite, reconstructs every durable digest and identity from the fixed database, enforces unchanged
+before/after checksum and creates exclusive sanitized evidence only after closing the database. Its
+production execution remains unauthorized; M4.10 remains incomplete and M4.11 has not started.
+The fresh-process proof harness final offline adversarial safety review passed.
