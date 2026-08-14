@@ -15,7 +15,6 @@ from app.exchange_execution import (
     dispose_stage4_sell_no_execution,
 )
 from app.exchange_execution.exceptions import ExchangeCapabilityError, ExchangeOrderStateError
-from app.exchange_execution.stage4_sell_continuation import Stage4SellContinuationAuthorization
 from app.exchange_execution.stage4_sell_recovery import Stage4SellRecoveryAuthorization
 from app.persistence import SQLiteExchangePersistence, SQLitePersistenceConfig
 from app.persistence.exceptions import (
@@ -340,16 +339,6 @@ def test_authorization_is_separate_and_consumed_before_mutation(tmp_path: Path) 
             reason_code="operator_disposition",
             occurred_at_ms=7_000,
             authorization=SELL_AUTHORIZATION_VALUE,  # type: ignore[arg-type]
-        )
-    with pytest.raises(Stage4SellDispositionError):
-        dispose_stage4_sell_no_execution(
-            first,
-            first_key,
-            reason_code="operator_disposition",
-            occurred_at_ms=7_000,
-            authorization=Stage4SellContinuationAuthorization.from_environment(
-                {"STAGE4_SELL_CONTINUATION_AUTHORIZED": "YES"}
-            ),  # type: ignore[arg-type]
         )
     ceremony = authorization()
     dispose_stage4_sell_no_execution(

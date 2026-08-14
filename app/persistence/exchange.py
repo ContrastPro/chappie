@@ -32,14 +32,6 @@ from app.exchange_execution.stage4_sell import (
     Stage4ManagedSellProcessClaim,
     derive_stage4_sell_economic_slot,
 )
-from app.exchange_execution.stage4_sell_continuation import (
-    Stage4SellAbsenceProof,
-    Stage4SellContinuationAuthorization,
-    Stage4SellContinuationClaim,
-    Stage4SellContinuationFinalGateResult,
-    Stage4SellContinuationReceipt,
-    _issue_continuation_claim,
-)
 from app.exchange_execution.stage4_sell_disposition import (
     DISPOSITION_POLICY_VERSION,
     Stage4SellDisposition,
@@ -166,7 +158,6 @@ class SQLiteExchangePersistence:
         self._failure_injector = failure_injector
         self._phase3_claims: dict[str, Phase3ProcessClaim] = {}
         self._stage4_sell_claims: dict[str, Stage4ManagedSellProcessClaim] = {}
-        self._stage4_sell_continuation_claims: dict[str, Stage4SellContinuationClaim] = {}
 
     def _hit(self, boundary: str) -> None:
         if self._failure_injector is not None:
@@ -1151,115 +1142,6 @@ class SQLiteExchangePersistence:
             current_rules_fingerprint=current_rules_fingerprint,
         )
 
-    def authorize_stage4_sell_continuation(
-        self,
-        proof: Stage4SellAbsenceProof,
-        *,
-        current_rules_fingerprint: str,
-        risk_compatible: bool,
-        configuration_compatible: bool,
-        managed_ownership_compatible: bool,
-        authorization: Stage4SellContinuationAuthorization,
-    ) -> Stage4SellContinuationReceipt:
-        """Commit ADR-068's sole decision and issue an in-memory claim only to its winner."""
-        if not isinstance(proof, Stage4SellAbsenceProof) or not proof.is_proven:
-            raise Stage4SellRecoveryPreconditionError("managed SELL exchange absence is not proven")
-        if not isinstance(authorization, Stage4SellContinuationAuthorization):
-            raise Stage4SellRecoveryConflictError("SELL continuation authorization is required")
-        if not all(
-            isinstance(value, bool)
-            for value in (risk_compatible, configuration_compatible, managed_ownership_compatible)
-        ):
-            raise Stage4SellRecoveryConflictError(
-                "continuation compatibility conclusions are invalid"
-            )
-        reasons = {Stage4SellRecoveryReason.VERIFIED_NO_EXCHANGE_ORDER.value}
-        if not risk_compatible:
-            reasons.add(Stage4SellRecoveryReason.RISK_INCOMPATIBLE.value)
-        if not configuration_compatible:
-            reasons.add(Stage4SellRecoveryReason.CONFIGURATION_CHANGED.value)
-        if not managed_ownership_compatible:
-            reasons.add(Stage4SellRecoveryReason.OWNERSHIP_CHANGED.value)
-        order = self.load_order(proof.durable_command_key)
-        if order.order.client_order_id != proof.client_order_id:
-            raise Stage4SellRecoveryPreconditionError("absence proof client identity differs")
-        lifecycle = proof.lifecycle
-        attempts = self._connection.execute(
-            "SELECT count(*) FROM exchange_submission_attempts WHERE durable_command_key=?",
-            (proof.durable_command_key,),
-        ).fetchone()[0]
-        submitting = self._connection.execute(
-            "SELECT count(*) FROM exchange_order_events WHERE durable_command_key=? "
-            "AND new_status='SUBMITTING'",
-            (proof.durable_command_key,),
-        ).fetchone()[0]
-        if (
-            lifecycle.durable_command_key != proof.durable_command_key
-            or lifecycle.client_order_id != order.order.client_order_id
-            or lifecycle.submission_attempt_count != attempts
-            or lifecycle.submitting_event_count != submitting
-            or lifecycle.exchange_order_id != order.order.exchange_order_id
-            or lifecycle.post_boundary_reached != bool(attempts or submitting)
-        ):
-            raise Stage4SellRecoveryPreconditionError(
-                "absence proof lifecycle evidence does not match durable state"
-            )
-        event = self._append_stage4_sell_recovery_event(
-            proof.durable_command_key,
-            event_type=(
-                Stage4SellRecoveryEventType.CONTINUATION_ALLOWED
-                if len(reasons) == 1
-                else Stage4SellRecoveryEventType.DISPOSITION_REQUIRED
-            ),
-            reasons=tuple(sorted(reasons)),
-            snapshot_stage="RECOVERY",
-            snapshot_digest=proof.digest,
-            occurred_at_ms=proof.observed_at_ms,
-            authorization=authorization,
-            current_rules_fingerprint=current_rules_fingerprint,
-            evidence=proof.evidence,
-        )
-        # Never mint a capability from a replayed durable fact.  A crash after
-        # commit is intentionally availability-loss rather than claim recovery.
-        claim = None
-        if (
-            event.event_type is Stage4SellRecoveryEventType.CONTINUATION_ALLOWED
-            and not event.replayed
-        ):
-            row = self._connection.execute(
-                "SELECT authority_id,consumed_durable_command_key,account_fingerprint,"
-                "managed_portfolio_id,predecessor_portfolio_version,predecessor_portfolio_digest,"
-                "exact_managed_quantity,session_id,control_generation,reconciliation_generation,"
-                "settlement_state_digest,economic_slot_key,rules_fingerprint,risk_fingerprint,"
-                "config_fingerprint,ownership_scope_digest FROM exchange_managed_sell_authorities "
-                "WHERE authority_id=?",
-                (event.authority_id,),
-            ).fetchone()
-            if row is None:
-                raise PersistenceIntegrityError("managed SELL continuation authority is absent")
-            claim = _issue_continuation_claim(
-                authority_id=row["authority_id"],
-                durable_command_key=row["consumed_durable_command_key"],
-                client_order_id=event.client_order_id,
-                economic_slot_key=row["economic_slot_key"],
-                exact_quantity=deserialize_decimal(row["exact_managed_quantity"]),
-                absence_proof_digest=proof.digest,
-                portfolio_id=row["managed_portfolio_id"],
-                portfolio_version=row["predecessor_portfolio_version"],
-                portfolio_digest=row["predecessor_portfolio_digest"],
-                ownership_scope_digest=row["ownership_scope_digest"],
-                rules_fingerprint=row["rules_fingerprint"],
-                risk_fingerprint=row["risk_fingerprint"],
-                config_fingerprint=row["config_fingerprint"],
-                reconciliation_generation=row["reconciliation_generation"],
-                settlement_state_digest=row["settlement_state_digest"],
-                account_fingerprint=row["account_fingerprint"],
-                session_id=row["session_id"],
-                control_generation=row["control_generation"],
-            )
-            self._stage4_sell_continuation_claims[event.authority_id] = claim
-        return Stage4SellContinuationReceipt(event, claim)
-
     def _append_stage4_sell_recovery_event(
         self,
         durable_command_key: str,
@@ -1269,9 +1151,8 @@ class SQLiteExchangePersistence:
         snapshot_stage: str,
         snapshot_digest: str | None,
         occurred_at_ms: int,
-        authorization: Stage4SellRecoveryAuthorization | Stage4SellContinuationAuthorization | None,
+        authorization: Stage4SellRecoveryAuthorization | None,
         current_rules_fingerprint: str | None,
-        evidence: dict[str, object] | None = None,
     ) -> Stage4SellRecoveryEvent:
         if self._trading.config.expected_schema_version not in {8, 9}:
             raise PersistenceIntegrityError("managed SELL recovery requires schema version 8")
@@ -1412,8 +1293,6 @@ class SQLiteExchangePersistence:
                 "policy_version": RECOVERY_POLICY_VERSION,
             }
             payload_values = {**values, "reason_codes": reasons}
-            if evidence is not None:
-                payload_values["continuation_evidence"] = evidence
             payload = canonical_json(payload_values)
             payload_digest = canonical_sha256(
                 payload_values, algorithm_version=RECOVERY_POLICY_VERSION
@@ -1690,33 +1569,8 @@ class SQLiteExchangePersistence:
         """Generic primitive; schema-v8 recovery candidates are always rejected here."""
         return self._begin_submission(durable_command_key, occurred_at_ms=occurred_at_ms)
 
-    def begin_stage4_sell_continuation_submission(
-        self,
-        durable_command_key: str,
-        *,
-        final_gate_result: Stage4SellContinuationFinalGateResult,
-        occurred_at_ms: int,
-    ) -> DurableExchangeOrder:
-        """ADR-068's sole persist-before-POST entry point for the existing SELL identity."""
-        if not isinstance(final_gate_result, Stage4SellContinuationFinalGateResult):
-            raise Stage4ManagedSellRestartRecoveryOnlyError(
-                "gate-issued SELL continuation result is required"
-            )
-        claim = final_gate_result.claim
-        return self._begin_submission(
-            durable_command_key,
-            occurred_at_ms=occurred_at_ms,
-            continuation_claim=claim,
-            continuation_final_gate_result=final_gate_result,
-        )
-
     def _begin_submission(
-        self,
-        durable_command_key: str,
-        *,
-        occurred_at_ms: int,
-        continuation_claim: Stage4SellContinuationClaim | None = None,
-        continuation_final_gate_result: Stage4SellContinuationFinalGateResult | None = None,
+        self, durable_command_key: str, *, occurred_at_ms: int
     ) -> DurableExchangeOrder:
         current = self.load_order(durable_command_key)
         if current.order.status is not ExchangeOrderStatus.PREPARED:
@@ -1738,34 +1592,8 @@ class SQLiteExchangePersistence:
                     if self._trading.config.expected_schema_version >= 8
                     else 0
                 )
-                continuation = self._stage4_sell_continuation_claims.get(authority[0])
-                continuation_event = (
-                    self._connection.execute(
-                        "SELECT durable_command_key,client_order_id,event_type FROM "
-                        "exchange_managed_sell_recovery_events WHERE authority_id=? "
-                        "AND event_ordinal=2",
-                        (authority[0],),
-                    ).fetchone()
-                    if recovery_events
-                    else None
-                )
-                continuation_valid = (
-                    continuation_claim is continuation
-                    and continuation is not None
-                    and not continuation._consumed
-                    and continuation.durable_command_key == durable_command_key
-                    and continuation.client_order_id == current.order.client_order_id
-                    and continuation.authority_id == authority[0]
-                    and continuation_event is not None
-                    and tuple(continuation_event)
-                    == (
-                        durable_command_key,
-                        current.order.client_order_id,
-                        Stage4SellRecoveryEventType.CONTINUATION_ALLOWED.value,
-                    )
-                )
                 legacy_valid = claim is not None and claim._consumed and not recovery_events
-                if not (continuation_valid or legacy_valid):
+                if not legacy_valid:
                     raise Stage4ManagedSellRestartRecoveryOnlyError(
                         "managed SELL PREPARED state is recovery-only"
                     )
@@ -1783,18 +1611,6 @@ class SQLiteExchangePersistence:
         connection = self._connection
         try:
             connection.execute("BEGIN IMMEDIATE")
-            if continuation_claim is not None:
-                if (
-                    continuation_final_gate_result is None
-                    or continuation_final_gate_result.claim is not continuation_claim
-                    or continuation_final_gate_result._consumed
-                ):
-                    raise Stage4ManagedSellRestartRecoveryOnlyError(
-                        "SELL continuation final-gate result is invalid"
-                    )
-                self._validate_stage4_sell_continuation_final_gate(
-                    durable_command_key, continuation_claim
-                )
             connection.execute(
                 "INSERT INTO exchange_submission_attempts VALUES(?,?,?,?,?,?,?)",
                 (
@@ -1812,28 +1628,8 @@ class SQLiteExchangePersistence:
                 current,
                 next_order,
                 ExchangeOrderEventSource.TRANSPORT,
-                (
-                    "stage4_sell_continuation_final_gate_passed"
-                    if continuation_claim is not None
-                    else "submission_attempt_started"
-                ),
+                "submission_attempt_started",
                 occurred_at_ms,
-                evidence=(
-                    {
-                        "final_gate_result": "PASSED",
-                        "authority_id": continuation_claim.authority_id,
-                        "absence_proof_digest": continuation_claim.absence_proof_digest,
-                        "economic_slot_key": continuation_claim.economic_slot_key,
-                        "exact_quantity": continuation_claim.exact_quantity,
-                        "portfolio_id": continuation_claim.portfolio_id,
-                        "portfolio_version": continuation_claim.portfolio_version,
-                        "portfolio_digest": continuation_claim.portfolio_digest,
-                        "session_id": continuation_claim.session_id,
-                        "control_generation": continuation_claim.control_generation,
-                    }
-                    if continuation_claim is not None
-                    else None
-                ),
             )
             self._hit("attempt_after_order")
             connection.execute(
@@ -1852,10 +1648,6 @@ class SQLiteExchangePersistence:
             self._hit("attempt_after_counters")
             self._hit("attempt_before_commit")
             connection.commit()
-            if continuation_claim is not None:
-                continuation_claim._consume()
-                assert continuation_final_gate_result is not None
-                continuation_final_gate_result._consume()
             self._hit("attempt_after_commit")
             return self.load_order(durable_command_key)
         except sqlite3.IntegrityError as error:
@@ -1867,132 +1659,6 @@ class SQLiteExchangePersistence:
         except BaseException:
             connection.rollback()
             raise
-
-    def _validate_stage4_sell_continuation_final_gate(
-        self, durable_command_key: str, claim: Stage4SellContinuationClaim
-    ) -> None:
-        """Reread ADR-068's durable graph under the submission writer transaction."""
-        row = self._connection.execute(
-            "SELECT a.authority_id,a.consumed_durable_command_key,a.account_fingerprint,a.session_id,"
-            "a.managed_portfolio_id,a.predecessor_portfolio_version,"
-            "a.predecessor_portfolio_digest,a.exact_managed_quantity,"
-            "a.expected_submission_count,a.control_generation,a.reconciliation_generation,"
-            "a.settlement_state_digest,a.economic_slot_key,a.rules_fingerprint,a.risk_fingerprint,"
-            "a.config_fingerprint,a.ownership_scope_digest,o.client_order_id,o.status,o.side,o.original_quantity,"
-            "o.exchange_order_id,p.portfolio_version,p.state_digest,p.state_payload,"
-            "s.submission_count,r.status AS reconciliation_status,"
-            "c.control_generation AS current_control_generation,"
-            "c.kill_switch_state,c.reconciliation_generation AS control_reconciliation_generation "
-            "FROM exchange_managed_sell_authorities a JOIN exchange_orders o ON "
-            "o.durable_command_key=a.consumed_durable_command_key JOIN "
-            "exchange_portfolio_current p ON p.portfolio_id=a.managed_portfolio_id JOIN "
-            "exchange_sessions s ON s.session_id=a.session_id JOIN "
-            "exchange_reconciliation_current r ON r.execution_root_id=a.execution_root_id JOIN "
-            "exchange_control_state c ON c.execution_root_id=a.execution_root_id "
-            "WHERE a.consumed_durable_command_key=?",
-            (durable_command_key,),
-        ).fetchone()
-        continuation = self._connection.execute(
-            "SELECT client_order_id,rules_fingerprint,portfolio_id,portfolio_version,"
-            "portfolio_digest,session_id,session_submission_count,reconciliation_generation,"
-            "reconciliation_status,control_generation,risk_fingerprint,config_fingerprint "
-            "FROM exchange_managed_sell_recovery_events WHERE authority_id=? "
-            "AND event_ordinal=2 AND event_type='RECOVERY_CONTINUATION_ALLOWED'",
-            (claim.authority_id,),
-        ).fetchone()
-        attempts = self._connection.execute(
-            "SELECT count(*) FROM exchange_submission_attempts WHERE durable_command_key=?",
-            (durable_command_key,),
-        ).fetchone()[0]
-        submitting = self._connection.execute(
-            "SELECT count(*) FROM exchange_order_events WHERE durable_command_key=? "
-            "AND new_status='SUBMITTING'",
-            (durable_command_key,),
-        ).fetchone()[0]
-        if row is None or continuation is None:
-            raise Stage4ManagedSellRestartRecoveryOnlyError(
-                "managed SELL continuation lineage is absent"
-            )
-        state = deserialize_portfolio_state(row["state_payload"])
-        expected_event = (
-            row["client_order_id"],
-            row["rules_fingerprint"],
-            row["managed_portfolio_id"],
-            row["portfolio_version"],
-            row["state_digest"],
-            row["session_id"],
-            row["submission_count"],
-            row["reconciliation_generation"],
-            "SAFE",
-            row["control_generation"],
-            row["risk_fingerprint"],
-            row["config_fingerprint"],
-        )
-        if (
-            claim.authority_id != row["authority_id"]
-            or claim.durable_command_key != durable_command_key
-            or claim.client_order_id != row["client_order_id"]
-            or claim.economic_slot_key != row["economic_slot_key"]
-            or claim.exact_quantity != deserialize_decimal(row["exact_managed_quantity"])
-            or claim.portfolio_id != row["managed_portfolio_id"]
-            or claim.portfolio_version != row["predecessor_portfolio_version"]
-            or claim.portfolio_digest != row["predecessor_portfolio_digest"]
-            or claim.ownership_scope_digest != row["ownership_scope_digest"]
-            or claim.rules_fingerprint != row["rules_fingerprint"]
-            or claim.risk_fingerprint != row["risk_fingerprint"]
-            or claim.config_fingerprint != row["config_fingerprint"]
-            or claim.reconciliation_generation != row["reconciliation_generation"]
-            or claim.settlement_state_digest != row["settlement_state_digest"]
-            or claim.account_fingerprint != row["account_fingerprint"]
-            or claim.session_id != row["session_id"]
-            or claim.control_generation != row["control_generation"]
-            or row["consumed_durable_command_key"] != durable_command_key
-            or row["status"] != "PREPARED"
-            or row["side"] != "SELL"
-            or row["exchange_order_id"] is not None
-            or deserialize_decimal(row["original_quantity"])
-            != deserialize_decimal(row["exact_managed_quantity"])
-            or row["portfolio_version"] != row["predecessor_portfolio_version"]
-            or row["state_digest"] != row["predecessor_portfolio_digest"]
-            or state.base_balance != deserialize_decimal(row["exact_managed_quantity"])
-            or row["submission_count"] != row["expected_submission_count"]
-            or row["reconciliation_status"] != "SAFE"
-            or row["current_control_generation"] != row["control_generation"]
-            or row["control_reconciliation_generation"] != row["reconciliation_generation"]
-            or row["kill_switch_state"] != "ACTIVE"
-            or attempts != 0
-            or submitting != 0
-            or tuple(continuation) != expected_event
-        ):
-            raise Stage4ManagedSellRestartRecoveryOnlyError(
-                "managed SELL continuation final gate rejected durable drift"
-            )
-        unsettled = self._connection.execute(
-            "SELECT (SELECT count(*) FROM exchange_trades t LEFT JOIN "
-            "exchange_trade_settlements s ON s.exchange_trade_id=t.exchange_trade_id "
-            "WHERE s.settlement_id IS NULL),(SELECT count(*) FROM "
-            "exchange_trade_settlements s LEFT JOIN exchange_trade_settlement_resolutions x "
-            "ON x.blocked_settlement_id=s.settlement_id WHERE "
-            "s.status='BLOCKED_UNSUPPORTED_FEE' AND x.resolution_id IS NULL)"
-        ).fetchone()
-        settlement_values = {
-            "portfolio_version": row["portfolio_version"],
-            "portfolio_digest": row["state_digest"],
-            "reconciliation_generation": row["reconciliation_generation"],
-            "pending": unsettled[0],
-            "blocked": unsettled[1],
-            "status": "SYNCHRONIZED",
-        }
-        if (
-            tuple(unsettled) != (0, 0)
-            or canonical_sha256(
-                settlement_values, algorithm_version="stage4-sell-settlement-state/v1"
-            )
-            != row["settlement_state_digest"]
-        ):
-            raise Stage4ManagedSellRestartRecoveryOnlyError(
-                "managed SELL continuation settlement is stale"
-            )
 
     def record_status(
         self,
@@ -2383,13 +2049,6 @@ class SQLiteExchangePersistence:
                 )
             }
             expected["reason_codes"] = payload.get("reason_codes")
-            if row["event_ordinal"] == 2:
-                evidence = payload.get("continuation_evidence")
-                if not isinstance(evidence, dict):
-                    raise PersistenceIntegrityError("continuation proof evidence is invalid")
-                if evidence.get("absence_proof_digest") != row["snapshot_digest"]:
-                    raise PersistenceIntegrityError("continuation proof digest is invalid")
-                expected["continuation_evidence"] = evidence
             if (
                 canonical_json(payload) != row["payload"]
                 or payload != expected
@@ -3241,7 +2900,7 @@ class SQLiteExchangePersistence:
             "occurred_at_ms": occurred_at_ms,
         }
         if evidence is not None:
-            event_payload["continuation_evidence"] = evidence
+            event_payload["evidence"] = evidence
         payload = canonical_json(event_payload)
         digest = canonical_sha256(event_payload, algorithm_version="exchange-order-event/v1")
         event_id = canonical_sha256(
