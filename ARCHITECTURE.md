@@ -871,3 +871,9 @@ SUBMITTING before the sole allowed POST. Its final offline adversarial review pa
 durable-BUY/exchange-history provenance and atomic PASS-last evidence after owned resources close.
 No production migration, network action, SELL execution or Stage 5 work is authorized. See
 `STAGE_4_MANAGED_SELL_CLOSURE_DESIGN.md`.
+
+Schema v8 implements the offline SELL recovery/disposition boundary for the observed PREPARED,
+zero-attempt state. It stores one canonical sanitized recovery-required event and at most one final
+disposition event under append-only triggers. This boundary does not contact Binance and does not
+grant a recovery submission claim. The existing SELL identity is immutable, normal operator retry
+remains forbidden, and production schema-v8 migration/recovery execution require separate approval.

@@ -1075,3 +1075,11 @@ states are unnecessary. UNIQUE authority ID, operator run, economic slot and com
 one authority/command. BUY/BTCUSDT/MARKET, count ceilings, `12 USDT` caps, `25 USDT` allocation,
 `13 USDT` reserve, fee/slippage assumptions and rules fingerprint are canonical bound facts. SELL
 fails before persistence. Authority consumption occurs at PREPARED commit, never transmission.
+
+The first production invocation stopped in the durable
+`CONSUMED authority + PREPARED order + zero attempts` state. The offline schema-v8 recovery boundary
+now persists sanitized typed Snapshot B/final-gate reasons without raw responses, credentials,
+signatures, or request material. Recovery is explicit and append-only; it cannot mint submission
+authority, and the original claim becomes invalid once recovery is recorded. Any future continuation
+decision must preserve the existing authority, command, client ID, economic slot, quantity, Portfolio
+lineage, and rules fingerprint.

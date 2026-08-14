@@ -569,6 +569,20 @@ def test_two_snapshot_change_consumes_authority_but_never_calls_gateway(
             connection.execute("SELECT count(*) FROM exchange_submission_attempts").fetchone()[0]
             == 1
         )
+        recovery = connection.execute(
+            "SELECT event_type,block_reason_code,snapshot_stage FROM "
+            "exchange_managed_sell_recovery_events"
+        ).fetchone()
+        assert recovery == (
+            "SELL_RECOVERY_REQUIRED",
+            {
+                "price": "SNAPSHOT_PRICE_CHANGED",
+                "rules": "SNAPSHOT_RULE_CHANGED",
+                "balances": "SNAPSHOT_BALANCE_CHANGED",
+                "trades": "SNAPSHOT_HISTORY_CHANGED",
+            }[mutation],
+            "SNAPSHOT_B",
+        )
 
 
 def test_exact_quantity_not_tradable_blocks_without_authority(tmp_path: Path) -> None:
@@ -708,7 +722,7 @@ def test_crash_after_submitting_commit_never_calls_gateway(
             now_ms=iter(range(4000, 4100)).__next__,
         )
     assert gateway.calls == 0
-    reopened = real_store(SQLitePersistenceConfig(database, expected_schema_version=7))
+    reopened = real_store(SQLitePersistenceConfig(database, expected_schema_version=8))
     sell = next(value for value in reopened.list_orders() if value.order.side.value == "SELL")
     assert sell.order.status is ExchangeOrderStatus.SUBMITTING
     assert reopened.load_session(sell.session_id).submission_count == 2
@@ -743,7 +757,7 @@ def test_during_gateway_baseexception_is_at_most_one_post_and_recovery_only(
         )
     assert gateway.calls == 1
     reopened = SQLiteExchangePersistence(
-        SQLitePersistenceConfig(database, expected_schema_version=7)
+        SQLitePersistenceConfig(database, expected_schema_version=8)
     )
     sell = next(value for value in reopened.list_orders() if value.order.side.value == "SELL")
     assert sell.order.status is ExchangeOrderStatus.SUBMITTING

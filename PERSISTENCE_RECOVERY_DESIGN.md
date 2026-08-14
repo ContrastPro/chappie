@@ -1163,3 +1163,13 @@ byte-identical. The offline operator now uses only the reviewed atomic API and p
 or SUBMITTING restart cannot restore its process claim. Its final offline adversarial review passed;
 production migration and SELL remain unauthorized. See
 `STAGE_4_MANAGED_SELL_CLOSURE_DESIGN.md`.
+
+The first authorized SELL invocation stopped after the schema-v7 authority/PREPARED transaction and
+before `SUBMITTING`; it created no SELL submission attempt. Schema v8 therefore adds
+`exchange_managed_sell_recovery_events`, an append-only two-step boundary: ordinal 1 records
+`SELL_RECOVERY_REQUIRED`, and ordinal 2 records exactly one audited
+`RECOVERY_CONTINUATION_ALLOWED` or `DISPOSITION_REQUIRED` decision. Recovery never creates another
+authority, command, client ID, slot, or quantity. A recorded recovery event invalidates the original
+process-local claim. The decision API requires distinct exact recovery authorization and deliberately
+returns no submission capability. Production migration and recovery disposition remain separately
+unauthorized.

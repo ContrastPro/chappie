@@ -322,6 +322,13 @@ class TestnetPreSubmitGate:
                 claim.ownership_scope_digest,
             ),
         ).fetchone()
+        if self._persistence._trading.config.expected_schema_version >= 8:
+            recovery = self._persistence._connection.execute(
+                "SELECT count(*) FROM exchange_managed_sell_recovery_events WHERE authority_id=?",
+                (claim.authority_id,),
+            ).fetchone()[0]
+            if recovery:
+                return False
         return (
             row is not None
             and current is not None

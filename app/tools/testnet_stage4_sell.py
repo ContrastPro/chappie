@@ -38,6 +38,7 @@ from app.exchange_execution.ports import (
     ExchangeInstrumentRules,
     SubmissionObservation,
 )
+from app.exchange_execution.stage4_sell_recovery import Stage4SellRecoveryReason
 from app.exchange_runtime.submission import TestnetPreSubmitGate
 from app.infrastructure.binance import (
     AccountTradeObservation,
@@ -91,7 +92,9 @@ class Stage4SellError(RuntimeError):
 
 
 class Stage4SellBlocked(Stage4SellError):
-    pass
+    def __init__(self, message: str, *, reason_code: str = "UNCLASSIFIED_BLOCK") -> None:
+        super().__init__(message)
+        self.reason_code = reason_code
 
 
 class Stage4SellTransportViolation(Stage4SellBlocked):
@@ -483,7 +486,7 @@ def run_stage4_sell(
     suppress_private_transport_logging()
     first = observe_snapshot(reader, now_ms=now_ms())
     store = SQLiteExchangePersistence(
-        SQLitePersistenceConfig(database_path, expected_schema_version=7)
+        SQLitePersistenceConfig(database_path, expected_schema_version=8)
     )
     try:
         store.recover_local()
@@ -629,16 +632,60 @@ def run_stage4_sell(
         )
         receipt = store.authorize_stage4_managed_sell_command(request)
         if receipt.claim is None:
-            raise Stage4SellBlocked("Stage 4 SELL live claim is unavailable")
-        second = observe_snapshot(reader, now_ms=now_ms())
+            reasons = (Stage4SellRecoveryReason.CLAIM_FAILURE.value,)
+            store.record_stage4_sell_recovery_required(
+                command_key,
+                reasons=reasons,
+                snapshot_stage="FINAL_GATE",
+                snapshot_digest=None,
+                occurred_at_ms=now_ms(),
+            )
+            raise Stage4SellBlocked(
+                "Stage 4 SELL live claim is unavailable", reason_code=reasons[0]
+            )
+        try:
+            second = observe_snapshot(reader, now_ms=now_ms())
+        except Stage4SellBlocked as error:
+            reasons = (Stage4SellRecoveryReason.SNAPSHOT_OBSERVATION_FAILED.value,)
+            store.record_stage4_sell_recovery_required(
+                command_key,
+                reasons=reasons,
+                snapshot_stage="SNAPSHOT_B",
+                snapshot_digest=None,
+                occurred_at_ms=now_ms(),
+            )
+            raise Stage4SellBlocked(str(error), reason_code=reasons[0]) from error
         portfolio2, _, current2 = _managed_portfolio(store, second.rules)
+        changed: set[str] = set()
+        if first.rules.rules_version != second.rules.rules_version:
+            changed.add(Stage4SellRecoveryReason.SNAPSHOT_RULE_CHANGED.value)
+        if first.reference_price != second.reference_price:
+            changed.add(Stage4SellRecoveryReason.SNAPSHOT_PRICE_CHANGED.value)
+        if (first.btc, first.usdt) != (second.btc, second.usdt):
+            changed.add(Stage4SellRecoveryReason.SNAPSHOT_BALANCE_CHANGED.value)
         if (
-            first.digest != second.digest
-            or current2["state_digest"] != current["state_digest"]
-            or portfolio2.snapshot.base_balance != quantity
-            or now_ms() - second.observed_at_ms > FRESHNESS_MS
+            first.open_orders_digest != second.open_orders_digest
+            or first.trades_digest != second.trades_digest
+            or first.managed_trade_identities != second.managed_trade_identities
         ):
-            raise Stage4SellBlocked("Stage 4 SELL second snapshot changed")
+            changed.add(Stage4SellRecoveryReason.SNAPSHOT_HISTORY_CHANGED.value)
+        if (
+            current2["state_digest"] != current["state_digest"]
+            or portfolio2.snapshot.base_balance != quantity
+        ):
+            changed.add(Stage4SellRecoveryReason.PORTFOLIO_CHANGED.value)
+        if now_ms() - second.observed_at_ms > FRESHNESS_MS:
+            changed.add(Stage4SellRecoveryReason.SNAPSHOT_OBSERVATION_FAILED.value)
+        if changed:
+            reasons = tuple(sorted(changed))
+            store.record_stage4_sell_recovery_required(
+                command_key,
+                reasons=reasons,
+                snapshot_stage="SNAPSHOT_B",
+                snapshot_digest=second.digest,
+                occurred_at_ms=now_ms(),
+            )
+            raise Stage4SellBlocked("Stage 4 SELL second snapshot changed", reason_code=reasons[0])
         lifecycle = DurableExchangeOrderLifecycle(
             store, _GatewayFacade(gateway), timestamp_provider=now_ms
         )
@@ -658,7 +705,29 @@ def run_stage4_sell(
             stage4_sell_claim=receipt.claim,
         )
         if not gate_result.authorized or durable is None:
-            raise Stage4SellBlocked("Stage 4 SELL final gate blocked submission")
+            mapped: set[str] = {Stage4SellRecoveryReason.FINAL_GATE_REJECTED.value}
+            for reason in gate_result.reasons:
+                if reason.value == "RULES_MISMATCH":
+                    mapped.add(Stage4SellRecoveryReason.SNAPSHOT_RULE_CHANGED.value)
+                elif reason.value == "RISK_CONTEXT_STALE":
+                    mapped.add(Stage4SellRecoveryReason.SESSION_CHANGED.value)
+                elif reason.value == "RECONCILIATION_UNSAFE":
+                    mapped.add(Stage4SellRecoveryReason.RECONCILIATION_CHANGED.value)
+                elif reason.value == "CONTROL_UNSAFE":
+                    mapped.add(Stage4SellRecoveryReason.CONTROL_CHANGED.value)
+                elif reason.value in {"PORTFOLIO_RECOVERY_UNSAFE", "SETTLEMENT_UNSAFE"}:
+                    mapped.add(Stage4SellRecoveryReason.PORTFOLIO_CHANGED.value)
+            reasons = tuple(sorted(mapped))
+            store.record_stage4_sell_recovery_required(
+                command_key,
+                reasons=reasons,
+                snapshot_stage="FINAL_GATE",
+                snapshot_digest=second.digest,
+                occurred_at_ms=now_ms(),
+            )
+            raise Stage4SellBlocked(
+                "Stage 4 SELL final gate blocked submission", reason_code=reasons[0]
+            )
         status = durable.order.status.value
         outcome = Stage4SellOutcome.PASS if status == "ACKNOWLEDGED" else Stage4SellOutcome.BLOCKED
         return Stage4SellResult(
@@ -779,7 +848,7 @@ def main() -> int:
     try:
         fingerprint = validate_startup(os.environ, database=DATABASE_PATH, evidence=EVIDENCE_PATH)
     except Stage4SellBlocked as error:
-        print(type(error).__name__, file=sys.stderr)
+        print(f"{type(error).__name__}:{error.reason_code}", file=sys.stderr)
         return 2
     guard = Stage4SellGuardTransport(httpx.HTTPTransport(retries=0))
     try:
@@ -823,7 +892,7 @@ def main() -> int:
         except (KeyboardInterrupt, SystemExit):
             raise
         except Stage4SellBlocked as error:
-            print(type(error).__name__, file=sys.stderr)
+            print(f"{type(error).__name__}:{error.reason_code}", file=sys.stderr)
             return 2
         except Exception as error:  # noqa: BLE001
             print(type(error).__name__, file=sys.stderr)

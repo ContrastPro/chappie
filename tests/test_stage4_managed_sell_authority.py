@@ -69,6 +69,7 @@ MIGRATION_HASHES = {
     "005_phase3_smoke_authority.sql": "57c1422ffa74e7f0975ba2d271793088da591ab843f4380d79e1bbcb7d8f5345",
     "006_zero_commission_resolution.sql": "7b6543b489fd9ca67435093e3e34f5fde48101803e65cd502ae5c1004af80f1d",
     "007_stage4_managed_sell_authority.sql": "5133bf077d65093820e111deafd5332b83b15d3bc808ab43f5aaf8ad5e4d32fa",
+    "008_stage4_sell_recovery.sql": "ebefdea2ebceb9d43581c6f21303129263a5b6bb4a94b40c01b497941f77d92b",
 }
 
 

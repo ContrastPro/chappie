@@ -43,6 +43,7 @@ MIGRATION_NAMES = (
     "005_phase3_smoke_authority.sql",
     "006_zero_commission_resolution.sql",
     "007_stage4_managed_sell_authority.sql",
+    "008_stage4_sell_recovery.sql",
 )
 
 

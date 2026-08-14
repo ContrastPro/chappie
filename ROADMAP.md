@@ -359,12 +359,11 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 Статус: **BLOCKED — M4.10 COMPLETED — PASS; M4.11 evidence verdict completed;
 accepted controlled Testnet SELL evidence remains absent** (2026-08-14).
 
-ADR-066 was accepted on 2026-08-14. Its schema-v7 rules/domain/persistence boundary is implemented
-and its final offline adversarial schema review passed. The dedicated one-shot SELL operator is now
-implemented and tested offline; production execution remains unauthorized. Stage 4 remains BLOCKED
-because no controlled managed SELL evidence exists. The operator final offline adversarial review
-passed; the next safe action is separate production execution authorization preparation, not an
-implicit migration or execution.
+ADR-066 was accepted on 2026-08-14. The first separately authorized SELL invocation stopped safely
+after its consumed authority/PREPARED commit and before `SUBMITTING`, with zero SELL attempts. Stage 4
+remains BLOCKED because no controlled managed SELL evidence exists. Schema v8 now implements an
+offline append-only recovery-required/disposition boundary; production migration, disposition, and
+any continuation remain separately unauthorized. Retrying the normal SELL operator is forbidden.
 
 ### Цель
 
@@ -525,8 +524,9 @@ schema-v6 remediation and immutable fresh-process recovery proof passed.
 - Offline architecture selects an exact full-managed-position exit under fresh rules, a distinct
   additive schema-v7 one-shot authority and same-database recovery. See
   `STAGE_4_MANAGED_SELL_CLOSURE_DESIGN.md`; ADR-066 is accepted, migration 007 is implemented
-  offline, while SELL
-  execution remain not started.
+  offline. The first authorized invocation is now recovery-only after stopping at PREPARED with zero
+  attempts; schema-v8 recovery/disposition implementation exists offline, while production recovery
+  remains unauthorized.
 
 ### Планируемые результаты
 

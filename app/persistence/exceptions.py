@@ -86,6 +86,14 @@ class Stage4ManagedSellAuthorityCorruptionError(PersistenceIntegrityError):
     pass
 
 
+class Stage4SellRecoveryConflictError(PersistenceConflictError):
+    pass
+
+
+class Stage4SellRecoveryPreconditionError(Stage4SellRecoveryConflictError):
+    pass
+
+
 class PersistenceSerializationError(PersistenceError):
     pass
 
