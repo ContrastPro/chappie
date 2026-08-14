@@ -1173,3 +1173,10 @@ authority, command, client ID, slot, or quantity. A recorded recovery event inva
 process-local claim. The decision API requires distinct exact recovery authorization and deliberately
 returns no submission capability. Production migration and recovery disposition remain separately
 unauthorized.
+
+Proposed ADR-067 leaves schema-v8 disposition facts non-capability-bearing. A future continuation
+transaction may return one process-local recovery claim only while committing the sole ordinal-2
+continuation decision after exact durable and exchange-absence validation. That claim is never
+reconstructed from the event. Crash after decision commit but before `SUBMITTING` therefore loses
+availability without permitting a second identity or decision. The existing PREPARED record remains
+the sole managed-BTC reservation throughout.

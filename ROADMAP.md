@@ -364,6 +364,8 @@ after its consumed authority/PREPARED commit and before `SUBMITTING`, with zero 
 remains BLOCKED because no controlled managed SELL evidence exists. Schema v8 now implements an
 offline append-only recovery-required/disposition boundary; production migration, disposition, and
 any continuation remain separately unauthorized. Retrying the normal SELL operator is forbidden.
+ADR-067 is proposed for a same-identity, separately authorized continuation ceremony; it is not
+accepted and does not authorize implementation or production recovery.
 
 ### Цель
 

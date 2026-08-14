@@ -1083,3 +1083,9 @@ signatures, or request material. Recovery is explicit and append-only; it cannot
 authority, and the original claim becomes invalid once recovery is recorded. Any future continuation
 decision must preserve the existing authority, command, client ID, economic slot, quantity, Portfolio
 lineage, and rules fingerprint.
+
+Proposed ADR-067 specifies the remaining disposition ceremony. Continuation, if later accepted, uses
+one distinct recovery authorization and a process-local claim bound to authoritative absence review;
+it cannot derive a new price authority or identity. The existing PREPARED reservation remains owned
+by the same command. Unknown remote state, any durable drift, or claim loss stops rather than retries.
+The proposal grants no current submission path.

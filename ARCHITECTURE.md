@@ -877,3 +877,8 @@ zero-attempt state. It stores one canonical sanitized recovery-required event an
 disposition event under append-only triggers. This boundary does not contact Binance and does not
 grant a recovery submission claim. The existing SELL identity is immutable, normal operator retry
 remains forbidden, and production schema-v8 migration/recovery execution require separate approval.
+
+ADR-067 is proposed, not accepted. It defines a possible continuation as a same-identity operation
+only after audited exchange-absence review and complete durable revalidation. Its proposed recovery
+claim is process-local and non-reconstructable; the schema-v8 decision event is never a capability.
+Unknown exchange state selects disposition. See `STAGE_4_SELL_RECOVERY_DISPOSITION_DESIGN.md`.
