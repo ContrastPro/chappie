@@ -120,9 +120,9 @@ class SQLiteExchangePersistence:
     ) -> None:
         if not isinstance(
             config, SQLitePersistenceConfig
-        ) or config.expected_schema_version not in {2, 3, 4, 5}:
+        ) or config.expected_schema_version not in {2, 3, 4, 5, 6}:
             raise PersistenceIntegrityError(
-                "exchange persistence requires schema version 2, 3, 4, or 5"
+                "exchange persistence requires schema version 2, 3, 4, 5, or 6"
             )
         self._trading = SQLiteTradingPersistence(config)
         self._connection = self._trading._connection

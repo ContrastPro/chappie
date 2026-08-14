@@ -384,7 +384,11 @@ def run_phase4(
     settlement_result = settlement.settle_pending()
     after = portfolio.snapshot
     final = store.load_order(recovered.command_key).order
-    finished = final.status.is_exchange_terminal and safe and settlement_result.blocked_count == 0
+    finished = (
+        final.status.is_exchange_terminal
+        and safe
+        and settlement_result.status.value == "SYNCHRONIZED"
+    )
     result_outcome = Phase4Outcome.PASS if finished else Phase4Outcome.INCOMPLETE
     return Phase4Result(
         result_outcome,
@@ -415,7 +419,7 @@ def main() -> int:
     try:
         with ExitStack() as resources:
             store = SQLiteExchangePersistence(
-                SQLitePersistenceConfig(DATABASE_PATH, expected_schema_version=5)
+                SQLitePersistenceConfig(DATABASE_PATH, expected_schema_version=6)
             )
             resources.callback(store.close)
             guard = Phase4ReadOnlyTransport(httpx.HTTPTransport())

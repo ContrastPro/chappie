@@ -1124,3 +1124,7 @@ resolution from the unresolved-block count. Portfolio authority validation merge
 rows and resolution rows by `portfolio_version_after`, requires a contiguous version/digest chain and
 recomputes session turnover. Any orphan, duplicate, digest mismatch or cross-table version collision is
 `RECOVERY_REQUIRED`.
+
+Migration 006 and the offline resolution service now implement this design. Migration 006 SHA-256 is
+`7b6543b489fd9ca67435093e3e34f5fde48101803e65cd502ae5c1004af80f1d`; migrations 001–005 remain
+byte-identical. Implementation status does not authorize production migration or remediation.

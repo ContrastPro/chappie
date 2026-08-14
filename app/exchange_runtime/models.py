@@ -71,11 +71,12 @@ class ExchangeSettlementResult:
     blocked_count: int
     portfolio_version: int
     last_settlement_id: str | None = None
+    resolved_count: int = 0
 
     def __post_init__(self) -> None:
         if not isinstance(self.status, ExchangeSettlementStatus):
             raise TypeError("invalid settlement status")
-        for name in ("settled_count", "blocked_count", "portfolio_version"):
+        for name in ("settled_count", "blocked_count", "portfolio_version", "resolved_count"):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise ValueError(f"{name} must be non-negative")

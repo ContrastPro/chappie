@@ -1,4 +1,5 @@
 import ast
+import json
 import shutil
 import socket
 from decimal import Decimal
@@ -119,14 +120,21 @@ def phase3_database(path: Path) -> None:
     client.close()
 
 
-def phase4_response(request: httpx.Request, *, status="FILLED", fee_asset="USDT"):
+def phase4_response(
+    request: httpx.Request,
+    *,
+    status="FILLED",
+    fee_asset="USDT",
+    quote_value: str | None = None,
+    commission_value: str | None = None,
+):
     if request.url.path == "/api/v3/exchangeInfo":
         return _phase3_response(request)
     if request.url.path == "/api/v3/order":
         query = parse_qs(request.url.query.decode())
         assert query["origClientOrderId"][0].startswith("ctt1t-")
         quantity = "0.00008" if status == "PARTIALLY_FILLED" else "0.00016"
-        quote = "5" if status == "PARTIALLY_FILLED" else "10"
+        quote = quote_value or ("5" if status == "PARTIALLY_FILLED" else "10")
         return httpx.Response(
             200,
             json={
@@ -155,8 +163,8 @@ def phase4_response(request: httpx.Request, *, status="FILLED", fee_asset="USDT"
                     "orderId": 123,
                     "price": "62500",
                     "qty": "0.00008" if partial else "0.00016",
-                    "quoteQty": "5" if partial else "10",
-                    "commission": "0.005" if partial else "0.01",
+                    "quoteQty": quote_value or ("5" if partial else "10"),
+                    "commission": commission_value or ("0.005" if partial else "0.01"),
                     "commissionAsset": fee_asset,
                     "time": 1020,
                     "isBuyer": True,
@@ -166,9 +174,9 @@ def phase4_response(request: httpx.Request, *, status="FILLED", fee_asset="USDT"
         )
     if request.url.path == "/api/v3/account":
         partial = status == "PARTIALLY_FILLED"
-        fee = Decimal("0.005") if partial else Decimal("0.01")
+        fee = Decimal(commission_value or ("0.005" if partial else "0.01"))
         quantity = Decimal("0.00008") if partial else Decimal("0.00016")
-        quote = Decimal(5) if partial else Decimal(10)
+        quote = Decimal(quote_value or ("5" if partial else "10"))
         btc = Decimal(1) + quantity - (fee if fee_asset == "BTC" else Decimal(0))
         usdt = Decimal(10000) - quote - (fee if fee_asset == "USDT" else Decimal(0))
         return httpx.Response(
@@ -192,7 +200,7 @@ def phase4_response(request: httpx.Request, *, status="FILLED", fee_asset="USDT"
 
 
 def phase4_objects(path: Path, handler):
-    store = SQLiteExchangePersistence(SQLitePersistenceConfig(path, expected_schema_version=5))
+    store = SQLiteExchangePersistence(SQLitePersistenceConfig(path, expected_schema_version=6))
     guard = Phase4ReadOnlyTransport(httpx.MockTransport(handler))
     client = httpx.Client(base_url="https://testnet.binance.vision", transport=guard)
     adapter = BinanceSpotTestnetAdapter(
@@ -467,7 +475,7 @@ def test_quote_trade_completeness_is_required_for_pass(tmp_path) -> None:
     store.close()
 
 
-def test_zero_unsupported_fee_label_remains_blocked(tmp_path) -> None:
+def test_zero_unsupported_fee_label_is_resolved_asset_neutrally(tmp_path) -> None:
     path = tmp_path / "zero-bnb-fee.sqlite3"
     phase3_database(path)
 
@@ -488,9 +496,97 @@ def test_zero_unsupported_fee_label_remains_blocked(tmp_path) -> None:
         run_id="phase4-zero-bnb",
         now_ms=iter(range(2000, 2100)).__next__,
     )
-    assert result.outcome is Phase4Outcome.INCOMPLETE
-    assert result.managed_btc_after == 0
-    assert result.managed_usdt_after == 25
+    assert result.outcome is Phase4Outcome.PASS
+    assert result.managed_btc_after == Decimal("0.00016")
+    assert result.managed_usdt_after == 15
+    trade = store._connection.execute(
+        "SELECT commission,commission_asset FROM exchange_trades"
+    ).fetchone()
+    assert tuple(trade) == ("0", "BNB")
+    assert (
+        store._connection.execute(
+            "SELECT count(*) FROM exchange_trade_settlements WHERE status='BLOCKED_UNSUPPORTED_FEE'"
+        ).fetchone()[0]
+        == 1
+    )
+    assert (
+        store._connection.execute(
+            "SELECT count(*) FROM exchange_trade_settlement_resolutions"
+        ).fetchone()[0]
+        == 1
+    )
+    adapter.close()
+    client.close()
+    store.close()
+
+
+def test_production_style_existing_zero_btc_block_resolves_exactly(tmp_path) -> None:
+    path = tmp_path / "production-style.sqlite3"
+    phase3_database(path)
+    handler = lambda request: phase4_response(
+        request,
+        fee_asset="BTC",
+        quote_value="10.109264",
+        commission_value="0",
+    )
+    store, guard, client, adapter = phase4_objects(path, handler)
+    result = run_phase4(
+        store,
+        adapter,
+        guard,
+        expected_account="phase3-account",
+        run_id="phase4-production-style",
+        now_ms=iter(range(2000, 2100)).__next__,
+    )
+    assert result.outcome is Phase4Outcome.PASS
+    assert result.managed_btc_after == Decimal("0.00016")
+    assert result.managed_usdt_after == Decimal("14.890736")
+    current = store._connection.execute(
+        "SELECT portfolio_version,state_payload FROM exchange_portfolio_current"
+    ).fetchone()
+    payload = json.loads(current["state_payload"])
+    assert current["portfolio_version"] == 1
+    assert payload["total_fees"] == {"$decimal": "0"}
+    assert payload["turnover"] == {"$decimal": "10.109264"}
+    assert tuple(
+        store._connection.execute(
+            "SELECT commission,commission_asset FROM exchange_trades"
+        ).fetchone()
+    ) == ("0", "BTC")
+    assert (
+        store._connection.execute(
+            "SELECT count(*) FROM exchange_trade_settlements WHERE status='BLOCKED_UNSUPPORTED_FEE'"
+        ).fetchone()[0]
+        == 1
+    )
+    assert (
+        store._connection.execute(
+            "SELECT count(*) FROM exchange_trade_settlement_resolutions"
+        ).fetchone()[0]
+        == 1
+    )
+    adapter.close()
+    client.close()
+    store.close()
+
+    store, guard, client, adapter = phase4_objects(path, handler)
+    repeated = run_phase4(
+        store,
+        adapter,
+        guard,
+        expected_account="phase3-account",
+        run_id="phase4-production-style-repeat",
+        now_ms=iter(range(3000, 3100)).__next__,
+    )
+    assert repeated.outcome is Phase4Outcome.PASS
+    assert repeated.managed_btc_after == Decimal("0.00016")
+    assert repeated.managed_usdt_after == Decimal("14.890736")
+    assert (
+        store._connection.execute(
+            "SELECT count(*) FROM exchange_trade_settlement_resolutions"
+        ).fetchone()[0]
+        == 1
+    )
     adapter.close()
     client.close()
     store.close()
@@ -522,7 +618,7 @@ def test_production_artifacts_are_never_test_targets(tmp_path) -> None:
     phase3_database(source)
     copy = tmp_path / "copy.sqlite3"
     shutil.copyfile(source, copy)
-    store = SQLiteExchangePersistence(SQLitePersistenceConfig(copy, expected_schema_version=5))
+    store = SQLiteExchangePersistence(SQLitePersistenceConfig(copy, expected_schema_version=6))
     recovered = recover_phase3(store, "phase3-account")
     assert recovered.client_order_id.startswith("ctt1t-")
     store.close()
@@ -531,7 +627,7 @@ def test_production_artifacts_are_never_test_targets(tmp_path) -> None:
 def test_recovery_rejects_missing_or_wrong_lineage(tmp_path) -> None:
     path = tmp_path / "lineage.sqlite3"
     phase3_database(path)
-    store = SQLiteExchangePersistence(SQLitePersistenceConfig(path, expected_schema_version=5))
+    store = SQLiteExchangePersistence(SQLitePersistenceConfig(path, expected_schema_version=6))
     with pytest.raises(Phase4Blocked, match="identity"):
         recover_phase3(store, "wrong-account")
     store._connection.execute("DROP TRIGGER exchange_smoke_authority_events_no_delete")

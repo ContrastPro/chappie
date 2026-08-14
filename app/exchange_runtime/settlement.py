@@ -146,10 +146,7 @@ class SQLiteExchangeSettlement:
             "ORDER BY s.settlement_seq",
             (self._root_id,),
         ).fetchall()
-        version = root_state.version
-        latest_payload = root["state_payload"]
-        latest_digest = root["state_digest"]
-        turnover = deserialize_decimal("0")
+        economic_rows = []
         for row in rows:
             record = json.loads(row["record_payload"])
             if (
@@ -171,18 +168,77 @@ class SQLiteExchangeSettlement:
             ):
                 raise ExchangeSettlementError("settlement reconciliation coverage is invalid")
             if row["status"] == "SETTLED":
-                if row["portfolio_version_before"] != version:
-                    raise ExchangeSettlementError("settlement Portfolio version chain is broken")
-                state = self._deserialize_state(row["after_state_payload"])
+                economic_rows.append(row)
+        if self._persistence._trading.config.expected_schema_version >= 6:
+            resolutions = self._connection.execute(
+                "SELECT r.*,t.quote_quantity,t.commission,t.commission_asset,"
+                "t.payload_digest AS trade_digest,o.execution_root_id,b.status AS blocked_status,"
+                "b.exchange_trade_id AS blocked_trade_id,b.durable_command_key AS blocked_command "
+                "FROM exchange_trade_settlement_resolutions r "
+                "JOIN exchange_trade_settlements b ON b.settlement_id=r.blocked_settlement_id "
+                "JOIN exchange_trades t ON t.venue=r.venue AND t.environment=r.environment AND "
+                "t.account_fingerprint=r.account_fingerprint AND t.symbol=r.symbol AND "
+                "t.exchange_trade_id=r.exchange_trade_id JOIN exchange_orders o ON "
+                "o.durable_command_key=r.durable_command_key WHERE o.execution_root_id=?",
+                (self._root_id,),
+            ).fetchall()
+            for row in resolutions:
+                record = json.loads(row["record_payload"])
+                expected_record = {
+                    "resolution_id": row["resolution_id"],
+                    "fill_id": row["fill_id"],
+                    "blocked_settlement_id": row["blocked_settlement_id"],
+                    "portfolio_id": row["portfolio_id"],
+                    "session_id": row["session_id"],
+                    "exchange_trade_id": row["exchange_trade_id"],
+                    "durable_command_key": row["durable_command_key"],
+                    "reconciliation_id": row["reconciliation_id"],
+                    "reconciliation_generation": row["reconciliation_generation"],
+                    "policy_id": row["policy_id"],
+                    "reason_code": row["reason_code"],
+                    "version_before": row["portfolio_version_before"],
+                    "version_after": row["portfolio_version_after"],
+                    "created_at_ms": row["created_at_ms"],
+                    "model_version": row["model_version"],
+                }
                 if (
-                    state.digest != row["after_state_digest"]
-                    or state.version != row["portfolio_version_after"]
+                    canonical_json(record) != row["record_payload"]
+                    or canonical_sha256(record, algorithm_version=row["model_version"])
+                    != row["record_digest"]
+                    or record != expected_record
+                    or row["blocked_status"] != "BLOCKED_UNSUPPORTED_FEE"
+                    or row["blocked_trade_id"] != row["exchange_trade_id"]
+                    or row["blocked_command"] != row["durable_command_key"]
+                    or row["portfolio_id"] != root["portfolio_id"]
+                    or row["session_id"] != self._session_id
+                    or row["execution_root_id"] != self._root_id
+                    or row["policy_id"] != "zero-commission-asset-neutral/v1"
+                    or row["reason_code"] != "exact_zero_commission_asset_neutral"
+                    or not deserialize_decimal(row["commission"]).is_zero()
                 ):
-                    raise ExchangeSettlementError("settlement Portfolio state mismatch")
-                version = state.version
-                latest_payload = row["after_state_payload"]
-                latest_digest = row["after_state_digest"]
-                turnover += deserialize_decimal(row["quote_quantity"])
+                    raise ExchangeSettlementError("settlement resolution authority mismatch")
+                if not self._coverage_row_is_complete(
+                    row["reconciliation_id"], row["reconciliation_generation"]
+                ):
+                    raise ExchangeSettlementError("settlement resolution coverage is invalid")
+                economic_rows.append(row)
+        version = root_state.version
+        latest_payload = root["state_payload"]
+        latest_digest = root["state_digest"]
+        turnover = deserialize_decimal("0")
+        for row in sorted(economic_rows, key=lambda value: value["portfolio_version_after"]):
+            if row["portfolio_version_before"] != version or row["before_digest"] != latest_digest:
+                raise ExchangeSettlementError("settlement Portfolio version chain is broken")
+            state = self._deserialize_state(row["after_state_payload"])
+            if (
+                state.digest != row["after_state_digest"]
+                or state.version != row["portfolio_version_after"]
+            ):
+                raise ExchangeSettlementError("settlement Portfolio state mismatch")
+            version = state.version
+            latest_payload = row["after_state_payload"]
+            latest_digest = row["after_state_digest"]
+            turnover += deserialize_decimal(row["quote_quantity"])
         current = self._connection.execute(
             "SELECT * FROM exchange_portfolio_current WHERE portfolio_id=?",
             (root["portfolio_id"],),
@@ -248,11 +304,8 @@ class SQLiteExchangeSettlement:
                     raise
                 settled += 1
             last_id = settlement_id
-        total_blocked = self._connection.execute(
-            "SELECT count(*) FROM exchange_trade_settlements WHERE portfolio_id=? "
-            "AND status='BLOCKED_UNSUPPORTED_FEE'",
-            (self._portfolio.snapshot.portfolio_id,),
-        ).fetchone()[0]
+        resolved = self._resolve_zero_commission_blocks(reconciliation)
+        total_blocked = self._unresolved_blocked_count()
         pending = self._connection.execute(
             "SELECT count(*) FROM exchange_trades t JOIN exchange_orders o ON "
             "o.durable_command_key=t.durable_command_key LEFT JOIN exchange_trade_settlements s "
@@ -269,9 +322,207 @@ class SQLiteExchangeSettlement:
             if pending
             else ExchangeSettlementStatus.SYNCHRONIZED
         )
+        self.validate_authority()
         return ExchangeSettlementResult(
-            status, settled, blocked, self._portfolio.snapshot.version, last_id
+            status,
+            settled,
+            blocked,
+            self._portfolio.snapshot.version,
+            last_id,
+            resolved,
         )
+
+    def _unresolved_blocked_count(self) -> int:
+        if self._persistence._trading.config.expected_schema_version < 6:
+            return self._connection.execute(
+                "SELECT count(*) FROM exchange_trade_settlements WHERE portfolio_id=? "
+                "AND status='BLOCKED_UNSUPPORTED_FEE'",
+                (self._portfolio.snapshot.portfolio_id,),
+            ).fetchone()[0]
+        return self._connection.execute(
+            "SELECT count(*) FROM exchange_trade_settlements b "
+            "LEFT JOIN exchange_trade_settlement_resolutions r "
+            "ON r.blocked_settlement_id=b.settlement_id WHERE b.portfolio_id=? "
+            "AND b.status='BLOCKED_UNSUPPORTED_FEE' AND r.resolution_id IS NULL",
+            (self._portfolio.snapshot.portfolio_id,),
+        ).fetchone()[0]
+
+    def _resolve_zero_commission_blocks(self, reconciliation) -> int:
+        if self._persistence._trading.config.expected_schema_version < 6:
+            return 0
+        rows = self._connection.execute(
+            "SELECT b.settlement_seq,b.settlement_id,b.portfolio_id,b.session_id,b.venue,"
+            "b.environment,b.account_fingerprint,b.symbol,b.exchange_trade_id,t.exchange_order_id,"
+            "b.durable_command_key,t.client_order_id,t.interval,t.side,t.quantity,t.price,"
+            "t.quote_quantity,t.commission,t.commission_asset,t.traded_at_ms,"
+            "o.stable_decision_key FROM exchange_trade_settlements b "
+            "JOIN exchange_trades t ON t.venue=b.venue AND t.environment=b.environment AND "
+            "t.account_fingerprint=b.account_fingerprint AND t.symbol=b.symbol AND "
+            "t.exchange_trade_id=b.exchange_trade_id JOIN exchange_orders o ON "
+            "o.durable_command_key=b.durable_command_key "
+            "LEFT JOIN exchange_trade_settlement_resolutions r "
+            "ON r.blocked_settlement_id=b.settlement_id WHERE b.portfolio_id=? "
+            "AND b.status='BLOCKED_UNSUPPORTED_FEE' AND r.resolution_id IS NULL "
+            "ORDER BY b.settlement_seq",
+            (self._portfolio.snapshot.portfolio_id,),
+        ).fetchall()
+        resolved = 0
+        for row in rows:
+            commission = deserialize_decimal(row["commission"])
+            if not commission.is_zero():
+                continue
+            resolution_id = canonical_sha256(
+                {
+                    "blocked_settlement_id": row["settlement_id"],
+                    "policy": "zero-commission-asset-neutral/v1",
+                },
+                algorithm_version="exchange-settlement-resolution-id/v1",
+            )
+            fill_id = canonical_sha256(
+                {"resolution_id": resolution_id, "exchange_trade_id": row["exchange_trade_id"]},
+                algorithm_version="exchange-resolution-fill-id/v1",
+            )
+            fill = self._fill(row, fill_id, fee_asset=self._portfolio.snapshot.quote_asset)
+            preview = self._portfolio.preview_fill(fill, fill.price)
+            committed = self._commit_zero_resolution(
+                row, resolution_id, fill_id, preview, reconciliation
+            )
+            if not committed:
+                continue
+            try:
+                self._portfolio.apply_committed_transition(preview)
+            except BaseException:
+                self._degraded = True
+                raise
+            resolved += 1
+        return resolved
+
+    def _commit_zero_resolution(self, row, resolution_id, fill_id, preview, reconciliation) -> bool:
+        before = snapshot_to_state(preview.before)
+        after = snapshot_to_state(preview.after)
+        created_at_ms = self._now()
+        record = {
+            "resolution_id": resolution_id,
+            "fill_id": fill_id,
+            "blocked_settlement_id": row["settlement_id"],
+            "portfolio_id": before.portfolio_id,
+            "session_id": row["session_id"],
+            "exchange_trade_id": row["exchange_trade_id"],
+            "durable_command_key": row["durable_command_key"],
+            "reconciliation_id": reconciliation.latest_reconciliation_id,
+            "reconciliation_generation": reconciliation.generation,
+            "policy_id": "zero-commission-asset-neutral/v1",
+            "reason_code": "exact_zero_commission_asset_neutral",
+            "version_before": before.version,
+            "version_after": after.version,
+            "created_at_ms": created_at_ms,
+            "model_version": "exchange-settlement-resolution/v1",
+        }
+        payload = canonical_json(record)
+        digest = canonical_sha256(record, algorithm_version=record["model_version"])
+        connection = self._connection
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            self._hit("resolution_before_record")
+            blocked = connection.execute(
+                "SELECT status,portfolio_id,session_id,exchange_trade_id,durable_command_key "
+                "FROM exchange_trade_settlements WHERE settlement_id=?",
+                (row["settlement_id"],),
+            ).fetchone()
+            if blocked is None or tuple(blocked) != (
+                "BLOCKED_UNSUPPORTED_FEE",
+                before.portfolio_id,
+                self._session_id,
+                row["exchange_trade_id"],
+                row["durable_command_key"],
+            ):
+                raise ExchangeSettlementError("blocked settlement resolution lineage conflicts")
+            current_reconciliation = self._persistence.read_reconciliation_state(self._root_id)
+            if (
+                current_reconciliation.status is not ExchangeReconciliationStatus.SAFE
+                or current_reconciliation.latest_reconciliation_id
+                != reconciliation.latest_reconciliation_id
+                or current_reconciliation.generation != reconciliation.generation
+                or not self._coverage_is_complete(current_reconciliation)
+            ):
+                raise ExchangeSettlementError("resolution reconciliation authority changed")
+            cursor = connection.execute(
+                "INSERT OR IGNORE INTO exchange_trade_settlement_resolutions "
+                "VALUES(NULL,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    resolution_id,
+                    fill_id,
+                    row["settlement_id"],
+                    before.portfolio_id,
+                    row["session_id"],
+                    row["venue"],
+                    row["environment"],
+                    row["account_fingerprint"],
+                    row["symbol"],
+                    row["exchange_trade_id"],
+                    row["durable_command_key"],
+                    reconciliation.latest_reconciliation_id,
+                    reconciliation.generation,
+                    "zero-commission-asset-neutral/v1",
+                    "exact_zero_commission_asset_neutral",
+                    before.version,
+                    after.version,
+                    before.digest,
+                    after.canonical_payload,
+                    after.digest,
+                    created_at_ms,
+                    "exchange-settlement-resolution/v1",
+                    payload,
+                    digest,
+                ),
+            )
+            if cursor.rowcount == 0:
+                connection.rollback()
+                self.restore_memory()
+                return False
+            self._hit("resolution_after_record")
+            self._hit("resolution_before_current")
+            updated = connection.execute(
+                "UPDATE exchange_portfolio_current SET portfolio_version=?,state_payload=?,"
+                "state_digest=?,last_settlement_seq=? WHERE portfolio_id=? AND "
+                "portfolio_version=? AND state_digest=?",
+                (
+                    after.version,
+                    after.canonical_payload,
+                    after.digest,
+                    row["settlement_seq"],
+                    before.portfolio_id,
+                    before.version,
+                    before.digest,
+                ),
+            )
+            if updated.rowcount != 1:
+                raise ExchangeSettlementError("resolution Portfolio version conflict")
+            self._hit("resolution_after_current")
+            self._hit("resolution_before_turnover")
+            session = self._persistence.load_session(row["session_id"])
+            turnover = session.cumulative_executed_turnover + deserialize_decimal(
+                row["quote_quantity"]
+            )
+            updated = connection.execute(
+                "UPDATE exchange_sessions SET executed_turnover=?,generation=generation+1 "
+                "WHERE session_id=? AND generation=?",
+                (
+                    serialize_decimal(turnover),
+                    row["session_id"],
+                    self._session_generation(row["session_id"]),
+                ),
+            )
+            if updated.rowcount != 1:
+                raise ExchangeSettlementError("resolution session generation conflict")
+            self._hit("resolution_after_turnover")
+            self._hit("resolution_before_commit")
+            connection.commit()
+            self._hit("resolution_after_commit")
+            return True
+        except BaseException:
+            connection.rollback()
+            raise
 
     def _coverage_is_complete(self, reconciliation) -> bool:
         return self._coverage_row_is_complete(
@@ -317,7 +568,7 @@ class SQLiteExchangeSettlement:
             == canonical_sha256(evidence, algorithm_version=row["algorithm_version"])
         )
 
-    def _fill(self, row: sqlite3.Row, settlement_id: str) -> Fill:
+    def _fill(self, row: sqlite3.Row, settlement_id: str, *, fee_asset: str | None = None) -> Fill:
         quantity = deserialize_decimal(row["quantity"])
         quote = deserialize_decimal(row["quote_quantity"])
         fee = deserialize_decimal(row["commission"])
@@ -338,7 +589,7 @@ class SQLiteExchangeSettlement:
             price=price,
             gross_notional=quote,
             fee=fee,
-            fee_asset=row["commission_asset"],
+            fee_asset=row["commission_asset"] if fee_asset is None else fee_asset,
             net_quote_change=-(quote + fee) if side is FillSide.BUY else quote - fee,
             net_base_change=quantity if side is FillSide.BUY else -quantity,
             filled_at_ms=row["traded_at_ms"],

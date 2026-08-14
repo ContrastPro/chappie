@@ -225,7 +225,7 @@ def portfolio() -> Portfolio:
 
 def store(path: Path, *, failure_injector=None) -> SQLiteExchangePersistence:
     value = SQLiteExchangePersistence(
-        SQLitePersistenceConfig(path, expected_schema_version=4),
+        SQLitePersistenceConfig(path, expected_schema_version=6),
         failure_injector=failure_injector,
     )
     value.initialize_execution(
@@ -260,7 +260,9 @@ def store(path: Path, *, failure_injector=None) -> SQLiteExchangePersistence:
     return value
 
 
-def persist_quote_fee_trade(value: SQLiteExchangePersistence, fee_asset: str = "USDT") -> None:
+def persist_quote_fee_trade(
+    value: SQLiteExchangePersistence, fee_asset: str = "USDT", commission: str = "1.00"
+) -> None:
     command = ExchangeCommand(
         COMMAND,
         "b" * 64,
@@ -313,7 +315,7 @@ def persist_quote_fee_trade(value: SQLiteExchangePersistence, fee_asset: str = "
                 D("0.1"),
                 D("100000"),
                 D("10000"),
-                D("1.00"),
+                D(commission),
                 fee_asset,
                 130,
             ),
@@ -1266,6 +1268,324 @@ def test_settlement_rolls_back_before_commit_and_replays_after_restart(tmp_path:
     assert service.settle_pending().settled_count == 1
     assert recovered.snapshot.version == 1
     reopened.close()
+
+
+@pytest.mark.parametrize("fee_asset", ["BTC", "BNB", "USDT"])
+def test_exact_zero_commission_is_asset_neutral_and_exactly_once(
+    tmp_path: Path, fee_asset: str
+) -> None:
+    path = tmp_path / f"zero-{fee_asset}.sqlite3"
+    value = store(path)
+    persist_quote_fee_trade(value, fee_asset, "-0" if fee_asset == "BTC" else "0.00000000")
+    managed = portfolio()
+    service = settlement(value, managed)
+    service.initialize()
+    first = service.settle_pending()
+    assert first.status is ExchangeSettlementStatus.SYNCHRONIZED
+    assert first.resolved_count == (0 if fee_asset == "USDT" else 1)
+    assert first.settled_count == (1 if fee_asset == "USDT" else 0)
+    assert managed.snapshot.base_balance == D("0.1")
+    assert managed.snapshot.quote_balance == D("10000")
+    assert managed.snapshot.total_fees == 0
+    assert managed.snapshot.turnover == D("10000")
+    assert managed.snapshot.version == 1
+    assert tuple(
+        value._connection.execute(
+            "SELECT commission,commission_asset FROM exchange_trades"
+        ).fetchone()
+    ) == ("0", fee_asset)
+    blocked = value._connection.execute(
+        "SELECT count(*) FROM exchange_trade_settlements WHERE status='BLOCKED_UNSUPPORTED_FEE'"
+    ).fetchone()[0]
+    resolutions = value._connection.execute(
+        "SELECT count(*) FROM exchange_trade_settlement_resolutions"
+    ).fetchone()[0]
+    assert (blocked, resolutions) == ((0, 0) if fee_asset == "USDT" else (1, 1))
+    second = service.settle_pending()
+    assert second.status is ExchangeSettlementStatus.SYNCHRONIZED
+    assert second.resolved_count == 0
+    assert managed.snapshot.version == 1
+    value.close()
+
+    reopened = store(path)
+    recovered = portfolio()
+    restarted = settlement(reopened, recovered)
+    restarted.initialize()
+    assert restarted.settle_pending().status is ExchangeSettlementStatus.SYNCHRONIZED
+    assert recovered.snapshot.version == 1
+    assert reopened.load_session(SESSION).cumulative_executed_turnover == D("10000")
+    reopened.close()
+
+
+@pytest.mark.parametrize("fee_asset", ["BTC", "BNB", "OTHER"])
+def test_positive_unsupported_commission_remains_unresolved(tmp_path: Path, fee_asset: str) -> None:
+    value = store(tmp_path / f"positive-{fee_asset}.sqlite3")
+    persist_quote_fee_trade(value, fee_asset, "0.00000001")
+    managed = portfolio()
+    service = settlement(value, managed)
+    service.initialize()
+    result = service.settle_pending()
+    assert result.status is ExchangeSettlementStatus.BLOCKED_UNSUPPORTED_FEE
+    assert result.resolved_count == 0
+    assert managed.snapshot.version == 0
+    assert (
+        value._connection.execute(
+            "SELECT count(*) FROM exchange_trade_settlement_resolutions"
+        ).fetchone()[0]
+        == 0
+    )
+    value.close()
+
+
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "resolution_before_record",
+        "resolution_after_record",
+        "resolution_after_current",
+        "resolution_after_turnover",
+        "resolution_before_commit",
+    ],
+)
+@pytest.mark.parametrize("crash", [RuntimeError, KeyboardInterrupt, SystemExit, GeneratorExit])
+def test_zero_resolution_precommit_baseexceptions_roll_back(
+    tmp_path: Path, boundary: str, crash: type[BaseException]
+) -> None:
+    path = tmp_path / f"resolution-{boundary}-{crash.__name__}.sqlite3"
+    value = store(path)
+    persist_quote_fee_trade(value, "BTC", "0")
+    managed = portfolio()
+
+    def fail(point: str) -> None:
+        if point == boundary:
+            raise crash()
+
+    service = SQLiteExchangeSettlement(
+        value,
+        managed,
+        execution_root_id=ROOT,
+        session_id=SESSION,
+        config_fingerprint="8" * 64,
+        timestamp_provider=lambda: 200,
+        failure_injector=fail,
+    )
+    service.initialize()
+    with pytest.raises(crash):
+        service.settle_pending()
+    assert managed.snapshot.version == 0
+    assert (
+        value._connection.execute(
+            "SELECT count(*) FROM exchange_trade_settlement_resolutions"
+        ).fetchone()[0]
+        == 0
+    )
+    assert value.load_session(SESSION).cumulative_executed_turnover == 0
+    value.close()
+
+    reopened = store(path)
+    recovered = portfolio()
+    restarted = settlement(reopened, recovered)
+    restarted.initialize()
+    assert restarted.settle_pending().status is ExchangeSettlementStatus.SYNCHRONIZED
+    assert recovered.snapshot.version == 1
+    reopened.close()
+
+
+def test_zero_resolution_lost_commit_ack_recovers_once(tmp_path: Path) -> None:
+    path = tmp_path / "resolution-lost-ack.sqlite3"
+    value = store(path)
+    persist_quote_fee_trade(value, "BTC", "0")
+    managed = portfolio()
+
+    def lose_ack(point: str) -> None:
+        if point == "resolution_after_commit":
+            raise RuntimeError("lost resolution commit acknowledgement")
+
+    service = SQLiteExchangeSettlement(
+        value,
+        managed,
+        execution_root_id=ROOT,
+        session_id=SESSION,
+        config_fingerprint="8" * 64,
+        timestamp_provider=lambda: 200,
+        failure_injector=lose_ack,
+    )
+    service.initialize()
+    with pytest.raises(RuntimeError, match="lost resolution"):
+        service.settle_pending()
+    value.close()
+    for _ in range(3):
+        reopened = store(path)
+        recovered = portfolio()
+        restarted = settlement(reopened, recovered)
+        restarted.initialize()
+        result = restarted.settle_pending()
+        assert result.status is ExchangeSettlementStatus.SYNCHRONIZED
+        assert result.resolved_count == 0
+        assert recovered.snapshot.version == 1
+        assert (
+            reopened._connection.execute(
+                "SELECT count(*) FROM exchange_trade_settlement_resolutions"
+            ).fetchone()[0]
+            == 1
+        )
+        reopened.close()
+
+
+@pytest.mark.parametrize("failure", [RuntimeError, KeyboardInterrupt, SystemExit, GeneratorExit])
+def test_zero_resolution_committed_memory_failure_degrades_and_recovers(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: type[BaseException]
+) -> None:
+    path = tmp_path / f"resolution-memory-{failure.__name__}.sqlite3"
+    value = store(path)
+    persist_quote_fee_trade(value, "BTC", "0")
+    managed = portfolio()
+    service = settlement(value, managed)
+    service.initialize()
+
+    def fail_memory(_transition) -> None:
+        raise failure("resolution memory synchronization failed")
+
+    monkeypatch.setattr(managed, "apply_committed_transition", fail_memory)
+    with pytest.raises(failure, match="memory synchronization"):
+        service.settle_pending()
+    with pytest.raises(ExchangeSettlementError, match="degraded"):
+        service.restore_memory()
+    value.close()
+
+    reopened = store(path)
+    recovered = portfolio()
+    restarted = settlement(reopened, recovered)
+    restarted.initialize()
+    assert restarted.settle_pending().status is ExchangeSettlementStatus.SYNCHRONIZED
+    assert recovered.snapshot.version == 1
+    reopened.close()
+
+
+@pytest.mark.parametrize(
+    ("column", "value", "message"),
+    [
+        ("record_digest", "0" * 64, "authority mismatch"),
+        ("after_state_digest", "0" * 64, "state mismatch"),
+        ("fill_id", "0" * 64, "authority mismatch"),
+    ],
+)
+def test_zero_resolution_corruption_fails_closed(
+    tmp_path: Path, column: str, value: str, message: str
+) -> None:
+    path = tmp_path / f"resolution-corrupt-{column}.sqlite3"
+    current = store(path)
+    persist_quote_fee_trade(current, "BTC", "0")
+    service = settlement(current, portfolio())
+    service.initialize()
+    assert service.settle_pending().status is ExchangeSettlementStatus.SYNCHRONIZED
+    current._connection.execute("DROP TRIGGER exchange_trade_settlement_resolutions_no_update")
+    current._connection.execute(
+        f"UPDATE exchange_trade_settlement_resolutions SET {column}=?", (value,)
+    )
+    current._connection.commit()
+    current.close()
+
+    reopened = store(path)
+    broken = settlement(reopened, portfolio())
+    with pytest.raises(ExchangeSettlementError, match=message):
+        broken.initialize()
+    reopened.close()
+
+
+def test_zero_resolution_and_original_block_are_append_only(tmp_path: Path) -> None:
+    value = store(tmp_path / "resolution-append-only.sqlite3")
+    persist_quote_fee_trade(value, "BTC", "0")
+    service = settlement(value, portfolio())
+    service.initialize()
+    service.settle_pending()
+    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        value._connection.execute("DELETE FROM exchange_trade_settlement_resolutions")
+    value._connection.rollback()
+    with pytest.raises(sqlite3.IntegrityError, match="append-only"):
+        value._connection.execute(
+            "UPDATE exchange_trade_settlements SET status='SETTLED' "
+            "WHERE status='BLOCKED_UNSUPPORTED_FEE'"
+        )
+    value._connection.rollback()
+    assert (
+        value._connection.execute(
+            "SELECT count(*) FROM exchange_trade_settlements WHERE status='BLOCKED_UNSUPPORTED_FEE'"
+        ).fetchone()[0]
+        == 1
+    )
+    value.close()
+
+
+def test_zero_resolution_revalidates_coverage_inside_transaction(tmp_path: Path) -> None:
+    value = store(tmp_path / "resolution-coverage-race.sqlite3")
+    persist_quote_fee_trade(value, "BTC", "0")
+    service = settlement(value, portfolio())
+    service.initialize()
+    original = service._coverage_is_complete
+    calls = 0
+
+    def changes_after_initial_check(reconciliation) -> bool:
+        nonlocal calls
+        calls += 1
+        return original(reconciliation) if calls == 1 else False
+
+    service._coverage_is_complete = changes_after_initial_check
+    with pytest.raises(ExchangeSettlementError, match="authority changed"):
+        service.settle_pending()
+    assert (
+        value._connection.execute(
+            "SELECT count(*) FROM exchange_trade_settlement_resolutions"
+        ).fetchone()[0]
+        == 0
+    )
+    value.close()
+
+
+def test_zero_resolution_portfolio_and_session_compare_and_swap_fail_closed(
+    tmp_path: Path,
+) -> None:
+    for target in ("portfolio", "session"):
+        value = store(tmp_path / f"resolution-cas-{target}.sqlite3")
+        persist_quote_fee_trade(value, "BTC", "0")
+        service = settlement(value, portfolio())
+        service.initialize()
+        if target == "portfolio":
+
+            def conflict(point: str, current=value) -> None:
+                if point == "resolution_before_current":
+                    current._connection.execute(
+                        "UPDATE exchange_portfolio_current SET state_digest=?", ("0" * 64,)
+                    )
+
+            service._failure = conflict
+            message = "Portfolio version conflict"
+        else:
+            service._session_generation = lambda _session: -1
+            message = "session generation conflict"
+        with pytest.raises(ExchangeSettlementError, match=message):
+            service.settle_pending()
+        assert (
+            value._connection.execute(
+                "SELECT count(*) FROM exchange_trade_settlement_resolutions"
+            ).fetchone()[0]
+            == 0
+        )
+        value.close()
+
+
+def test_zero_resolution_duplicate_commit_result_and_legacy_helpers(tmp_path: Path) -> None:
+    value = store(tmp_path / "resolution-diagnostic-branches.sqlite3")
+    persist_quote_fee_trade(value, "BTC", "0")
+    service = settlement(value, portfolio())
+    service.initialize()
+    service._commit_zero_resolution = lambda *args: False
+    result = service.settle_pending()
+    assert result.status is ExchangeSettlementStatus.BLOCKED_UNSUPPORTED_FEE
+    object.__setattr__(value._trading.config, "expected_schema_version", 5)
+    assert service._unresolved_blocked_count() == 1
+    assert service._resolve_zero_commission_blocks(value.read_reconciliation_state(ROOT)) == 0
+    value.close()
 
 
 @pytest.mark.parametrize(

@@ -79,7 +79,8 @@ has no submission path and remains unauthorized pending separate execution appro
 The first real Phase 4 observation proved a complete FILLED trade and SAFE reconciliation, then stopped
 INCOMPLETE because Binance labeled an exact zero commission as BTC. ADR-065 accepts exact finite Decimal
 zero as asset-neutral while preserving the original trade and blocked audit record. Schema-v6
-append-only resolution is designed but not implemented or authorized; M4.10 is not yet complete.
+append-only resolution is implemented offline and its final offline safety review passed; production
+remediation is not authorized and M4.10 is not yet complete.
 
 Important defaults:
 

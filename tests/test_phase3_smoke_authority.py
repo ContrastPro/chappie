@@ -499,6 +499,59 @@ def test_v4_to_v5_upgrade_is_additive_idempotent_and_failure_rolls_back(
     still_v4.close()
 
 
+def test_v5_to_v6_upgrade_is_additive_idempotent_and_failure_rolls_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "upgrade-v6.sqlite3"
+    legacy = SQLiteExchangePersistence(SQLitePersistenceConfig(path, expected_schema_version=5))
+    legacy.close()
+    upgraded = SQLiteExchangePersistence(SQLitePersistenceConfig(path, expected_schema_version=6))
+    assert (
+        upgraded._connection.execute(
+            "SELECT count(*) FROM schema_migrations WHERE version=6"
+        ).fetchone()[0]
+        == 1
+    )
+    assert (
+        upgraded._connection.execute(
+            "SELECT count(*) FROM exchange_trade_settlement_resolutions"
+        ).fetchone()[0]
+        == 0
+    )
+    upgraded.close()
+    reopened = SQLiteExchangePersistence(SQLitePersistenceConfig(path, expected_schema_version=6))
+    assert (
+        reopened._connection.execute(
+            "SELECT count(*) FROM schema_migrations WHERE version=6"
+        ).fetchone()[0]
+        == 1
+    )
+    reopened.close()
+
+    failed_path = tmp_path / "failed-v6.sqlite3"
+    old = SQLiteExchangePersistence(SQLitePersistenceConfig(failed_path, expected_schema_version=5))
+    old.close()
+    original = SQLiteTradingPersistence._migration
+
+    def broken(name="001_initial.sql"):
+        if name == "006_zero_commission_resolution.sql":
+            return "CREATE TABLE broken(;", "0" * 64
+        return original(name)
+
+    monkeypatch.setattr(SQLiteTradingPersistence, "_migration", staticmethod(broken))
+    with pytest.raises(PersistenceMigrationError):
+        SQLiteExchangePersistence(SQLitePersistenceConfig(failed_path, expected_schema_version=6))
+    monkeypatch.setattr(SQLiteTradingPersistence, "_migration", staticmethod(original))
+    still_v5 = SQLiteExchangePersistence(
+        SQLitePersistenceConfig(failed_path, expected_schema_version=5)
+    )
+    assert (
+        still_v5._connection.execute("SELECT max(version) FROM schema_migrations").fetchone()[0]
+        == 5
+    )
+    still_v5.close()
+
+
 @pytest.mark.parametrize(
     ("column", "value", "message"),
     [

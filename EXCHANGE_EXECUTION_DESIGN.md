@@ -1032,6 +1032,8 @@ requires a schema-v6 append-only resolution of the existing blocked record. Posi
 existing accounting; positive BTC/BNB/other fees remain unsupported. Completion is a durable global
 predicate—terminal order, complete base and quote trade truth, SAFE complete coverage, no unresolved
 pending/block, and synchronized Portfolio/session—not a test of newly blocked rows in one invocation.
+Schema-v6 and the offline resolution service now implement this predicate and append-only policy; the
+final offline safety review passed, while separately authorized production remediation remains pending.
 
 The committed lifecycle has one terminal state, CONSUMED. Transaction-local PREPARED cannot become
 visible without the linked command; stale authorization fails before insert, so EXPIRED/CANCELED
