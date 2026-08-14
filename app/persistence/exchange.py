@@ -37,6 +37,7 @@ from app.exchange_execution.stage4_sell_recovery import (
     Stage4SellRecoveryAuthorization,
     Stage4SellRecoveryEvent,
     Stage4SellRecoveryEventType,
+    Stage4SellRecoveryReason,
     reason_set_digest,
 )
 from app.market.models import MarketStreamKey
@@ -1152,8 +1153,7 @@ class SQLiteExchangePersistence:
             raise PersistenceIntegrityError("managed SELL recovery requires schema version 8")
         if snapshot_stage not in {"SNAPSHOT_B", "FINAL_GATE", "RECOVERY"}:
             raise Stage4SellRecoveryConflictError("invalid recovery snapshot stage")
-        digest = reason_set_digest(reasons)
-        ordinal = 1 if event_type is Stage4SellRecoveryEventType.REQUIRED else 2
+        initial_ordinal = 1 if event_type is Stage4SellRecoveryEventType.REQUIRED else 2
         connection = self._connection
         committed = False
         try:
@@ -1198,7 +1198,7 @@ class SQLiteExchangePersistence:
                 "WHERE authority_id=? AND event_ordinal=1",
                 (row["authority_id"],),
             ).fetchone()
-            if ordinal == 2 and existing_required is None:
+            if initial_ordinal == 2 and existing_required is None:
                 raise Stage4SellRecoveryPreconditionError("recovery-required event is absent")
             if event_type is Stage4SellRecoveryEventType.CONTINUATION_ALLOWED:
                 state = deserialize_portfolio_state(row["state_payload"])
@@ -1218,26 +1218,44 @@ class SQLiteExchangePersistence:
                     "blocked": unsettled[1],
                     "status": "SYNCHRONIZED",
                 }
+                incompatibilities: set[str] = set()
+                if current_rules_fingerprint != row["rules_fingerprint"]:
+                    incompatibilities.add(Stage4SellRecoveryReason.SNAPSHOT_RULE_CHANGED.value)
                 if (
-                    current_rules_fingerprint != row["rules_fingerprint"]
-                    or row["portfolio_version"] != row["predecessor_portfolio_version"]
+                    row["portfolio_version"] != row["predecessor_portfolio_version"]
                     or row["state_digest"] != row["predecessor_portfolio_digest"]
-                    or state.base_balance != deserialize_decimal(row["exact_managed_quantity"])
-                    or row["submission_count"] != row["expected_submission_count"]
-                    or row["reconciliation_status"] != "SAFE"
+                ):
+                    incompatibilities.add(Stage4SellRecoveryReason.PORTFOLIO_CHANGED.value)
+                if state.base_balance != deserialize_decimal(row["exact_managed_quantity"]):
+                    incompatibilities.add(Stage4SellRecoveryReason.OWNERSHIP_CHANGED.value)
+                if row["submission_count"] != row["expected_submission_count"]:
+                    incompatibilities.add(Stage4SellRecoveryReason.SESSION_CHANGED.value)
+                if (
+                    row["reconciliation_status"] != "SAFE"
                     or row["current_reconciliation_generation"] != row["reconciliation_generation"]
-                    or row["current_control_generation"] != row["control_generation"]
+                ):
+                    incompatibilities.add(Stage4SellRecoveryReason.RECONCILIATION_CHANGED.value)
+                if (
+                    row["current_control_generation"] != row["control_generation"]
                     or row["kill_switch_state"] != "ACTIVE"
-                    or tuple(unsettled) != (0, 0)
+                ):
+                    incompatibilities.add(Stage4SellRecoveryReason.CONTROL_CHANGED.value)
+                if (
+                    tuple(unsettled) != (0, 0)
                     or canonical_sha256(
                         settlement_values,
                         algorithm_version="stage4-sell-settlement-state/v1",
                     )
                     != row["settlement_state_digest"]
                 ):
-                    raise Stage4SellRecoveryPreconditionError(
-                        "managed SELL recovery continuation preconditions changed"
-                    )
+                    incompatibilities.add(Stage4SellRecoveryReason.SETTLEMENT_CHANGED.value)
+                if incompatibilities:
+                    # A review that becomes stale while persistence is rereading the
+                    # durable graph is uncertainty, never a failed-open continuation.
+                    event_type = Stage4SellRecoveryEventType.DISPOSITION_REQUIRED
+                    reasons = tuple(sorted(set(reasons) | incompatibilities))
+            digest = reason_set_digest(reasons)
+            ordinal = 1 if event_type is Stage4SellRecoveryEventType.REQUIRED else 2
             event_id = canonical_sha256(
                 {"authority_id": row["authority_id"], "event_ordinal": ordinal},
                 algorithm_version="stage4-sell-recovery-event-id/v1",

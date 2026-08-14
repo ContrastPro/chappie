@@ -21,7 +21,6 @@ from app.persistence.exceptions import (
     PersistenceSchemaError,
     Stage4ManagedSellRestartRecoveryOnlyError,
     Stage4SellRecoveryConflictError,
-    Stage4SellRecoveryPreconditionError,
 )
 from app.persistence.sqlite import SQLiteTradingPersistence
 from tests.test_stage4_managed_sell_authority import predecessor, reviewed
@@ -251,8 +250,18 @@ def test_high_level_recovery_review_fails_closed_to_disposition(
     store.close()
 
 
-@pytest.mark.parametrize("mutation", ["portfolio", "session", "reconciliation", "rules"])
-def test_continuation_decision_fails_closed_on_drift(tmp_path: Path, mutation: str) -> None:
+@pytest.mark.parametrize(
+    ("mutation", "expected_reason"),
+    [
+        ("portfolio", "PORTFOLIO_CHANGED"),
+        ("session", "SESSION_CHANGED"),
+        ("reconciliation", "RECONCILIATION_CHANGED"),
+        ("rules", "SNAPSHOT_RULE_CHANGED"),
+    ],
+)
+def test_continuation_decision_records_disposition_on_drift(
+    tmp_path: Path, mutation: str, expected_reason: str
+) -> None:
     store, key = candidate(tmp_path / f"{mutation}.sqlite3")
     store.record_stage4_sell_recovery_required(
         key,
@@ -271,16 +280,24 @@ def test_continuation_decision_fails_closed_on_drift(tmp_path: Path, mutation: s
     else:
         rules = "f" * 64
     store._connection.commit()
-    with pytest.raises(Stage4SellRecoveryPreconditionError):
-        store.decide_stage4_sell_recovery(
-            key,
-            decision=Stage4SellRecoveryEventType.CONTINUATION_ALLOWED,
-            reasons=("VERIFIED_NO_EXCHANGE_ORDER",),
-            snapshot_digest="c" * 64,
-            current_rules_fingerprint=rules,
-            occurred_at_ms=6000,
-            authorization=authorization(),
-        )
+    event = store.decide_stage4_sell_recovery(
+        key,
+        decision=Stage4SellRecoveryEventType.CONTINUATION_ALLOWED,
+        reasons=("VERIFIED_NO_EXCHANGE_ORDER",),
+        snapshot_digest="c" * 64,
+        current_rules_fingerprint=rules,
+        occurred_at_ms=6000,
+        authorization=authorization(),
+    )
+    assert event.event_type is Stage4SellRecoveryEventType.DISPOSITION_REQUIRED
+    assert event.block_reason_code == expected_reason
+    assert store.load_order(key).order.status.value == "PREPARED"
+    assert (
+        store._connection.execute(
+            "SELECT count(*) FROM exchange_submission_attempts WHERE durable_command_key=?", (key,)
+        ).fetchone()[0]
+        == 0
+    )
     store.close()
 
 
