@@ -19,7 +19,7 @@ from app.tools import testnet_m410_recovery_proof as proof
 HISTORICAL_V6_FIXTURE = Path(__file__).parent / "fixtures" / "m4_10_recovery_proof_v6.sqlite3"
 HISTORICAL_V6_SHA256 = "1d3df2d7a07d236a7054319f52c64b72550a5bcb9818796cb376b2a11ac8ae90"
 CURRENT_STAGE4_DATABASE = Path("data/m4_10_testnet_smoke.sqlite3")
-CURRENT_STAGE4_DATABASE_SHA256 = "baeb4c9d459adc44876898b1df79a1cfe0f6a8c89f12c56024920543350d48ac"
+CURRENT_STAGE4_DATABASE_SHA256 = "d2e9a5ff427adb88f5ffcc24857165ba09eb3fa479c247f029e82d652b40bece"
 
 
 def _sha(path: Path) -> str:

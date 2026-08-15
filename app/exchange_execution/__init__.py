@@ -65,6 +65,7 @@ from app.exchange_execution.stage4_sell import (
     Stage4ManagedSellProcessClaim,
     Stage4ManagedSellRiskEnvelope,
     derive_stage4_sell_economic_slot,
+    derive_stage4_sell_successor_economic_slot,
 )
 from app.exchange_execution.stage4_sell_disposition import (
     DISPOSITION_AUTHORIZATION_ENV,
@@ -150,6 +151,7 @@ __all__ = [
     "create_client_order_id",
     "derive_phase3_economic_slot",
     "derive_stage4_sell_economic_slot",
+    "derive_stage4_sell_successor_economic_slot",
     "dispose_stage4_sell_no_execution",
     "evaluate_stage4_sell_recovery",
     "status_after_transport",

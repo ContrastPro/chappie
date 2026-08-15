@@ -33,6 +33,7 @@ class Stage4ManagedSellMaxQuantityExceededError(Stage4ManagedSellReviewError):
 
 
 STAGE4_SELL_POLICY_VERSION = "stage4-managed-full-exit/v1"
+STAGE4_SELL_SUCCESSOR_POLICY_VERSION = "stage4-managed-sell-successor/v1"
 
 
 def _decimal(value: object, name: str, *, positive: bool = False) -> Decimal:
@@ -97,6 +98,23 @@ def derive_stage4_sell_economic_slot(
             "policy": STAGE4_SELL_POLICY_VERSION,
         },
         "stage4-managed-sell-slot/v1",
+    )
+
+
+def derive_stage4_sell_successor_economic_slot(
+    predecessor_economic_slot_key: str, successor_generation: int
+) -> str:
+    """Derive the one reviewed successor slot; callers cannot supply slot entropy."""
+    require_hash(predecessor_economic_slot_key, "predecessor_economic_slot_key")
+    if successor_generation != 1:
+        raise Stage4ManagedSellReviewError("only managed SELL successor generation 1 is supported")
+    return _digest(
+        {
+            "predecessor_slot": predecessor_economic_slot_key,
+            "successor_generation": successor_generation,
+            "policy": STAGE4_SELL_SUCCESSOR_POLICY_VERSION,
+        },
+        "stage4-managed-sell-successor-slot/v1",
     )
 
 
@@ -172,6 +190,9 @@ class ReviewedStage4ManagedSellRequest:
     envelope: Stage4ManagedSellRiskEnvelope
     created_at_ms: int
     policy_version: str = STAGE4_SELL_POLICY_VERSION
+    predecessor_authority_id: str | None = None
+    predecessor_economic_slot_key: str | None = None
+    successor_generation: int = 0
 
     def __post_init__(self) -> None:
         for name in (
@@ -253,14 +274,31 @@ class ReviewedStage4ManagedSellRequest:
             raise Stage4ManagedSellReviewError("SELL command risk fingerprint mismatch")
         if self.command.execution_configuration_fingerprint != self.config_fingerprint:
             raise Stage4ManagedSellReviewError("SELL command config fingerprint mismatch")
-        expected_slot = derive_stage4_sell_economic_slot(
-            self.execution_root_id,
-            self.account_fingerprint,
-            self.portfolio_id,
-            self.portfolio_version,
-            self.portfolio_digest,
-            self.source_buy_trade_id,
-        )
+        if self.successor_generation == 0:
+            if (
+                self.predecessor_authority_id is not None
+                or self.predecessor_economic_slot_key is not None
+            ):
+                raise Stage4ManagedSellReviewError("original SELL cannot carry successor lineage")
+            expected_slot = derive_stage4_sell_economic_slot(
+                self.execution_root_id,
+                self.account_fingerprint,
+                self.portfolio_id,
+                self.portfolio_version,
+                self.portfolio_digest,
+                self.source_buy_trade_id,
+            )
+        elif self.successor_generation == 1:
+            if self.predecessor_authority_id is None:
+                raise Stage4ManagedSellReviewError("successor SELL requires predecessor authority")
+            require_text(self.predecessor_authority_id, "predecessor_authority_id")
+            if self.predecessor_economic_slot_key is None:
+                raise Stage4ManagedSellReviewError("successor SELL requires predecessor slot")
+            expected_slot = derive_stage4_sell_successor_economic_slot(
+                self.predecessor_economic_slot_key, self.successor_generation
+            )
+        else:
+            raise Stage4ManagedSellReviewError("unsupported managed SELL successor generation")
         if self.economic_slot_key != expected_slot:
             raise Stage4ManagedSellReviewError("SELL economic slot is not deterministic")
         if self.policy_version != STAGE4_SELL_POLICY_VERSION:

@@ -71,6 +71,7 @@ MIGRATION_HASHES = {
     "007_stage4_managed_sell_authority.sql": "5133bf077d65093820e111deafd5332b83b15d3bc808ab43f5aaf8ad5e4d32fa",
     "008_stage4_sell_recovery.sql": "ebefdea2ebceb9d43581c6f21303129263a5b6bb4a94b40c01b497941f77d92b",
     "009_stage4_sell_disposition.sql": "0efe056e055f4b5a925309d5dffdb5a5485cab60169457a60fd8249e83c0b636",
+    "010_stage4_sell_successor.sql": "8a5da4e85a127188b8aa45f0cfaa0a59765e4466fc26cd5bb5f4369a3b55ba7c",
 }
 
 

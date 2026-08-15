@@ -16,4 +16,4 @@ SHA-256:
 temporary path before any adversarial mutation. Do not replace it with
 `data/m4_10_testnet_smoke.sqlite3`: that protected runtime database represents
 the later Stage 4 SELL recovery state and intentionally has SHA-256
-`baeb4c9d459adc44876898b1df79a1cfe0f6a8c89f12c56024920543350d48ac`.
+`d2e9a5ff427adb88f5ffcc24857165ba09eb3fa479c247f029e82d652b40bece`.

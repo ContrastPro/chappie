@@ -68,8 +68,8 @@ class SQLitePersistenceConfig:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise PersistenceConfigurationError(f"{name} must be positive")
-        if self.expected_schema_version not in {1, 2, 3, 4, 5, 6, 7, 8, 9}:
-            raise PersistenceConfigurationError("expected_schema_version must be between 1 and 9")
+        if self.expected_schema_version not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10}:
+            raise PersistenceConfigurationError("expected_schema_version must be between 1 and 10")
         if not isinstance(self.exclusive_writer, bool):
             raise PersistenceConfigurationError("exclusive_writer must be bool")
 

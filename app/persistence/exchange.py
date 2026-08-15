@@ -1,7 +1,7 @@
 import json
 import sqlite3
 from collections.abc import Callable
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from decimal import Decimal, localcontext
 from typing import Self
 
@@ -31,6 +31,7 @@ from app.exchange_execution.stage4_sell import (
     Stage4ManagedSellClaimReceipt,
     Stage4ManagedSellProcessClaim,
     derive_stage4_sell_economic_slot,
+    derive_stage4_sell_successor_economic_slot,
 )
 from app.exchange_execution.stage4_sell_disposition import (
     DISPOSITION_POLICY_VERSION,
@@ -85,6 +86,8 @@ from app.persistence.exchange_models import (
 from app.persistence.models import PortfolioState, SQLitePersistenceConfig
 from app.persistence.sqlite import SQLiteTradingPersistence, deserialize_portfolio_state
 
+_SUCCESSOR_CREATION_TOKEN = object()
+
 
 def _order_payload(order: ExchangeOrder) -> dict[str, object]:
     return {
@@ -111,6 +114,20 @@ def _order_payload(order: ExchangeOrder) -> dict[str, object]:
 
 def _order_digest(order: ExchangeOrder) -> str:
     return canonical_sha256(_order_payload(order), algorithm_version=order.model_version)
+
+
+def _successor_lineage_values(request: ReviewedStage4ManagedSellRequest) -> dict[str, object]:
+    return {
+        "successor_authority_id": request.authority_id,
+        "predecessor_authority_id": request.predecessor_authority_id,
+        "predecessor_economic_slot_key": request.predecessor_economic_slot_key,
+        "predecessor_generation": 0,
+        "successor_generation": 1,
+        "successor_economic_slot_key": request.economic_slot_key,
+        "successor_durable_command_key": request.command.durable_command_key,
+        "created_at_ms": request.created_at_ms,
+        "policy_version": "stage4-managed-sell-successor/v1",
+    }
 
 
 def _add_decimal(left: Decimal, right: Decimal) -> Decimal:
@@ -146,7 +163,7 @@ class SQLiteExchangePersistence:
     ) -> None:
         if not isinstance(
             config, SQLitePersistenceConfig
-        ) or config.expected_schema_version not in {2, 3, 4, 5, 6, 7, 8, 9}:
+        ) or config.expected_schema_version not in {2, 3, 4, 5, 6, 7, 8, 9, 10}:
             raise PersistenceIntegrityError(
                 "exchange persistence requires schema version 2 through 9"
             )
@@ -742,11 +759,67 @@ class SQLiteExchangePersistence:
     def authorize_stage4_managed_sell_command(
         self, request: ReviewedStage4ManagedSellRequest
     ) -> Stage4ManagedSellClaimReceipt:
+        """Create only an original generation-0 managed SELL authority."""
+        if (
+            not isinstance(request, ReviewedStage4ManagedSellRequest)
+            or request.successor_generation != 0
+            or request.predecessor_authority_id is not None
+            or request.predecessor_economic_slot_key is not None
+        ):
+            raise PersistenceIntegrityError(
+                "successor SELL requires the dedicated authority boundary"
+            )
+        return self._authorize_stage4_managed_sell_command(request)
+
+    def authorize_stage4_managed_sell_successor_command(
+        self,
+        predecessor_authority_id: str,
+        request: ReviewedStage4ManagedSellRequest,
+    ) -> Stage4ManagedSellClaimReceipt:
+        """Create generation 1 from durable disposition lineage, never caller-provided slots."""
+        if self._trading.config.expected_schema_version != 10:
+            raise PersistenceIntegrityError("managed SELL successor requires schema version 10")
+        if (
+            not isinstance(request, ReviewedStage4ManagedSellRequest)
+            or request.successor_generation != 0
+            or request.predecessor_authority_id is not None
+            or request.predecessor_economic_slot_key is not None
+        ):
+            raise PersistenceIntegrityError("successor request must not select successor lineage")
+        predecessor = self._connection.execute(
+            "SELECT economic_slot_key FROM exchange_managed_sell_authorities WHERE authority_id=?",
+            (predecessor_authority_id,),
+        ).fetchone()
+        if predecessor is None:
+            raise Stage4ManagedSellStalePredecessorError("successor predecessor is absent")
+        derived = replace(
+            request,
+            predecessor_authority_id=predecessor_authority_id,
+            predecessor_economic_slot_key=predecessor["economic_slot_key"],
+            successor_generation=1,
+            economic_slot_key=derive_stage4_sell_successor_economic_slot(
+                predecessor["economic_slot_key"], 1
+            ),
+        )
+        return self._authorize_stage4_managed_sell_command(
+            derived, _creation_token=_SUCCESSOR_CREATION_TOKEN
+        )
+
+    def _authorize_stage4_managed_sell_command(
+        self,
+        request: ReviewedStage4ManagedSellRequest,
+        *,
+        _creation_token: object | None = None,
+    ) -> Stage4ManagedSellClaimReceipt:
         """Atomically consume the sole managed-SELL authority and prepare its command."""
-        if self._trading.config.expected_schema_version not in {7, 8, 9}:
+        if self._trading.config.expected_schema_version not in {7, 8, 9, 10}:
             raise PersistenceIntegrityError("managed SELL authority requires schema version 7")
         if not isinstance(request, ReviewedStage4ManagedSellRequest):
             raise PersistenceIntegrityError("invalid reviewed managed SELL request")
+        if request.successor_generation == 1 and _creation_token is not _SUCCESSOR_CREATION_TOKEN:
+            raise PersistenceIntegrityError(
+                "successor SELL requires the dedicated authority boundary"
+            )
         command = request.command
         client_id = DeterministicClientOrderIdFactory().create_client_order_id(
             environment=ExecutionEnvironment.TESTNET,
@@ -823,6 +896,37 @@ class SQLiteExchangePersistence:
                     authority_digest,
                 ):
                     raise Stage4ManagedSellAuthorityError("managed SELL authority conflicts")
+                if request.successor_generation == 1:
+                    lineage = connection.execute(
+                        "SELECT * FROM exchange_managed_sell_successors WHERE successor_authority_id=?",
+                        (request.authority_id,),
+                    ).fetchone()
+                    expected_lineage = _successor_lineage_values(request)
+                    if (
+                        lineage is None
+                        or tuple(
+                            lineage[key]
+                            for key in (
+                                "successor_authority_id",
+                                "predecessor_authority_id",
+                                "predecessor_economic_slot_key",
+                                "predecessor_generation",
+                                "successor_generation",
+                                "successor_economic_slot_key",
+                                "successor_durable_command_key",
+                                "created_at_ms",
+                                "policy_version",
+                            )
+                        )
+                        != tuple(expected_lineage.values())
+                        or lineage["payload"] != canonical_json(expected_lineage)
+                        or lineage["payload_digest"]
+                        != canonical_sha256(
+                            expected_lineage,
+                            algorithm_version="stage4-managed-sell-successor/v1",
+                        )
+                    ):
+                        raise PersistenceIntegrityError("managed SELL successor lineage is corrupt")
                 connection.rollback()
                 claim = self._stage4_sell_claims.get(request.authority_id)
                 return Stage4ManagedSellClaimReceipt(
@@ -832,6 +936,64 @@ class SQLiteExchangePersistence:
                     claim,
                     recovered=claim is None,
                 )
+            predecessor = None
+            if request.successor_generation == 1:
+                predecessor = connection.execute(
+                    "SELECT a.authority_id,a.economic_slot_key,a.execution_root_id,a.session_id,"
+                    "a.account_fingerprint,a.managed_portfolio_id,a.predecessor_portfolio_version,"
+                    "a.predecessor_portfolio_digest,a.exact_managed_quantity,a.source_buy_command_key,"
+                    "a.source_buy_trade_id,a.status,o.status AS order_status,o.exchange_order_id,"
+                    "(SELECT count(*) FROM exchange_submission_attempts x WHERE "
+                    "x.durable_command_key=o.durable_command_key) AS attempts,"
+                    "(SELECT count(*) FROM exchange_order_events x WHERE x.durable_command_key="
+                    "o.durable_command_key AND x.new_status='SUBMITTING') AS submitting,"
+                    "(SELECT count(*) FROM exchange_trades x WHERE x.durable_command_key="
+                    "o.durable_command_key AND x.side='SELL') AS trades "
+                    "FROM exchange_managed_sell_authorities a JOIN exchange_orders o ON "
+                    "o.durable_command_key=a.consumed_durable_command_key JOIN "
+                    "exchange_managed_sell_dispositions d ON d.authority_id=a.authority_id "
+                    "WHERE a.authority_id=? AND NOT EXISTS(SELECT 1 FROM "
+                    "exchange_managed_sell_successors s WHERE s.successor_authority_id=a.authority_id)",
+                    (request.predecessor_authority_id,),
+                ).fetchone()
+                if (
+                    predecessor is None
+                    or predecessor["economic_slot_key"] != request.predecessor_economic_slot_key
+                    or predecessor["status"] != "CONSUMED"
+                    or predecessor["order_status"]
+                    != ExchangeOrderStatus.DISPOSED_NO_EXECUTION.value
+                    or predecessor["exchange_order_id"] is not None
+                    or tuple(predecessor[key] for key in ("attempts", "submitting", "trades"))
+                    != (0, 0, 0)
+                    or tuple(
+                        predecessor[key]
+                        for key in (
+                            "execution_root_id",
+                            "session_id",
+                            "account_fingerprint",
+                            "managed_portfolio_id",
+                            "predecessor_portfolio_version",
+                            "predecessor_portfolio_digest",
+                            "exact_managed_quantity",
+                            "source_buy_command_key",
+                            "source_buy_trade_id",
+                        )
+                    )
+                    != (
+                        request.execution_root_id,
+                        request.session_id,
+                        request.account_fingerprint,
+                        request.portfolio_id,
+                        request.portfolio_version,
+                        request.portfolio_digest,
+                        serialize_decimal(request.exact_managed_quantity),
+                        request.source_buy_command_key,
+                        request.source_buy_trade_id,
+                    )
+                ):
+                    raise Stage4ManagedSellStalePredecessorError(
+                        "managed SELL successor predecessor is not safely disposed"
+                    )
             root = connection.execute(
                 "SELECT account_fingerprint,configuration_fingerprint FROM "
                 "exchange_execution_roots WHERE execution_root_id=?",
@@ -1061,6 +1223,28 @@ class SQLiteExchangePersistence:
                     ),
                 ),
             )
+            if predecessor is not None:
+                successor_values = _successor_lineage_values(request)
+                successor_payload = canonical_json(successor_values)
+                connection.execute(
+                    "INSERT INTO exchange_managed_sell_successors VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                    (
+                        request.authority_id,
+                        request.predecessor_authority_id,
+                        request.predecessor_economic_slot_key,
+                        0,
+                        1,
+                        request.economic_slot_key,
+                        command.durable_command_key,
+                        request.created_at_ms,
+                        "stage4-managed-sell-successor/v1",
+                        successor_payload,
+                        canonical_sha256(
+                            successor_values,
+                            algorithm_version="stage4-managed-sell-successor/v1",
+                        ),
+                    ),
+                )
             self._hit("stage4_sell_after_audit")
             self._hit("stage4_sell_before_commit")
             connection.commit()
@@ -1154,7 +1338,7 @@ class SQLiteExchangePersistence:
         authorization: Stage4SellRecoveryAuthorization | None,
         current_rules_fingerprint: str | None,
     ) -> Stage4SellRecoveryEvent:
-        if self._trading.config.expected_schema_version not in {8, 9}:
+        if self._trading.config.expected_schema_version not in {8, 9, 10}:
             raise PersistenceIntegrityError("managed SELL recovery requires schema version 8")
         if snapshot_stage not in {"SNAPSHOT_B", "FINAL_GATE", "RECOVERY"}:
             raise Stage4SellRecoveryConflictError("invalid recovery snapshot stage")
@@ -1372,8 +1556,8 @@ class SQLiteExchangePersistence:
         occurred_at_ms: int,
         authorization: Stage4SellDispositionAuthorization,
     ) -> Stage4SellDisposition:
-        if self._trading.config.expected_schema_version != 9:
-            raise Stage4SellRecoveryPreconditionError("SELL disposition requires schema version 9")
+        if self._trading.config.expected_schema_version not in {9, 10}:
+            raise Stage4SellRecoveryPreconditionError("SELL disposition requires schema version 9+")
         if not isinstance(authorization, Stage4SellDispositionAuthorization):
             raise Stage4SellRecoveryPreconditionError("SELL disposition authorization is required")
         # Consume before any durable read/write.  A lost or reused ceremony can only
