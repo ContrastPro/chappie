@@ -133,6 +133,20 @@ After SAFE_STOP:
 
 ## Logs and basic operations
 
+### Paper monitor
+
+Use the read-only local terminal dashboard while Paper is running:
+
+```text
+python -m app.tools.paper_monitor
+python -m app.tools.paper_monitor --once
+python -m app.tools.paper_monitor --interval 2
+```
+
+The monitor opens the active SQLite database read-only and reads the atomically
+published status JSON. It never creates orders, changes Portfolio state, writes
+to SQLite, or requires credentials; it is safe to run beside `python -m app.main`.
+
 `RUN_LOG_FILE` defaults to `logs/latest_run.log`; configure persistent log
 rotation in the process manager. Monitor the last successful market cycle,
 coordinator lifecycle, Testnet readiness, reconciliation status, settlement

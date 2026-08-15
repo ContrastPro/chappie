@@ -193,3 +193,41 @@ def test_startup_safe_stop_does_not_start_market_polling_or_submission() -> None
     ]
     assert not published[0].submission_enabled
     assert published[1].safe_stop_reason == "TESTNET_STARTUP_BLOCKED:KILL_SWITCH_ACTIVE"
+
+
+def test_running_polling_cycle_publishes_current_operational_status() -> None:
+    published: list[ServerStatus] = []
+
+    class Engine:
+        def __init__(self) -> None:
+            self.status = SimpleNamespace(
+                lifecycle_state=PollingLifecycleState.RUNNING,
+                failed_cycles=0,
+            )
+            self.observer = None
+
+        def set_cycle_observer(self, observer) -> None:
+            self.observer = observer
+
+    engine = Engine()
+    application = SimpleNamespace(
+        startup_safe_stop_reason=None,
+        engine=engine,
+        agent=SimpleNamespace(start=lambda: engine.observer()),
+        request_shutdown=lambda: None,
+        close=lambda: None,
+        settings=SimpleNamespace(trading_mode="paper"),
+        status_report=lambda: _report(
+            lifecycle_state=PollingLifecycleState.RUNNING,
+            last_success_time_ms=456,
+        ),
+    )
+
+    publisher = SimpleNamespace(publish=published.append)
+
+    assert (
+        run_application(application, logging.getLogger(__name__), status_publisher=publisher) == 0
+    )
+    assert published[1].process_state is ServerProcessState.READY
+    assert published[1].market_polling_state == "running"
+    assert published[1].last_successful_market_cycle_time_ms == 456

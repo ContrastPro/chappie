@@ -1,1 +1,1 @@
-"""Explicit, bounded operational tools that are separate from the trader runtime."""
+"""Operator-facing, read-only command-line tools."""

@@ -1149,10 +1149,11 @@ def test_live_mode_is_structurally_rejected() -> None:
     from app.core.config import Settings
 
     with pytest.raises(ValueError, match="LIVE"):
-        Settings(trading_mode="live")
+        Settings(_env_file=None, trading_mode="live")
     with pytest.raises(ValueError, match="testnet_execution_enabled"):
-        Settings(trading_mode="testnet")
+        Settings(_env_file=None, trading_mode="testnet")
     configured = Settings(
+        _env_file=None,
         trading_mode="testnet",
         testnet_execution_enabled=True,
         persistence_enabled=True,
@@ -1164,12 +1165,14 @@ def test_live_mode_is_structurally_rejected() -> None:
     assert "test-secret" not in repr(configured)
     with pytest.raises(ValueError, match="credentials"):
         Settings(
+            _env_file=None,
             trading_mode="testnet",
             testnet_execution_enabled=True,
             persistence_enabled=True,
         )
     with pytest.raises(ValueError, match="cannot be enabled together"):
         Settings(
+            _env_file=None,
             trading_mode="testnet",
             testnet_execution_enabled=True,
             persistence_enabled=True,
@@ -1180,6 +1183,7 @@ def test_live_mode_is_structurally_rejected() -> None:
         )
     with pytest.raises(ValueError, match="persistence_enabled"):
         Settings(
+            _env_file=None,
             trading_mode="testnet",
             testnet_execution_enabled=True,
             binance_testnet_api_key="key",
@@ -1187,7 +1191,7 @@ def test_live_mode_is_structurally_rejected() -> None:
             binance_testnet_account_fingerprint="account-m48",
         )
     with pytest.raises(ValueError, match="requires testnet mode"):
-        Settings(testnet_execution_enabled=True)
+        Settings(_env_file=None, testnet_execution_enabled=True)
 
 
 def test_runtime_startup_runs_ordered_gates_without_creating_network(

@@ -237,6 +237,7 @@ class SynchronousRestPollingEngine:
         projector: MarketEventProjector | None = None,
         event_id_factory: EventIdFactory | None = None,
         correlation_id_factory: CorrelationIdFactory | None = None,
+        cycle_observer: Callable[[], None] | None = None,
     ) -> None:
         if (dispatcher is None) != (projector is None):
             raise PollingEngineConfigurationError(
@@ -253,6 +254,7 @@ class SynchronousRestPollingEngine:
         self._projector = projector
         self._event_id_factory = event_id_factory or UUIDEventIdFactory()
         self._correlation_id_factory = correlation_id_factory or UUIDCorrelationIdFactory()
+        self._cycle_observer = cycle_observer
         self._cycle_exchange_time_ms: int | None = None
         self._cycle_clock_skew_ms: int | None = None
         self._status = PollingStatus(
@@ -274,6 +276,10 @@ class SynchronousRestPollingEngine:
     @property
     def status(self) -> PollingStatus:
         return self._status
+
+    def set_cycle_observer(self, observer: Callable[[], None] | None) -> None:
+        """Set an isolated operational callback invoked after a completed cycle."""
+        self._cycle_observer = observer
 
     def request_stop(self) -> None:
         self._status = replace(self._status, stop_requested=True)
@@ -432,6 +438,7 @@ class SynchronousRestPollingEngine:
                     next_deadline += self._policy.cadence_seconds
                     while next_deadline <= now:
                         next_deadline += self._policy.cadence_seconds
+                self._notify_cycle_observer()
                 poll_immediately = False
                 continue
 
@@ -446,12 +453,14 @@ class SynchronousRestPollingEngine:
                     "Polling engine failed: category=%s",
                     result.error_category.value if result.error_category else "unknown",
                 )
+                self._notify_cycle_observer()
                 return
 
             self._status = replace(
                 self._status,
                 lifecycle_state=PollingLifecycleState.BACKING_OFF,
             )
+            self._notify_cycle_observer()
             backoff = self._cycle_backoff_seconds()
             self._logger.warning("Polling cycle backing off for %s seconds", backoff)
             if not self._sleeper.wait(backoff, self._is_stop_requested):
@@ -467,6 +476,14 @@ class SynchronousRestPollingEngine:
             )
             next_deadline = None
             poll_immediately = True
+
+    def _notify_cycle_observer(self) -> None:
+        if self._cycle_observer is None:
+            return
+        try:
+            self._cycle_observer()
+        except Exception:
+            self._logger.exception("Polling cycle observer failed")
 
     def _execute_cycle(
         self,

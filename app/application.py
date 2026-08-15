@@ -841,6 +841,11 @@ def run_application(
                 status_publisher.publish(
                     status_for_application(application, ServerProcessState.READY)
                 )
+                application.engine.set_cycle_observer(
+                    lambda: status_publisher.publish(
+                        status_for_application(application, ServerProcessState.READY)
+                    )
+                )
             application.agent.start()
             status = application.engine.status
             if status.lifecycle_state is PollingLifecycleState.FAILED or status.failed_cycles > 0:
