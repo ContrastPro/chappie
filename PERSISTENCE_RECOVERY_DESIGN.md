@@ -1184,7 +1184,7 @@ attempt or decision. The existing PREPARED record remains the sole managed-BTC r
 
 ADR-069 adds schema-v9 `exchange_managed_sell_dispositions` for the terminal non-execution alternative.
 Its unique authority/command links and append-only triggers permit one audited `DISPOSED_NO_EXECUTION`
-transition only after a `DISPOSITION_REQUIRED` event, zero attempts, no `SUBMITTING`, no exchange ID or
+transition only from the exact authority-bound `PREPARED` order with zero attempts, no `SUBMITTING`, no exchange ID or
 SELL trade, and unchanged Portfolio/session/reconciliation/settlement lineage. The single transaction
 persists the canonical reason and digest, writes the local terminal event, and changes no economic or
 exchange-submission projection. Replays with the same reason return the same disposition; conflicts and

@@ -11,7 +11,6 @@ from app.exchange_execution import (
     ExchangeOrderStatus,
     Stage4SellDispositionAuthorization,
     Stage4SellDispositionError,
-    Stage4SellRecoveryEventType,
     dispose_stage4_sell_no_execution,
 )
 from app.exchange_execution.exceptions import ExchangeCapabilityError, ExchangeOrderStateError
@@ -35,26 +34,7 @@ def prepared_disposition(
         SQLitePersistenceConfig(path, expected_schema_version=9), failure_injector=failure_injector
     )
     receipt = store.authorize_stage4_managed_sell_command(reviewed(store))
-    key = receipt.durable_command_key
-    store.record_stage4_sell_recovery_required(
-        key,
-        reasons=("FINAL_GATE_REJECTED",),
-        snapshot_stage="FINAL_GATE",
-        snapshot_digest="b" * 64,
-        occurred_at_ms=5_000,
-    )
-    store.decide_stage4_sell_recovery(
-        key,
-        decision=Stage4SellRecoveryEventType.DISPOSITION_REQUIRED,
-        reasons=("MANUAL_DISPOSITION",),
-        snapshot_digest="c" * 64,
-        current_rules_fingerprint="a" * 64,
-        occurred_at_ms=6_000,
-        authorization=Stage4SellRecoveryAuthorization.from_environment(
-            {"STAGE4_SELL_RECOVERY_AUTHORIZED": "YES"}
-        ),
-    )
-    return store, key
+    return store, receipt.durable_command_key
 
 
 def authorization() -> Stage4SellDispositionAuthorization:
@@ -71,6 +51,12 @@ def test_disposition_is_terminal_idempotent_and_append_only(tmp_path: Path) -> N
     before_session = store._connection.execute(
         "SELECT submission_count,submitted_notional,executed_turnover FROM exchange_sessions"
     ).fetchone()
+    assert (
+        store._connection.execute(
+            "SELECT count(*) FROM exchange_managed_sell_recovery_events"
+        ).fetchone()[0]
+        == 0
+    )
     result = dispose_stage4_sell_no_execution(
         store,
         key,
@@ -110,12 +96,14 @@ def test_disposition_is_terminal_idempotent_and_append_only(tmp_path: Path) -> N
     store.close()
 
 
-def test_disposition_requires_the_durable_recovery_decision(tmp_path: Path) -> None:
+def test_disposition_requires_a_consumed_sell_authority(tmp_path: Path) -> None:
     path = tmp_path / "missing.sqlite3"
     legacy = predecessor(path)
     legacy.close()
     store = SQLiteExchangePersistence(SQLitePersistenceConfig(path, expected_schema_version=9))
-    receipt = store.authorize_stage4_managed_sell_command(reviewed(store))
+    source_buy_key = store._connection.execute(
+        "SELECT durable_command_key FROM exchange_orders WHERE side='BUY'"
+    ).fetchone()[0]
     with pytest.raises(
         (
             Stage4SellRecoveryPreconditionError,
@@ -125,7 +113,7 @@ def test_disposition_requires_the_durable_recovery_decision(tmp_path: Path) -> N
     ):
         dispose_stage4_sell_no_execution(
             store,
-            receipt.durable_command_key,
+            source_buy_key,
             reason_code="operator_disposition",
             occurred_at_ms=7_000,
             authorization=authorization(),

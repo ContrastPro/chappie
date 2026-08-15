@@ -884,8 +884,8 @@ claim is process-local and non-reconstructable; the schema-v8 decision event is 
 Unknown exchange state selects disposition. See `STAGE_4_SELL_RECOVERY_DISPOSITION_DESIGN.md`.
 
 ADR-069 implements the alternative terminal local path for the observed unsubmitted SELL: an exact
-schema-v9, append-only disposition can transition only a `DISPOSITION_REQUIRED`, zero-attempt
-`PREPARED` order to `DISPOSED_NO_EXECUTION`. It preserves the authority/command/client/slot and
+schema-v9, append-only disposition can transition only the authority-bound, zero-attempt `PREPARED`
+order to `DISPOSED_NO_EXECUTION`. It preserves the authority/command/client/slot and
 Portfolio/session lineage, releases only the local terminal reservation projection, and has no exchange,
 balance, fee, turnover, PnL, settlement, or submission-counter effect. The distinct disposition
 authorization is offline-only; production disposition and any later newly-authorized SELL remain blocked.

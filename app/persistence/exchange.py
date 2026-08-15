@@ -1391,11 +1391,6 @@ class SQLiteExchangePersistence:
                 "FROM exchange_managed_sell_authorities WHERE consumed_durable_command_key=?",
                 (durable_command_key,),
             ).fetchone()
-            disposition_event = connection.execute(
-                "SELECT 1 FROM exchange_managed_sell_recovery_events WHERE authority_id=? "
-                "AND event_ordinal=2 AND event_type='DISPOSITION_REQUIRED'",
-                (authority["authority_id"],) if authority is not None else (None,),
-            ).fetchone()
             attempts = connection.execute(
                 "SELECT count(*) FROM exchange_submission_attempts WHERE durable_command_key=?",
                 (durable_command_key,),
@@ -1455,7 +1450,6 @@ class SQLiteExchangePersistence:
                 )
             if (
                 authority is None
-                or disposition_event is None
                 or current.order.status is not ExchangeOrderStatus.PREPARED
                 or current.order.side is not ExchangeOrderSide.SELL
                 or current.order.account_fingerprint != authority["account_fingerprint"]
@@ -1980,11 +1974,6 @@ class SQLiteExchangePersistence:
             or row["exchange_order_id"] is not None
         ):
             raise PersistenceIntegrityError("managed SELL disposition integrity mismatch")
-        recovery = self._connection.execute(
-            "SELECT 1 FROM exchange_managed_sell_recovery_events WHERE authority_id=? "
-            "AND event_ordinal=2 AND event_type='DISPOSITION_REQUIRED'",
-            (row["authority_id"],),
-        ).fetchone()
         attempts = self._connection.execute(
             "SELECT count(*) FROM exchange_submission_attempts WHERE durable_command_key=?",
             (row["durable_command_key"],),
@@ -1998,7 +1987,7 @@ class SQLiteExchangePersistence:
             "SELECT count(*) FROM exchange_trades WHERE durable_command_key=?",
             (row["durable_command_key"],),
         ).fetchone()[0]
-        if recovery is None or attempts != 0 or submitting != 0 or trades != 0:
+        if attempts != 0 or submitting != 0 or trades != 0:
             raise PersistenceIntegrityError("managed SELL disposition has execution facts")
 
     def _validate_stage4_sell_recovery_events(self) -> None:
