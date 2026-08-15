@@ -25,6 +25,9 @@ dev = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = [
+    "historical: M4.10/Stage 4 forensic or one-shot experiment regression; excluded from MVP readiness",
+]
 
 [tool.ruff]
 line-length = 100

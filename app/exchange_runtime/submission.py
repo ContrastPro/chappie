@@ -8,8 +8,6 @@ from app.exchange_execution import (
     ExchangeOrderStatus,
     ExecutionEnvironment,
     PendingExposure,
-    Phase3ProcessClaim,
-    Stage4ManagedSellProcessClaim,
     SubmissionCapability,
     aggregate_pending_exposure,
 )
@@ -100,8 +98,11 @@ class TestnetPreSubmitGate:
         capability: SubmissionCapability | None,
         expected_rules_fingerprint: str,
         now_ms: int,
-        phase3_claim: Phase3ProcessClaim | None = None,
-        stage4_sell_claim: Stage4ManagedSellProcessClaim | None = None,
+        # Historical M4.10/Stage 4 claims are deliberately opaque here.  The
+        # active continuous MVP never supplies either claim; explicit archive
+        # tooling may still exercise their narrowly validated compatibility path.
+        phase3_claim: object | None = None,
+        stage4_sell_claim: object | None = None,
     ) -> PreSubmitGateResult:
         """Reread every mutable durable gate; never performs network I/O or mutation."""
         reasons: set[PreSubmitBlockReason] = set()
@@ -138,10 +139,13 @@ class TestnetPreSubmitGate:
             reasons.add(PreSubmitBlockReason.LINEAGE_MISMATCH)
         if reconciliation.status is not ExchangeReconciliationStatus.SAFE:
             reasons.add(PreSubmitBlockReason.RECONCILIATION_UNSAFE)
-        phase3_valid = self._phase3_claim_valid(
+        # Do not even import archived claim types for the normal continuous
+        # MVP path.  Their validators are reachable only when explicit
+        # historical tooling supplies a claim object.
+        phase3_valid = phase3_claim is not None and self._phase3_claim_valid(
             phase3_claim, durable, bootstrap, reconciliation.generation
         )
-        stage4_sell_valid = self._stage4_sell_claim_valid(
+        stage4_sell_valid = stage4_sell_claim is not None and self._stage4_sell_claim_valid(
             stage4_sell_claim, durable, bootstrap, reconciliation.generation
         )
         exceptional_claim_valid = phase3_valid or stage4_sell_valid
@@ -226,6 +230,8 @@ class TestnetPreSubmitGate:
     def _phase3_claim_valid(
         self, claim, durable, bootstrap, reconciliation_generation: int
     ) -> bool:
+        from app.exchange_execution.phase3 import Phase3ProcessClaim
+
         if not isinstance(claim, Phase3ProcessClaim) or claim._consumed:
             return False
         if (
@@ -271,6 +277,8 @@ class TestnetPreSubmitGate:
     def _stage4_sell_claim_valid(
         self, claim, durable, bootstrap, reconciliation_generation: int
     ) -> bool:
+        from app.exchange_execution.stage4_sell import Stage4ManagedSellProcessClaim
+
         if not isinstance(claim, Stage4ManagedSellProcessClaim) or claim._consumed:
             return False
         if (

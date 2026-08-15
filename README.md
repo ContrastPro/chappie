@@ -7,9 +7,9 @@ events. The Stage 2 domain layer contains the deterministic EMA baseline, Intent
 Planner and Trading Decision Pipeline. An optional shadow application layer can
 evaluate that pipeline on confirmed `CandleClosed` events without placing orders.
 
-The default application remains paper/public-data only. Stage 4 contains an isolated,
-disabled-by-default Binance Spot Testnet execution boundary; LIVE trading is structurally
-rejected. The project does not promise or guarantee income.
+The default application is Paper/public-data only. The active MVP optionally supports a
+separately configured Binance Spot Testnet runtime; LIVE trading is structurally rejected.
+The project does not promise or guarantee income.
 
 ## Installation
 
@@ -29,85 +29,28 @@ Copy the example configuration and review its values:
 Copy-Item .env.example .env
 ```
 
-Paper mode needs no API keys. M4.8 Testnet configuration is explicit and disabled by default:
+Paper mode needs no API keys. Testnet configuration is explicit and disabled by default:
 `TRADING_MODE=testnet`, `TESTNET_EXECUTION_ENABLED=true`, dedicated
 `BINANCE_TESTNET_API_KEY`/`BINANCE_TESTNET_SECRET_KEY`, and the fixed
 `https://testnet.binance.vision` endpoint. Never commit a real `.env`; secrets are redacted and
 must not be logged or persisted. `TRADING_MODE=live` is rejected. Automated validation uses
 only fake exchange dependencies and makes no authenticated request.
 
-If Testnet recovery finds an active kill switch, unresolved/non-terminal order or unsafe
-reconciliation state, startup remains available in recovery-only mode. Persistence,
-reconciliation, settlement and status remain available, while no submission capability, execution
-service or Testnet decision consumer exists. After the durable blocker is resolved, restart the
-process to perform a fresh readiness check; recovery-only does not promote itself in-process.
+The continuous Testnet MVP uses the disposable exchange schema **v4**: durable orders,
+reconciliation, authoritative trades, settlement, and a managed Portfolio. Startup performs bounded
+readiness checks; an unsafe reconciliation, unresolved order, or settlement blocker is recovery-only
+and cannot submit. An unexpected execution failure enters `SAFE_STOP`: later events in that process
+cannot submit, there is no automatic retry, and a fresh process is required after diagnosis or reset.
 
-M4.9 offline crash/restart torture recreates fresh production graphs around file-backed SQLite and
-a deterministic fake exchange. Repeated NOT_FOUND, later FOUND, lost acknowledgements, duplicate
-decisions and settlement restarts remain no-resubmit/exact-once. This is automated safety evidence,
-not an authenticated Testnet smoke. M4.10 Phase 1 authenticated read-only and Phase 2 signed
-`/api/v3/order/test` evidence pass; LIVE remains unsupported.
+Testnet and development databases are disposable. Stop the process, retain the database and logs only
+when they help diagnose an issue, otherwise reset the specific database and start fresh. Never manually
+repair financial rows to keep an experiment alive. See [`SERVER_MVP_RUNBOOK.md`](SERVER_MVP_RUNBOOK.md).
 
-The M4.10 controlled Spot Testnet security preflight is completed and its final safety review
-passed. The dedicated `python -m app.tools.testnet_phase1` harness is structurally read-only,
-GET-only, capped at five requests and isolated from persistence/submission composition. Phase 1
-retry #1 passed with four GETs, no open orders/trades and no side effects; that authorization did
-not authorize Phase 2. The first attempt's `logs/m4_10_phase1.log` evidence is retained after a safe
-one-public-GET contract-drift stop; separately authorized retry #1 used
-`logs/m4_10_phase1_retry1.log` without overwriting it.
-The dedicated `python -m app.tools.testnet_phase2` harness requires the exact non-secret
-`M4_10_PHASE2_AUTHORIZED=YES` token and permits one request only: fixed-host
-`POST /api/v3/order/test`. Its reviewed BUY quantity is `0.00016000` BTC, validated entirely with
-`Decimal` against the Phase 1 rules and the manually observed public reference price
-`63849.22000000`; it is Phase 2-only evidence and is not a real-order quantity. Phase 2 passed with
-exactly one test-endpoint POST and no financial semantics. Phase 3 execution remains blocked and
-unauthorized; the account's pre-existing 1 BTC remains external rather than managed Portfolio history.
-The Phase 3 final design review accepts ADR-064: a zero-BTC, `25 USDT` managed
-subledger plus durable one-shot authority consumed atomically with the sole PREPARED command. A
-The schema-v5 safety boundary is implemented. The global switch remains ACTIVE; only the transaction's
-in-memory exact-command claim may reach the final gate, so restart cannot recreate eligibility.
-The offline schema-v5 one-shot authority implementation is complete and its final adversarial safety
-review passed. The dedicated one-shot Phase 3 operator completed its authorized ACK-level submission;
-ACK is not fill or settlement evidence.
-See [`M4_10_TESTNET_SMOKE_PLAN.md`](M4_10_TESTNET_SMOKE_PLAN.md). Configuring credentials does not
-authorize an authenticated read, `/api/v3/order/test` or a real order; each is a separate gate.
-
-Phase 3 subsequently completed its single ACK-level submission; ACK is not fill evidence. The Phase 4
-same-database recovery/settlement harness is complete and its final offline safety review passed. It
-has no submission path and remains unauthorized pending separate execution approval.
-
-The first real Phase 4 observation proved a complete FILLED trade and SAFE reconciliation, then stopped
-INCOMPLETE because Binance labeled an exact zero commission as BTC. ADR-065 accepts exact finite Decimal
-zero as asset-neutral while preserving the original trade and blocked audit record. Schema-v6
-append-only resolution is implemented offline and its final offline safety review passed; production
-remediation subsequently completed under separate authorization and produced synchronized durable
-truth. The dedicated
-`python -m app.tools.testnet_phase4_remediate_zero_fee` harness is implemented offline: it has no
-HTTP/credential dependency, accepts only its exact remediation token, validates the known durable
-shape, and writes a new exclusive remediation evidence file only after local synchronized truth. Its
-final offline safety review passed. The observation-only
-`python -m app.tools.testnet_m410_recovery_proof` harness is now implemented with a distinct exact
-authorization, immutable read-only SQLite access, full durable lineage/digest validation, unchanged
-database checksum enforcement and exclusive sanitized evidence. Its separately authorized production
-proof passed, completing M4.10. M4.11 evidence aggregation is complete with `STAGE_4_BLOCKED`:
-the accepted architecture still requires controlled Testnet SELL evidence in addition to the proven
-BUY. Controlled SELL execution has not occurred or been authorized; Stage 5, continuous Testnet and
-LIVE remain not started. See
-[`M4_11_STAGE_4_COMPLETION_REPORT.md`](M4_11_STAGE_4_COMPLETION_REPORT.md).
-
-The offline design for the remaining managed-SELL evidence gap is
-[`STAGE_4_MANAGED_SELL_CLOSURE_DESIGN.md`](STAGE_4_MANAGED_SELL_CLOSURE_DESIGN.md). It is
-implemented and validated offline under accepted ADR-066. Schema v7 adds a distinct append-only
-managed-SELL authority, exact managed-inventory checks, complete MARKET quantity limits and a
-single-use process claim; its final offline adversarial schema review passed. It permits only an
-exact full managed-position exit under fresh rules in the same durable
-lineage; external account BTC is never Risk inventory. The dedicated one-shot operator is now
-implemented and reviewed offline with a two-snapshot preflight, exact managed quantity, the
-schema-v7 claim, the existing final gate, SUBMITTING-before-network and an eleven-request hard
-budget (ten GETs plus at most one POST). Execution remains unauthorized and no SELL evidence exists.
-Its final offline adversarial review passed after hardening managed-history provenance and atomic,
-PASS-last evidence publication after resource close. The next safe action is separate production
-execution authorization preparation; continuous Testnet, LIVE and Stage 5 have not started.
+M4.10 and Stage 4 one-shot/recovery material is retained as historical forensic evidence, not as the
+operational MVP architecture. Historical tools remain explicit modules under `app.tools`; do not use
+them for normal server operation. Their regressions carry the `historical` marker and can be run with
+`pytest -m historical`. MVP readiness uses `pytest -m "not historical"`; full `pytest` continues to
+exercise both active and historical suites. LIVE remains unavailable.
 
 Important defaults:
 

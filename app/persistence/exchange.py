@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 import json
 import sqlite3
 from collections.abc import Callable
 from dataclasses import asdict, replace
 from decimal import Decimal, localcontext
-from typing import Self
+from typing import TYPE_CHECKING, Self
 
 from app.exchange_execution.factories import DeterministicClientOrderIdFactory
 from app.exchange_execution.lifecycle import transition_order
@@ -19,32 +21,6 @@ from app.exchange_execution.models import (
     ExecutionSessionState,
     KillSwitch,
     KillSwitchState,
-)
-from app.exchange_execution.phase3 import (
-    Phase3ClaimReceipt,
-    Phase3ProcessClaim,
-    ReviewedPhase3SmokeRequest,
-    derive_phase3_economic_slot,
-)
-from app.exchange_execution.stage4_sell import (
-    ReviewedStage4ManagedSellRequest,
-    Stage4ManagedSellClaimReceipt,
-    Stage4ManagedSellProcessClaim,
-    derive_stage4_sell_economic_slot,
-    derive_stage4_sell_successor_economic_slot,
-)
-from app.exchange_execution.stage4_sell_disposition import (
-    DISPOSITION_POLICY_VERSION,
-    Stage4SellDisposition,
-    Stage4SellDispositionAuthorization,
-)
-from app.exchange_execution.stage4_sell_recovery import (
-    RECOVERY_POLICY_VERSION,
-    Stage4SellRecoveryAuthorization,
-    Stage4SellRecoveryEvent,
-    Stage4SellRecoveryEventType,
-    Stage4SellRecoveryReason,
-    reason_set_digest,
 )
 from app.market.models import MarketStreamKey
 from app.persistence.canonical import (
@@ -85,6 +61,27 @@ from app.persistence.exchange_models import (
 )
 from app.persistence.models import PortfolioState, SQLitePersistenceConfig
 from app.persistence.sqlite import SQLiteTradingPersistence, deserialize_portfolio_state
+
+if TYPE_CHECKING:
+    from app.exchange_execution.phase3 import (
+        Phase3ClaimReceipt,
+        Phase3ProcessClaim,
+        ReviewedPhase3SmokeRequest,
+    )
+    from app.exchange_execution.stage4_sell import (
+        ReviewedStage4ManagedSellRequest,
+        Stage4ManagedSellClaimReceipt,
+        Stage4ManagedSellProcessClaim,
+    )
+    from app.exchange_execution.stage4_sell_disposition import (
+        Stage4SellDisposition,
+        Stage4SellDispositionAuthorization,
+    )
+    from app.exchange_execution.stage4_sell_recovery import (
+        Stage4SellRecoveryAuthorization,
+        Stage4SellRecoveryEvent,
+        Stage4SellRecoveryEventType,
+    )
 
 _SUCCESSOR_CREATION_TOKEN = object()
 
@@ -425,6 +422,14 @@ class SQLiteExchangePersistence:
         self, request: ReviewedPhase3SmokeRequest
     ) -> Phase3ClaimReceipt:
         """Atomically consume one reviewed authority and prepare its sole command."""
+        # Historical M4.10 support is loaded only by the explicit historical
+        # operation, never by normal schema-v4 MVP startup.
+        from app.exchange_execution.phase3 import (
+            Phase3ClaimReceipt,
+            Phase3ProcessClaim,
+            ReviewedPhase3SmokeRequest,
+        )
+
         if self._trading.config.expected_schema_version != 5:
             raise PersistenceIntegrityError("Phase 3 authority requires schema version 5")
         if not isinstance(request, ReviewedPhase3SmokeRequest):
@@ -760,6 +765,10 @@ class SQLiteExchangePersistence:
         self, request: ReviewedStage4ManagedSellRequest
     ) -> Stage4ManagedSellClaimReceipt:
         """Create only an original generation-0 managed SELL authority."""
+        from app.exchange_execution.stage4_sell import (
+            ReviewedStage4ManagedSellRequest,
+        )
+
         if (
             not isinstance(request, ReviewedStage4ManagedSellRequest)
             or request.successor_generation != 0
@@ -777,6 +786,11 @@ class SQLiteExchangePersistence:
         request: ReviewedStage4ManagedSellRequest,
     ) -> Stage4ManagedSellClaimReceipt:
         """Create generation 1 from durable disposition lineage, never caller-provided slots."""
+        from app.exchange_execution.stage4_sell import (
+            ReviewedStage4ManagedSellRequest,
+            derive_stage4_sell_successor_economic_slot,
+        )
+
         if self._trading.config.expected_schema_version != 10:
             raise PersistenceIntegrityError("managed SELL successor requires schema version 10")
         if (
@@ -812,6 +826,12 @@ class SQLiteExchangePersistence:
         _creation_token: object | None = None,
     ) -> Stage4ManagedSellClaimReceipt:
         """Atomically consume the sole managed-SELL authority and prepare its command."""
+        from app.exchange_execution.stage4_sell import (
+            ReviewedStage4ManagedSellRequest,
+            Stage4ManagedSellClaimReceipt,
+            Stage4ManagedSellProcessClaim,
+        )
+
         if self._trading.config.expected_schema_version not in {7, 8, 9, 10}:
             raise PersistenceIntegrityError("managed SELL authority requires schema version 7")
         if not isinstance(request, ReviewedStage4ManagedSellRequest):
@@ -1285,6 +1305,8 @@ class SQLiteExchangePersistence:
         occurred_at_ms: int,
     ) -> Stage4SellRecoveryEvent:
         """Append the sole recovery-required fact for an unsubmitted managed SELL."""
+        from app.exchange_execution.stage4_sell_recovery import Stage4SellRecoveryEventType
+
         return self._append_stage4_sell_recovery_event(
             durable_command_key,
             event_type=Stage4SellRecoveryEventType.REQUIRED,
@@ -1308,6 +1330,11 @@ class SQLiteExchangePersistence:
         authorization: Stage4SellRecoveryAuthorization,
     ) -> Stage4SellRecoveryEvent:
         """Record one audited recovery disposition; this never grants submission authority."""
+        from app.exchange_execution.stage4_sell_recovery import (
+            Stage4SellRecoveryAuthorization,
+            Stage4SellRecoveryEventType,
+        )
+
         if decision not in {
             Stage4SellRecoveryEventType.CONTINUATION_ALLOWED,
             Stage4SellRecoveryEventType.DISPOSITION_REQUIRED,
@@ -1338,6 +1365,13 @@ class SQLiteExchangePersistence:
         authorization: Stage4SellRecoveryAuthorization | None,
         current_rules_fingerprint: str | None,
     ) -> Stage4SellRecoveryEvent:
+        from app.exchange_execution.stage4_sell_recovery import (
+            RECOVERY_POLICY_VERSION,
+            Stage4SellRecoveryEventType,
+            Stage4SellRecoveryReason,
+            reason_set_digest,
+        )
+
         if self._trading.config.expected_schema_version not in {8, 9, 10}:
             raise PersistenceIntegrityError("managed SELL recovery requires schema version 8")
         if snapshot_stage not in {"SNAPSHOT_B", "FINAL_GATE", "RECOVERY"}:
@@ -1533,6 +1567,11 @@ class SQLiteExchangePersistence:
 
     @staticmethod
     def _recovery_event(row: sqlite3.Row, *, replayed: bool) -> Stage4SellRecoveryEvent:
+        from app.exchange_execution.stage4_sell_recovery import (
+            Stage4SellRecoveryEvent,
+            Stage4SellRecoveryEventType,
+        )
+
         return Stage4SellRecoveryEvent(
             row["recovery_event_id"],
             row["authority_id"],
@@ -1556,6 +1595,12 @@ class SQLiteExchangePersistence:
         occurred_at_ms: int,
         authorization: Stage4SellDispositionAuthorization,
     ) -> Stage4SellDisposition:
+        from app.exchange_execution.stage4_sell_disposition import (
+            DISPOSITION_POLICY_VERSION,
+            Stage4SellDisposition,
+            Stage4SellDispositionAuthorization,
+        )
+
         if self._trading.config.expected_schema_version not in {9, 10}:
             raise Stage4SellRecoveryPreconditionError("SELL disposition requires schema version 9+")
         if not isinstance(authorization, Stage4SellDispositionAuthorization):
@@ -2113,6 +2158,8 @@ class SQLiteExchangePersistence:
 
     def _validate_stage4_sell_disposition(self, row: sqlite3.Row) -> None:
         """Validate ADR-069's immutable local no-execution terminal record."""
+        from app.exchange_execution.stage4_sell_disposition import DISPOSITION_POLICY_VERSION
+
         try:
             payload = json.loads(row["payload"])
         except (TypeError, json.JSONDecodeError) as error:
@@ -2175,6 +2222,11 @@ class SQLiteExchangePersistence:
             raise PersistenceIntegrityError("managed SELL disposition has execution facts")
 
     def _validate_stage4_sell_recovery_events(self) -> None:
+        from app.exchange_execution.stage4_sell_recovery import (
+            RECOVERY_POLICY_VERSION,
+            reason_set_digest,
+        )
+
         rows = self._connection.execute(
             "SELECT e.*,a.consumed_durable_command_key,a.economic_slot_key AS authority_slot,"
             "o.client_order_id AS order_client_id,o.status AS order_status,o.side AS order_side "
@@ -2241,6 +2293,8 @@ class SQLiteExchangePersistence:
             raise PersistenceIntegrityError("managed SELL recovery event sequence is corrupt")
 
     def _validate_stage4_sell_authorities(self) -> None:
+        from app.exchange_execution.stage4_sell import derive_stage4_sell_economic_slot
+
         rows = self._connection.execute(
             "SELECT a.*,o.execution_root_id AS order_root,o.session_id AS order_session,"
             "o.account_fingerprint AS order_account,o.side AS order_side,o.original_quantity,"
@@ -2384,6 +2438,8 @@ class SQLiteExchangePersistence:
                 raise PersistenceIntegrityError("managed SELL authority event digest is corrupt")
 
     def _validate_phase3_authorities(self) -> None:
+        from app.exchange_execution.phase3 import derive_phase3_economic_slot
+
         rows = self._connection.execute(
             "SELECT a.*,o.execution_root_id AS order_root,o.session_id AS order_session,"
             "o.account_fingerprint AS order_account,o.side AS order_side,"

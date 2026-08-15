@@ -2,6 +2,18 @@
 
 Этот документ фиксирует принятые архитектурные и процессные решения. Все приведённые решения действуют с даты `2026-08-03`, пока не заменены новым явно зафиксированным решением.
 
+## Active MVP scope
+
+The active server MVP is the continuous Paper/Testnet flow on exchange schema v4:
+startup, reconciliation, durable intent, risk/final gate, at most one submission,
+authoritative settlement, and Portfolio. Unexpected Testnet execution failures
+enter `SAFE_STOP`; a fresh process and, when appropriate, a disposable dev/Testnet
+database reset are required before resuming. LIVE is unavailable.
+
+ADR-064 through ADR-069 record valuable M4.10/Stage 4 historical experiment and
+forensic boundaries. They remain immutable design/audit history but are not active
+MVP operating procedures or prerequisites for fresh Testnet startup.
+
 ## ADR-001: Decimal для финансовых значений
 
 - **Статус:** принято

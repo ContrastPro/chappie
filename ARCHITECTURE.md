@@ -14,6 +14,10 @@ the disposable database before a fresh-process restart. LIVE remains
 structurally unavailable. Operational details are in
 [`SERVER_MVP_RUNBOOK.md`](SERVER_MVP_RUNBOOK.md).
 
+Historical M4.10/Stage 4 authority, recovery, disposition, and successor flows
+are retained below as archive/audit material. They are not imported by the
+normal continuous MVP composition and are not an operator recovery procedure.
+
 ## Design Principles
 
 Chappie Trader развивается как финансовая подсистема будущей платформы Chappie. В документации и коммуникации система называется **Trading Agent** или **Autonomous Trading System**: её назначение включает анализ, управление риском, исполнение, учёт, аудит и восстановление состояния.

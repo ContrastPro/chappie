@@ -356,16 +356,18 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 
 ## Этап 4. Risk hardening и биржевое execution
 
-Статус: **BLOCKED — M4.10 COMPLETED — PASS; M4.11 evidence verdict completed;
-accepted controlled Testnet SELL evidence remains absent** (2026-08-14).
+Статус: **ACTIVE MVP — Paper/Testnet v4 continuous runtime; LIVE unavailable**.
 
-ADR-066 was accepted on 2026-08-14. The first separately authorized SELL invocation stopped safely
-after its consumed authority/PREPARED commit and before `SUBMITTING`, with zero SELL attempts. Stage 4
-remains BLOCKED because no controlled managed SELL evidence exists. Schema v8 now implements an
-offline append-only recovery-required/disposition boundary; production migration, disposition, and
-any continuation remain separately unauthorized. Retrying the normal SELL operator is forbidden.
-ADR-067 is proposed for a same-identity, separately authorized continuation ceremony; it is not
-accepted and does not authorize implementation or production recovery.
+The active MVP starts with a fresh disposable Paper or Testnet database and uses the normal durable
+order, reconciliation, settlement, and Portfolio flow. Any unexpected Testnet execution failure enters
+`SAFE_STOP`; it never retries in-process and the developer investigates or resets the disposable DB
+before a fresh-process restart. The operator procedure is
+[`SERVER_MVP_RUNBOOK.md`](SERVER_MVP_RUNBOOK.md).
+
+M4.10/Stage 4 one-shot authorities, recovery, disposition, successor-generation work, and migrations
+v5–v10 are retained as **historical experiment evidence**. They are not prerequisites for fresh MVP
+startup and do not define MVP readiness. Their explicit historical test suites remain available for
+forensic regression work; they are not normal server operations.
 
 ### Цель
 
