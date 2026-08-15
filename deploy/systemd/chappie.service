@@ -1,0 +1,27 @@
+[Unit]
+Description=Chappie MVP Paper/Testnet service
+Documentation=file:/opt/chappie/SERVER_MVP_RUNBOOK.md
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=chappie
+Group=chappie
+WorkingDirectory=/opt/chappie
+EnvironmentFile=/etc/chappie/chappie.env
+StateDirectory=chappie
+StateDirectoryMode=0750
+ExecStartPre=/usr/bin/install -d -m 0750 /var/lib/chappie/data /var/lib/chappie/logs /var/lib/chappie/archive
+ExecStart=/opt/chappie/.venv/bin/python -m app.main
+Restart=on-failure
+RestartSec=10s
+KillSignal=SIGTERM
+TimeoutStopSec=45s
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
