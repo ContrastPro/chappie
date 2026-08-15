@@ -12,6 +12,7 @@ from app.trading.pipeline import DecisionPipelineResult
 class TradingDecisionCoordinatorLifecycle(StrEnum):
     STOPPED = "STOPPED"
     RUNNING = "RUNNING"
+    SAFE_STOP = "SAFE_STOP"
 
 
 class DecisionConsumerStatus(StrEnum):
@@ -242,3 +243,4 @@ class TradingDecisionCoordinatorStatus:
     last_paper_outcome: str | None = None
     last_error_category: str | None = None
     last_error_message: str | None = None
+    testnet_safe_stop_reason: str | None = None

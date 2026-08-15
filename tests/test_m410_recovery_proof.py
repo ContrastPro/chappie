@@ -15,11 +15,9 @@ from app.tools import testnet_m410_recovery_proof as proof
 
 # This proof is historical M4.10 evidence (schema v6, after remediation and
 # before the managed Stage 4 SELL).  It must not be coupled to the evolving
-# production-state database used by later Stage 4 recovery work.
+# disposable Testnet database used by later Stage 4 recovery work.
 HISTORICAL_V6_FIXTURE = Path(__file__).parent / "fixtures" / "m4_10_recovery_proof_v6.sqlite3"
 HISTORICAL_V6_SHA256 = "1d3df2d7a07d236a7054319f52c64b72550a5bcb9818796cb376b2a11ac8ae90"
-CURRENT_STAGE4_DATABASE = Path("data/m4_10_testnet_smoke.sqlite3")
-CURRENT_STAGE4_DATABASE_SHA256 = "d2e9a5ff427adb88f5ffcc24857165ba09eb3fa479c247f029e82d652b40bece"
 
 
 def _sha(path: Path) -> str:
@@ -35,12 +33,10 @@ def resolved_database(tmp_path: Path) -> Path:
     return target
 
 
-def test_historical_fixture_is_distinct_from_current_stage4_database() -> None:
-    """The v6 proof fixture cannot silently become the later SELL state."""
+def test_historical_fixture_checksum_is_stable() -> None:
+    """The historical recovery proof has one repository-managed immutable input."""
     assert _sha(HISTORICAL_V6_FIXTURE) == HISTORICAL_V6_SHA256
-    assert _sha(CURRENT_STAGE4_DATABASE) == CURRENT_STAGE4_DATABASE_SHA256
-    assert HISTORICAL_V6_FIXTURE != CURRENT_STAGE4_DATABASE
-    assert HISTORICAL_V6_SHA256 != CURRENT_STAGE4_DATABASE_SHA256
+    assert HISTORICAL_V6_SHA256 == proof.EXPECTED_DATABASE_SHA256
 
 
 def _verify(path: Path):
@@ -868,11 +864,3 @@ def test_module_has_no_transport_or_mutating_runtime_dependencies() -> None:
         'execute("ATTACH ',
     ):
         assert mutating_keyword not in source
-
-
-def test_historical_and_current_artifacts_remain_separate() -> None:
-    assert _sha(HISTORICAL_V6_FIXTURE) == proof.EXPECTED_DATABASE_SHA256
-    assert _sha(CURRENT_STAGE4_DATABASE) == CURRENT_STAGE4_DATABASE_SHA256
-    assert _sha(Path("logs/m4_10_recovery_proof.log")) == (
-        "b4611033201903980de341272232c119d330012979d209a7b3fd82db3412c997"
-    )

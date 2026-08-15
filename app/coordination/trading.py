@@ -99,6 +99,10 @@ class TradingDecisionCoordinator:
     def start(self, dispatcher: MarketEventDispatcher) -> None:
         if self._status.lifecycle is TradingDecisionCoordinatorLifecycle.RUNNING:
             raise TradingCoordinationStateError("coordinator is already running")
+        if self._status.lifecycle is TradingDecisionCoordinatorLifecycle.SAFE_STOP:
+            raise TradingCoordinationStateError(
+                "coordinator requires a fresh process after SAFE_STOP"
+            )
         if not isinstance(dispatcher, MarketEventDispatcher):
             raise TradingCoordinationConfigurationError("dispatcher is invalid")
         try:
@@ -127,15 +131,25 @@ class TradingDecisionCoordinator:
             raise TradingCoordinationStateError("coordinator unsubscribe was not confirmed")
         self._dispatcher = None
         self._subscription = None
-        self._status = replace(
-            self._status,
-            lifecycle=TradingDecisionCoordinatorLifecycle.STOPPED,
-        )
+        if self._status.lifecycle is TradingDecisionCoordinatorLifecycle.RUNNING:
+            self._status = replace(
+                self._status,
+                lifecycle=TradingDecisionCoordinatorLifecycle.STOPPED,
+            )
 
     def handle_candle_closed(self, event: CandleClosed) -> None:
+        if self._status.lifecycle is TradingDecisionCoordinatorLifecycle.SAFE_STOP:
+            self._logger.warning(
+                "Testnet SAFE_STOP active; ignoring source_event_id=%s reason=%s",
+                getattr(event, "event_id", None),
+                self._status.testnet_safe_stop_reason,
+            )
+            return
         try:
             result = self.process_event(event)
         except Exception as error:  # expected application failures must not stop ingestion
+            if self._status.lifecycle is TradingDecisionCoordinatorLifecycle.SAFE_STOP:
+                return
             self._logger.error(
                 "Shared decision failed source_event_id=%s category=%s",
                 getattr(event, "event_id", None),
@@ -298,12 +312,11 @@ class TradingDecisionCoordinator:
         if self._testnet is not None:
             try:
                 self._testnet.consume(decision, snapshot)
-            except Exception as error:  # noqa: BLE001 - isolate private execution consumer
-                self._logger.error(
-                    "Testnet consumer failed source_event_id=%s category=%s",
-                    event.event_id,
-                    error.__class__.__name__,
-                )
+            except Exception as error:
+                self._enter_testnet_safe_stop(event, error)
+                raise TradingCoordinationStateError(
+                    "Testnet execution failed; SAFE_STOP requires a fresh process"
+                ) from error
         stages.append(TradingDecisionCoordinationStage.COMPLETED)
         result = TradingDecisionCoordinationResult(
             coordination_id=coordination_id,
@@ -414,6 +427,24 @@ class TradingDecisionCoordinator:
         self._completed[result.source_event_id] = result
         if len(self._completed) > self._dedup_capacity:
             self._completed.popitem(last=False)
+
+    def _enter_testnet_safe_stop(self, event: CandleClosed, error: Exception) -> None:
+        """Stop Testnet execution for this process without retaining error contents."""
+        category = error.__class__.__name__
+        self._status = replace(
+            self._status,
+            lifecycle=TradingDecisionCoordinatorLifecycle.SAFE_STOP,
+            failed_decisions=self._status.failed_decisions + 1,
+            last_event_id=event.event_id,
+            last_error_category=category,
+            last_error_message="Testnet execution failure; restart required",
+            testnet_safe_stop_reason=category,
+        )
+        self._logger.error(
+            "Testnet SAFE_STOP source_event_id=%s category=%s restart_required=true",
+            event.event_id,
+            category,
+        )
 
     @property
     def status(self) -> TradingDecisionCoordinatorStatus:

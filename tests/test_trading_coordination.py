@@ -15,6 +15,7 @@ from app.coordination import (
     TradingCoordinationStateError,
     TradingDecisionCoordinationStage,
     TradingDecisionCoordinator,
+    TradingDecisionCoordinatorLifecycle,
 )
 from app.coordination.factories import UUIDCoordinationIdFactory
 from app.exchange_runtime import TestnetExecutionConsumer as ExecutionConsumer
@@ -295,6 +296,73 @@ def test_shadow_and_testnet_receive_same_shared_objects_without_reevaluation() -
     assert shadow.calls[0][1] is calls[0][1] is result.market_snapshot
     assert shadow.calls[0][2] is calls[0][0] is result.decision_result
     assert testnet.status.executed == 1
+
+
+def test_testnet_execution_failure_enters_safe_stop_and_never_retries() -> None:
+    calls = []
+
+    def fail_once(decision, snapshot) -> None:
+        calls.append((decision, snapshot))
+        raise RuntimeError("ambiguous execution result")
+
+    testnet = ExecutionConsumer(fail_once)
+    items = candles_with_closes([3, 2, 1, 4])
+    first_event = replace(
+        event("testnet-failure", offset=len(items) - 1),
+        candle=CandleSnapshot.from_candle(items[-1]),
+    )
+    instance, _, _, pipeline = coordinator(testnet=testnet, candles=items)
+    dispatcher = MarketEventDispatcher()
+    instance.start(dispatcher)
+
+    delivery = dispatcher.publish(first_event)
+
+    assert delivery.delivered_count == 1
+    assert len(calls) == 1
+    assert instance.status.lifecycle is TradingDecisionCoordinatorLifecycle.SAFE_STOP
+    assert instance.status.testnet_safe_stop_reason == "RuntimeError"
+    assert instance.status.last_error_message == "Testnet execution failure; restart required"
+
+    second_event = replace(first_event, event_id="testnet-after-safe-stop")
+    dispatcher.publish(second_event)
+
+    assert len(calls) == 1
+    assert pipeline.calls == 1
+    with pytest.raises(TradingCoordinationStateError, match="requires RUNNING"):
+        instance.process_event(second_event)
+    instance.stop()
+    with pytest.raises(TradingCoordinationStateError, match="fresh process"):
+        instance.start(dispatcher)
+
+
+def test_testnet_hold_path_does_not_enter_safe_stop_or_execute() -> None:
+    calls = []
+    testnet = ExecutionConsumer(lambda decision, snapshot: calls.append((decision, snapshot)))
+    items = candles_with_closes([3, 2, 1, 3])
+    source_event = replace(
+        event("testnet-hold", offset=len(items) - 1),
+        candle=CandleSnapshot.from_candle(items[-1]),
+    )
+    instance, *_ = coordinator(testnet=testnet, candles=items)
+    instance.start(MarketEventDispatcher())
+
+    result = instance.process_event(source_event)
+
+    assert result.decision_result.outcome.value == "hold"
+    assert calls == []
+    assert instance.status.lifecycle is TradingDecisionCoordinatorLifecycle.RUNNING
+
+
+def test_paper_delivery_remains_available_without_testnet_safe_stop() -> None:
+    paper = PaperSpy()
+    instance, *_ = coordinator(paper=paper)
+    instance.start(MarketEventDispatcher())
+
+    result = instance.process_event(event("paper-only"))
+
+    assert result.paper_status is DecisionConsumerStatus.DELIVERED
+    assert len(paper.calls) == 1
+    assert instance.status.lifecycle is TradingDecisionCoordinatorLifecycle.RUNNING
 
 
 @pytest.mark.parametrize(

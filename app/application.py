@@ -163,6 +163,7 @@ class StageOneStatusReport:
     testnet_reconciliation_status: str | None = None
     testnet_settlement_status: str | None = None
     testnet_non_terminal_order_count: int = 0
+    testnet_safe_stop_reason: str | None = None
 
 
 @dataclass(slots=True)
@@ -349,6 +350,9 @@ class ChappieTraderApplication:
             ),
             testnet_non_terminal_order_count=(
                 self.testnet.non_terminal_order_count if self.testnet is not None else 0
+            ),
+            testnet_safe_stop_reason=(
+                coordination.testnet_safe_stop_reason if coordination is not None else None
             ),
         )
 
@@ -781,7 +785,8 @@ def log_stage_one_status(
     )
     logger.info(
         "Testnet runtime availability=%s readiness=%s reasons=%s "
-        "submission_capability_present=%s reconciliation=%s settlement=%s non_terminal=%s",
+        "submission_capability_present=%s reconciliation=%s settlement=%s non_terminal=%s "
+        "safe_stop_reason=%s",
         report.testnet_runtime_availability,
         report.testnet_readiness,
         report.testnet_readiness_reasons,
@@ -789,6 +794,7 @@ def log_stage_one_status(
         report.testnet_reconciliation_status,
         report.testnet_settlement_status,
         report.testnet_non_terminal_order_count,
+        report.testnet_safe_stop_reason,
     )
 
 

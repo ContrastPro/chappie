@@ -1,5 +1,19 @@
 # Chappie Trader Architecture
 
+## MVP server contract
+
+The active continuous Paper/Testnet MVP treats development execution state as
+disposable. Its normal Testnet path uses exchange schema **v4** (durable order
+lifecycle, reconciliation, authoritative settlement, and managed Portfolio).
+Migrations v5–v10 support historical M4.10/Stage 4 experiments and are not
+required by normal MVP startup.
+
+Unexpected Testnet execution failures enter `SAFE_STOP`: no later market event
+may submit an order in that process, and an operator must investigate or reset
+the disposable database before a fresh-process restart. LIVE remains
+structurally unavailable. Operational details are in
+[`SERVER_MVP_RUNBOOK.md`](SERVER_MVP_RUNBOOK.md).
+
 ## Design Principles
 
 Chappie Trader развивается как финансовая подсистема будущей платформы Chappie. В документации и коммуникации система называется **Trading Agent** или **Autonomous Trading System**: её назначение включает анализ, управление риском, исполнение, учёт, аудит и восстановление состояния.

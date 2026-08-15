@@ -15,6 +15,11 @@ from app.persistence.exceptions import (
 
 ZERO = Decimal(0)
 
+# The active disposable Paper/Testnet MVP uses the normal exchange lifecycle,
+# reconciliation, and settlement schema only. Later migrations are retained as
+# historical Stage 4 artifacts and are not required by the continuous runtime.
+ACTIVE_MVP_EXCHANGE_SCHEMA_VERSION = 4
+
 
 def _text(value: object, name: str) -> str:
     if not isinstance(value, str) or not value.strip():

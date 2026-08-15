@@ -37,8 +37,13 @@ from app.paper import PaperTradingCycleOutcome
 from app.paper.exceptions import PaperTradingConfigurationError
 from app.persistence import SQLiteExchangePersistence, SQLitePersistenceConfig
 from app.persistence.exceptions import PersistenceWriterConflictError
+from app.persistence.models import ACTIVE_MVP_EXCHANGE_SCHEMA_VERSION
 
 OPEN_TIME_MS = 1_700_000_000_000
+
+
+def test_active_mvp_exchange_schema_contract_is_v4() -> None:
+    assert ACTIVE_MVP_EXCHANGE_SCHEMA_VERSION == 4
 
 
 @pytest.fixture(autouse=True)
@@ -212,7 +217,9 @@ def test_production_testnet_composition_recovers_blocked_then_wires_ready_coordi
     assert blocked_status.testnet_non_terminal_order_count == 0
     blocked_application.close()
     assert blocked_provider.close_calls == 1
-    store = SQLiteExchangePersistence(SQLitePersistenceConfig(path, expected_schema_version=4))
+    store = SQLiteExchangePersistence(
+        SQLitePersistenceConfig(path, expected_schema_version=ACTIVE_MVP_EXCHANGE_SCHEMA_VERSION)
+    )
     store.set_kill_switch(
         settings.testnet_execution_root_id,
         state=KillSwitchState.CLEARED,

@@ -49,6 +49,7 @@ from app.persistence.keys import (
     fingerprint_risk_policy,
     fingerprint_snapshot_policy,
 )
+from app.persistence.models import ACTIVE_MVP_EXCHANGE_SCHEMA_VERSION
 from app.portfolio import InstrumentRules, Portfolio, PortfolioConfig
 from app.risk import PortfolioRiskPolicy, RiskManager, UUIDRiskDecisionIdFactory
 from app.risk.exchange import ExchangeRiskPolicy
@@ -180,7 +181,7 @@ def build_production_testnet_components(
             busy_timeout_ms=settings.sqlite_busy_timeout_ms,
             checkpoint_interval_transitions=settings.portfolio_checkpoint_interval_transitions,
             exclusive_writer=True,
-            expected_schema_version=4,
+            expected_schema_version=ACTIVE_MVP_EXCHANGE_SCHEMA_VERSION,
         )
     )
     owned_client = http_client is None
