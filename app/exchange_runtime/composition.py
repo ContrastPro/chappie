@@ -177,7 +177,7 @@ def build_production_testnet_components(
     owned_persistence = persistence is None
     store = persistence or SQLiteExchangePersistence(
         SQLitePersistenceConfig(
-            settings.sqlite_path,
+            settings.active_testnet_sqlite_path,
             busy_timeout_ms=settings.sqlite_busy_timeout_ms,
             checkpoint_interval_transitions=settings.portfolio_checkpoint_interval_transitions,
             exclusive_writer=True,

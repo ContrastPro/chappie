@@ -18,8 +18,10 @@ required for normal MVP startup or trading cycles.
 
 - Paper: set `SQLITE_PATH`, for example `data/chappie-paper.sqlite3`.
 - Testnet: set a separate `SQLITE_PATH`, for example
-  `data/chappie-testnet.sqlite3`.
+  `data/testnet_mvp.sqlite3`. This is the active Testnet default when no
+  operator override is supplied.
 - Never point Paper and Testnet at the same database file.
+- Normal MVP startup never reads `data/m4_10_testnet_smoke.sqlite3`.
 
 Paper and Testnet databases are disposable development artifacts. On an
 unexpected execution state, safe-stop first. Archive the database and logs only
@@ -51,12 +53,15 @@ Use a dedicated Testnet database and explicitly configure:
 TRADING_MODE=testnet
 TESTNET_EXECUTION_ENABLED=true
 PERSISTENCE_ENABLED=true
-SQLITE_PATH=data/chappie-testnet.sqlite3
+SQLITE_PATH=data/testnet_mvp.sqlite3
 ```
 
 Inject the dedicated Testnet API key, secret, and account fingerprint through
 the server's secret mechanism. Do not commit them or log them. Startup performs
 the bounded reconciliation/readiness checks before it can submit anything.
+On first run, the selected disposable database receives only the active v4
+schema plus the normal execution root, session, and managed Portfolio state.
+Any startup safety-check failure enters `SAFE_STOP` with submission disabled.
 
 ## SAFE_STOP
 
@@ -78,6 +83,16 @@ After SAFE_STOP:
 rotation in the process manager. Monitor the last successful market cycle,
 coordinator lifecycle, Testnet readiness, reconciliation status, settlement
 status, and any `SAFE_STOP` record.
+
+`SERVER_STATUS_FILE` defaults to `logs/chappie-status.json`. It is atomically
+published with the mode, process state (`STARTING`, `READY`, `SAFE_STOP`, or
+`STOPPED`), active schema, polling/reconciliation/settlement state, submission
+availability, and a sanitized safe-stop reason. It contains no secrets or
+private exchange payloads.
+
+Send `SIGINT` or `SIGTERM` for graceful shutdown. Chappie disables decision
+delivery, requests polling stop, closes persistence and network resources, then
+publishes `STOPPED`.
 
 The MVP does not provide a LIVE mode, automatic recovery ceremony, cancellation
 workflow, or unattended repair of inconsistent Testnet state.

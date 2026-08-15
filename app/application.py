@@ -80,6 +80,7 @@ from app.persistence.runtime import (
 from app.persistence.sqlite import SQLiteTradingPersistence
 from app.portfolio import InstrumentRules, Portfolio, PortfolioConfig
 from app.risk import PortfolioRiskPolicy, RiskManager, UUIDRiskDecisionIdFactory
+from app.server_status import ServerProcessState, status_for_application
 from app.shadow import (
     LoggingShadowDecisionObserver,
     ShadowDecisionConsumer,
@@ -186,6 +187,20 @@ class ChappieTraderApplication:
     testnet: ProductionTestnetComponents | None = None
     _provider_closed: bool = False
     _last_persistence_status: PersistenceStatus | None = None
+
+    @property
+    def startup_safe_stop_reason(self) -> str | None:
+        """Return the sanitized startup blocker for active Testnet only."""
+        if self.testnet is None or self.testnet.submission_ready:
+            return None
+        reasons = ",".join(reason.value for reason in self.testnet.readiness.reasons)
+        return f"TESTNET_STARTUP_BLOCKED:{reasons or 'UNKNOWN'}"
+
+    def request_shutdown(self) -> None:
+        """Disable decision delivery before asking the polling engine to stop."""
+        if self.coordinator is not None:
+            self.coordinator.stop()
+        self.agent.stop()
 
     def close(self) -> None:
         """Idempotently release resources owned by the composition root."""
@@ -801,16 +816,35 @@ def log_stage_one_status(
 def run_application(
     application: ChappieTraderApplication,
     logger: logging.Logger,
+    *,
+    status_publisher=None,
 ) -> int:
     """Run, report and clean up the application, returning a process exit code."""
 
     exit_code = 0
     interrupted = False
+    startup_safe_stop = application.startup_safe_stop_reason
     try:
-        application.agent.start()
-        status = application.engine.status
-        if status.lifecycle_state is PollingLifecycleState.FAILED or status.failed_cycles > 0:
+        if startup_safe_stop is not None:
             exit_code = 1
+            logger.error("Testnet startup SAFE_STOP reason=%s", startup_safe_stop)
+            if status_publisher is not None:
+                status_publisher.publish(
+                    status_for_application(
+                        application,
+                        ServerProcessState.SAFE_STOP,
+                        safe_stop_reason=startup_safe_stop,
+                    )
+                )
+        else:
+            if status_publisher is not None:
+                status_publisher.publish(
+                    status_for_application(application, ServerProcessState.READY)
+                )
+            application.agent.start()
+            status = application.engine.status
+            if status.lifecycle_state is PollingLifecycleState.FAILED or status.failed_cycles > 0:
+                exit_code = 1
     except KeyboardInterrupt:
         interrupted = True
         logger.info("Manual stop requested")
@@ -819,13 +853,21 @@ def run_application(
         exit_code = 1
         logger.exception("Fatal application error")
     finally:
-        application.agent.stop()
+        application.request_shutdown()
         try:
             application.close()
         except Exception:
             exit_code = 1
             logger.exception("Application resource cleanup failed")
         log_stage_one_status(application.status_report(), logger)
+        if status_publisher is not None:
+            try:
+                status_publisher.publish(
+                    status_for_application(application, ServerProcessState.STOPPED)
+                )
+            except Exception:
+                exit_code = 1
+                logger.exception("Server status shutdown publication failed")
 
     if interrupted and exit_code == 0:
         logger.info("Application stopped cleanly by user")

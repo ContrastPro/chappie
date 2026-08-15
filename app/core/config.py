@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     persistence_enabled: bool = False
     persistence_backend: Literal["sqlite"] = "sqlite"
     sqlite_path: Path = Path("data/chappie-paper.sqlite3")
+    server_status_file: Path = Path("logs/chappie-status.json")
     sqlite_busy_timeout_ms: int = Field(default=5000, gt=0)
     portfolio_checkpoint_interval_transitions: int = Field(default=100, gt=0)
     decision_coordinator_history_limit: int = Field(default=1000, gt=0)
@@ -84,6 +85,19 @@ class Settings(BaseSettings):
     testnet_max_session_execution_failures: int = Field(default=5, gt=0)
     testnet_max_drawdown: Decimal = Decimal("0.20")
 
+    @property
+    def active_testnet_sqlite_path(self) -> Path:
+        """Return the disposable database path for the continuous Testnet MVP.
+
+        An explicit ``SQLITE_PATH`` remains the operator override used by the
+        runbook.  With no override, Testnet never falls back to Paper's
+        default database or the historical M4.10 smoke database.
+        """
+        paper_default = Path("data/chappie-paper.sqlite3")
+        if self.sqlite_path == paper_default:
+            return Path("data/testnet_mvp.sqlite3")
+        return self.sqlite_path
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
@@ -108,6 +122,10 @@ class Settings(BaseSettings):
             raise ValueError("testnet mode requires dedicated credentials and account fingerprint")
         if self.trading_mode == "testnet" and not self.persistence_enabled:
             raise ValueError("testnet mode requires persistence_enabled")
+        if self.trading_mode == "testnet" and self.sqlite_path == Path(
+            "data/m4_10_testnet_smoke.sqlite3"
+        ):
+            raise ValueError("historical M4.10 database is not an active Testnet MVP database")
         if self.trading_mode == "testnet" and self.paper_trading_enabled:
             raise ValueError("paper and testnet execution cannot be enabled together")
         if self.trading_mode != "testnet" and self.testnet_execution_enabled:
