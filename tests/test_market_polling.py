@@ -42,6 +42,7 @@ KEY = MarketStreamKey("BTCUSDT", "1m")
 def make_candle(
     index: int,
     *,
+    open_price: str = "100",
     high: str = "110",
     low: str = "90",
     close: str = "105",
@@ -51,7 +52,7 @@ def make_candle(
     return Candle(
         open_time_ms=open_time_ms,
         close_time_ms=open_time_ms + INTERVAL_MS - 1,
-        open=Decimal(100),
+        open=Decimal(open_price),
         high=Decimal(high),
         low=Decimal(low),
         close=Decimal(close),
@@ -296,6 +297,50 @@ def test_one_thousand_consecutive_candles_pass_bootstrap() -> None:
     assert result.recovery is False
     assert len(provider.calls) == 1
     assert len(cache.get_snapshot(KEY)) == 1000
+
+
+def test_real_bootstrap_regular_zero_volume_tail_accepts_first_trade() -> None:
+    """Regression for the first Paper soak cache-integrity failure."""
+
+    bootstrap = [make_candle(index) for index in range(1000)]
+    closed_tail = bootstrap[-1]
+    placeholder = make_candle(
+        1000,
+        high="100",
+        low="100",
+        close="100",
+        volume="0",
+    )
+    first_trade = make_candle(
+        1000,
+        open_price="101",
+        high="102",
+        low="101",
+        close="102",
+        volume="1",
+    )
+    exchange_times = [
+        ServerTime(timestamp_ms=closed_tail.close_time_ms + 1),
+        ServerTime(timestamp_ms=placeholder.open_time_ms + 10_000),
+        ServerTime(timestamp_ms=placeholder.open_time_ms + 20_000),
+    ]
+    engine, provider, cache, _, _ = make_engine(
+        [bootstrap, [closed_tail, placeholder], [first_trade]],
+        server_time_responses=exchange_times,
+    )
+
+    bootstrap_result = engine.run_once()
+    rollover_result = engine.run_once()
+    first_trade_result = engine.run_once()
+
+    assert bootstrap_result.outcome is PollCycleOutcome.SUCCESS
+    assert rollover_result.outcome is PollCycleOutcome.SUCCESS
+    assert rollover_result.inserted == 1
+    assert first_trade_result.outcome is PollCycleOutcome.SUCCESS
+    assert first_trade_result.updated == 1
+    assert first_trade_result.recovery is False
+    assert provider.calls[-1] == ("BTCUSDT", "1m", 2)
+    assert cache.get_latest_candle(KEY) == first_trade
 
 
 def test_bootstrap_uses_exchange_time_when_local_clock_is_one_hour_behind() -> None:

@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 from dataclasses import dataclass, field
+from decimal import Decimal
 from enum import Enum
 
 from app.market.exceptions import (
@@ -17,6 +18,7 @@ from app.market.models import Candle, CandleSnapshot, MarketStreamKey
 from app.market.validation import validate_candle_sequence
 
 DEFAULT_CAPACITY_PER_STREAM = 1000
+ZERO = Decimal(0)
 
 
 class CandleUpsertResult(Enum):
@@ -222,6 +224,15 @@ class InMemoryMarketCache:
         latest = stream[-1]
         latest_candle = latest.candle
 
+        if observed_at_ms < latest.last_observed_at_ms:
+            raise self._invalid_open_update(
+                "An open-candle observation must not regress time",
+                key,
+                latest,
+                candle,
+                observed_at_ms,
+            )
+
         if candle.open_time_ms == latest_candle.open_time_ms:
             should_confirm = observed_at_ms > latest_candle.close_time_ms
             if candle == latest_candle:
@@ -250,7 +261,12 @@ class InMemoryMarketCache:
                     observed_at_ms=observed_at_ms,
                     differing_fields=self._differing_candle_fields(latest_candle, candle),
                 )
-            self._validate_open_candle_update(latest_candle, candle)
+            self._validate_open_candle_update(
+                latest_candle,
+                candle,
+                key,
+                observed_at_ms,
+            )
             current = _CacheEntry(
                 candle=self._copy_candle(candle),
                 closure_confirmed=should_confirm,
@@ -318,32 +334,92 @@ class InMemoryMarketCache:
             stream_key=key,
         )
 
-    @staticmethod
-    def _validate_open_candle_update(previous: Candle, updated: Candle) -> None:
+    @classmethod
+    def _validate_open_candle_update(
+        cls,
+        previous: Candle,
+        updated: Candle,
+        key: MarketStreamKey,
+        observed_at_ms: int,
+    ) -> None:
         if updated.open_time_ms != previous.open_time_ms:
-            raise MarketCacheInvalidOpenCandleUpdateError(
-                "An open-candle update must preserve open_time_ms"
+            raise cls._invalid_open_update(
+                "An open-candle update must preserve open_time_ms",
+                key,
+                previous,
+                updated,
+                observed_at_ms,
             )
         if updated.close_time_ms != previous.close_time_ms:
-            raise MarketCacheInvalidOpenCandleUpdateError(
-                "An open-candle update must preserve close_time_ms"
+            raise cls._invalid_open_update(
+                "An open-candle update must preserve close_time_ms",
+                key,
+                previous,
+                updated,
+                observed_at_ms,
             )
+
+        # Binance can expose a new interval before its first trade.  Such a
+        # zero-volume placeholder has provisional OHLC values; its first real
+        # trade establishes the official OHLC, which may not be monotonic
+        # relative to that placeholder.  All normalized candle invariants were
+        # validated before reaching this point.
+        if previous.volume == ZERO and updated.volume > ZERO:
+            return
+
         if updated.open != previous.open:
-            raise MarketCacheInvalidOpenCandleUpdateError(
-                "An open-candle update must preserve open"
+            raise cls._invalid_open_update(
+                "An open-candle update must preserve open",
+                key,
+                previous,
+                updated,
+                observed_at_ms,
             )
         if updated.high < previous.high:
-            raise MarketCacheInvalidOpenCandleUpdateError(
-                "An open-candle update must not decrease high"
+            raise cls._invalid_open_update(
+                "An open-candle update must not decrease high",
+                key,
+                previous,
+                updated,
+                observed_at_ms,
             )
         if updated.low > previous.low:
-            raise MarketCacheInvalidOpenCandleUpdateError(
-                "An open-candle update must not increase low"
+            raise cls._invalid_open_update(
+                "An open-candle update must not increase low",
+                key,
+                previous,
+                updated,
+                observed_at_ms,
             )
         if updated.volume < previous.volume:
-            raise MarketCacheInvalidOpenCandleUpdateError(
-                "An open-candle update must not decrease volume"
+            raise cls._invalid_open_update(
+                "An open-candle update must not decrease volume",
+                key,
+                previous,
+                updated,
+                observed_at_ms,
             )
+
+    @classmethod
+    def _invalid_open_update(
+        cls,
+        message: str,
+        key: MarketStreamKey,
+        previous: _CacheEntry | Candle,
+        updated: Candle,
+        observed_at_ms: int,
+    ) -> MarketCacheInvalidOpenCandleUpdateError:
+        entry = previous if isinstance(previous, _CacheEntry) else None
+        stored = entry.candle if entry is not None else previous
+        return MarketCacheInvalidOpenCandleUpdateError(
+            message,
+            stream_key=key,
+            stored_candle=CandleSnapshot.from_candle(stored),
+            received_candle=CandleSnapshot.from_candle(updated),
+            observed_at_ms=observed_at_ms,
+            differing_fields=cls._differing_candle_fields(stored, updated),
+            previously_confirmed_closed=(entry.closure_confirmed if entry is not None else False),
+        )
 
     @staticmethod
     def _validate_timestamp(value: int, field_name: str) -> None:

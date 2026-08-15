@@ -141,6 +141,43 @@ def test_update_latest_open_candle() -> None:
     assert cache.get_latest_candle(KEY) == updated
 
 
+def test_untraded_open_placeholder_can_be_replaced_by_first_trade() -> None:
+    cache = InMemoryMarketCache()
+    placeholder = make_candle(
+        open_price="100",
+        high="100",
+        low="100",
+        close="100",
+        volume="0",
+    )
+    first_trade = make_candle(
+        open_price="101",
+        high="102",
+        low="101",
+        close="102",
+        volume="1",
+    )
+    cache.upsert_candle(KEY, placeholder, observed_during(placeholder))
+
+    result = cache.upsert_candle(KEY, first_trade, observed_during(first_trade))
+
+    assert result is CandleUpsertResult.UPDATED
+    assert cache.get_latest_candle(KEY) == first_trade
+
+
+def test_open_candle_observation_time_regression_is_rejected() -> None:
+    cache = InMemoryMarketCache()
+    candle = make_candle()
+    cache.upsert_candle(KEY, candle, observed_during(candle))
+
+    with pytest.raises(MarketCacheInvalidOpenCandleUpdateError) as captured:
+        cache.upsert_candle(KEY, candle, candle.close_time_ms - 1)
+
+    assert captured.value.differing_fields == ()
+    assert captured.value.observed_at_ms == candle.close_time_ms - 1
+    assert cache.get_latest_candle(KEY) == candle
+
+
 @pytest.mark.parametrize(
     "updated",
     [

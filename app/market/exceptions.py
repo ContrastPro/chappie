@@ -190,6 +190,37 @@ class MarketCacheClosedCandleUpdateError(MarketCacheError):
 class MarketCacheInvalidOpenCandleUpdateError(MarketCacheError):
     """An open-candle update violates monotonic update rules."""
 
+    reason_code = "invalid_open_candle_update"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        stream_key: object | None = None,
+        stored_candle: object | None = None,
+        received_candle: object | None = None,
+        observed_at_ms: int | None = None,
+        differing_fields: tuple[str, ...] = (),
+        previously_confirmed_closed: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.stream_key = stream_key
+        self.stored_candle = stored_candle
+        self.received_candle = received_candle
+        self.observed_at_ms = observed_at_ms
+        self.stored_lifecycle = "closed_confirmed" if previously_confirmed_closed else "open"
+        self.received_lifecycle = (
+            "closed"
+            if (
+                received_candle is not None
+                and observed_at_ms is not None
+                and observed_at_ms > received_candle.close_time_ms
+            )
+            else "open"
+        )
+        self.differing_fields = differing_fields
+        self.previously_confirmed_closed = previously_confirmed_closed
+
 
 class MarketCacheBatchError(MarketCacheError):
     """A candle batch is invalid and was rejected atomically."""
