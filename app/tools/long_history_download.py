@@ -159,7 +159,11 @@ def main(argv: list[str] | None = None) -> int:
         "--end", default=datetime.now(UTC).date().isoformat(), help="exclusive completed UTC date"
     )
     parser.add_argument("--workers", type=int, default=4)
-    parser.add_argument("--symbol", default="BTCUSDT", choices=("BTCUSDT", "ETHUSDT", "ETHBTC"))
+    parser.add_argument(
+        "--symbol",
+        default="BTCUSDT",
+        choices=("BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "ETHBTC", "SOLBTC", "BNBBTC"),
+    )
     parser.add_argument(
         "--interval", choices=tuple(STARTS), help="download one research interval instead of all"
     )
