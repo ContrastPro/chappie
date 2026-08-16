@@ -97,7 +97,7 @@ def test_active_portfolio_and_trade_are_rendered(tmp_path: Path) -> None:
     database = tmp_path / "paper.sqlite3"
     status = tmp_path / "status.json"
     _database(database, with_fill=True)
-    _status(status)
+    _status(status, process_state="STOPPED")
 
     rendered = render_dashboard(
         read_paper_monitor_snapshot(database, status),
@@ -108,6 +108,65 @@ def test_active_portfolio_and_trade_are_rendered(tmp_path: Path) -> None:
     assert "BUY" in rendered
     assert "fill-ide/order-id" in rendered
     assert "Polling state                   running" in rendered
+
+
+def test_active_runtime_prefers_live_status_when_database_is_locked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "paper.sqlite3"
+    status = tmp_path / "status.json"
+    _status(
+        status,
+        portfolio={
+            "equity": "10000",
+            "quote_balance": "9000",
+            "quote_asset": "USDT",
+            "base_balance": "0.01",
+            "base_asset": "BTC",
+            "fees": "2",
+            "turnover": "1000",
+            "trade_count": 1,
+            "portfolio_version": 7,
+        },
+        market={
+            "symbol": "BTCUSDT",
+            "interval": "1m",
+            "latest_price": "100000",
+            "polling_state": "RUNNING",
+        },
+        strategy={"last_signal": "hold", "reason": "NO_CROSSOVER"},
+    )
+    database.touch()
+
+    def locked(*_args: object, **_kwargs: object) -> sqlite3.Connection:
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(sqlite3, "connect", locked)
+    snapshot = read_paper_monitor_snapshot(database, status)
+    rendered = render_dashboard(snapshot)
+
+    assert snapshot.database_status == "owned by active runtime / live snapshot mode"
+    assert "10000" in rendered and "BTCUSDT" in rendered and "NO_CROSSOVER" in rendered
+
+
+def test_stopped_runtime_returns_unavailable_when_database_is_locked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = tmp_path / "paper.sqlite3"
+    database.touch()
+    status = tmp_path / "status.json"
+    _status(status, process_state="STOPPED")
+    monkeypatch.setattr(
+        sqlite3,
+        "connect",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            sqlite3.OperationalError("database is locked")
+        ),
+    )
+
+    snapshot = read_paper_monitor_snapshot(database, status)
+
+    assert snapshot.database_status == "unavailable: OperationalError"
 
 
 def test_safe_stop_and_absent_database_do_not_crash(tmp_path: Path) -> None:

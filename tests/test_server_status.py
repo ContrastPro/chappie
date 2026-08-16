@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -12,6 +13,7 @@ import pytest
 
 from app.application import StageOneStatusReport, run_application
 from app.core.config import Settings
+from app.market.models import CandleSnapshot
 from app.market.polling import PollingLifecycleState
 from app.server_status import (
     AtomicServerStatusPublisher,
@@ -101,6 +103,10 @@ def test_status_is_sanitized_and_atomically_published(tmp_path: Path) -> None:
         "safe_stop_reason": "TESTNET_STARTUP_BLOCKED:KILL_SWITCH_ACTIVE",
         "schema_version": 4,
         "settlement_status": "SYNCHRONIZED",
+        "portfolio": None,
+        "market": None,
+        "strategy": None,
+        "trading": None,
         "submission_enabled": False,
         "updated_at_utc": "2026-08-15T00:00:00+00:00",
     }
@@ -151,6 +157,64 @@ def test_status_for_blocked_testnet_disables_submission() -> None:
 
     assert not status.submission_enabled
     assert status.safe_stop_reason == "STARTUP_CHECK_FAILED"
+
+
+def test_ready_status_contains_sanitized_live_paper_observability() -> None:
+    application = SimpleNamespace(
+        startup_safe_stop_reason=None,
+        settings=SimpleNamespace(
+            trading_mode="paper", default_symbol="BTCUSDT", default_interval="1m"
+        ),
+        status_report=lambda: _report(
+            lifecycle_state=PollingLifecycleState.RUNNING,
+            cached_candle_count=42,
+            successful_cycles=9,
+            failed_cycles=1,
+            last_success_time_ms=10_000,
+            latest_candle=CandleSnapshot(
+                1, 2, Decimal(100), Decimal(102), Decimal(99), Decimal(101), Decimal(3)
+            ),
+            latest_closed_candle=CandleSnapshot(
+                0, 1, Decimal(98), Decimal(100), Decimal(97), Decimal(99), Decimal(4)
+            ),
+            paper_enabled=True,
+            paper_quote_asset="USDT",
+            paper_quote_balance=Decimal(9000),
+            paper_base_asset="BTC",
+            paper_base_balance=Decimal("0.01"),
+            paper_equity=Decimal(10010),
+            paper_total_fees=Decimal(2),
+            paper_turnover=Decimal(1000),
+            paper_trade_count=1,
+            paper_portfolio_version=7,
+            shadow_last_signal_direction="hold",
+            shadow_last_intent_id="intent-1",
+        ),
+    )
+
+    status = status_for_application(application, ServerProcessState.READY)
+    encoded = json.dumps(
+        status.__dict__
+        if hasattr(status, "__dict__")
+        else {name: getattr(status, name) for name in status.__dataclass_fields__}
+    )
+
+    assert status.portfolio is not None
+    assert status.portfolio["equity"] == "10010"
+    assert status.market == {
+        "symbol": "BTCUSDT",
+        "interval": "1m",
+        "latest_price": "101",
+        "latest_open_price": "100",
+        "latest_closed_price": "99",
+        "cached_candle_count": 42,
+        "polling_state": "running",
+        "last_successful_market_cycle_time_ms": 10_000,
+        "successful_cycles": 9,
+        "failed_cycles": 1,
+    }
+    assert status.strategy is not None and status.strategy["last_signal"] == "hold"
+    assert "secret" not in encoded.lower() and "api_key" not in encoded.lower()
 
 
 def test_startup_safe_stop_does_not_start_market_polling_or_submission() -> None:

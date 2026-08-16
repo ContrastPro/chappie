@@ -127,6 +127,7 @@ class StageOneStatusReport:
     shadow_ignored_duplicates: int = 0
     shadow_last_event_id: str | None = None
     shadow_last_signal_direction: str | None = None
+    shadow_last_intent_id: str | None = None
     shadow_last_error_category: str | None = None
     coordinator_enabled: bool = False
     coordinator_lifecycle: str | None = None
@@ -146,7 +147,16 @@ class StageOneStatusReport:
     paper_equity: Decimal | None = None
     paper_realised_pnl: Decimal | None = None
     paper_unrealised_pnl: Decimal | None = None
+    paper_total_fees: Decimal | None = None
     paper_drawdown: Decimal | None = None
+    paper_turnover: Decimal | None = None
+    paper_position_quantity: Decimal | None = None
+    paper_average_entry_price: Decimal | None = None
+    paper_cost_basis: Decimal | None = None
+    paper_base_asset: str | None = None
+    paper_quote_asset: str | None = None
+    paper_symbol: str | None = None
+    paper_interval: str | None = None
     paper_trade_count: int = 0
     paper_portfolio_version: int | None = None
     paper_last_outcome: str | None = None
@@ -316,7 +326,23 @@ class ChappieTraderApplication:
             paper_equity=portfolio.current_equity if portfolio else None,
             paper_realised_pnl=portfolio.realised_pnl if portfolio else None,
             paper_unrealised_pnl=portfolio.unrealised_pnl if portfolio else None,
+            paper_total_fees=portfolio.total_fees if portfolio else None,
             paper_drawdown=portfolio.drawdown if portfolio else None,
+            paper_turnover=portfolio.turnover if portfolio else None,
+            paper_position_quantity=portfolio.position.quantity
+            if portfolio and portfolio.position
+            else None,
+            paper_average_entry_price=(
+                portfolio.position.average_entry_price if portfolio and portfolio.position else None
+            ),
+            shadow_last_intent_id=coordination.last_intent_id if coordination else None,
+            paper_cost_basis=(
+                portfolio.position.cost_basis if portfolio and portfolio.position else None
+            ),
+            paper_base_asset=portfolio.base_asset if portfolio else None,
+            paper_quote_asset=portfolio.quote_asset if portfolio else None,
+            paper_symbol=portfolio.stream_key.symbol if portfolio else None,
+            paper_interval=portfolio.stream_key.interval if portfolio else None,
             paper_trade_count=portfolio.trade_count if portfolio else 0,
             paper_portfolio_version=portfolio.version if portfolio else None,
             paper_last_outcome=(

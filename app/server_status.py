@@ -6,6 +6,7 @@ import json
 import os
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -39,6 +40,10 @@ class ServerStatus:
     submission_enabled: bool
     safe_stop_reason: str | None
     updated_at_utc: str
+    portfolio: dict[str, object] | None = None
+    market: dict[str, object] | None = None
+    strategy: dict[str, object] | None = None
+    trading: dict[str, object] | None = None
 
 
 class AtomicServerStatusPublisher:
@@ -92,6 +97,31 @@ def status_for_application(
     )
     if state is ServerProcessState.SAFE_STOP and reason is None:
         reason = "STARTUP_SAFETY_CHECK_FAILED"
+
+    def decimal_text(value: Decimal | None) -> str | None:
+        return str(value) if value is not None else None
+
+    latest = report.latest_candle
+    latest_closed = report.latest_closed_candle
+    portfolio = None
+    if report.paper_enabled:
+        portfolio = {
+            "quote_asset": report.paper_quote_asset,
+            "quote_balance": decimal_text(report.paper_quote_balance),
+            "base_asset": report.paper_base_asset,
+            "base_balance": decimal_text(report.paper_base_balance),
+            "equity": decimal_text(report.paper_equity),
+            "position_quantity": decimal_text(report.paper_position_quantity),
+            "average_entry_price": decimal_text(report.paper_average_entry_price),
+            "cost_basis": decimal_text(report.paper_cost_basis),
+            "realised_pnl": decimal_text(report.paper_realised_pnl),
+            "unrealised_pnl": decimal_text(report.paper_unrealised_pnl),
+            "fees": decimal_text(report.paper_total_fees),
+            "turnover": decimal_text(report.paper_turnover),
+            "drawdown": decimal_text(report.paper_drawdown),
+            "trade_count": report.paper_trade_count,
+            "portfolio_version": report.paper_portfolio_version,
+        }
     return ServerStatus(
         mode=application.settings.trading_mode,
         process_state=state,
@@ -106,4 +136,30 @@ def status_for_application(
         ),
         safe_stop_reason=reason,
         updated_at_utc=datetime.now(UTC).isoformat(),
+        portfolio=portfolio,
+        market={
+            "symbol": report.paper_symbol or getattr(application.settings, "default_symbol", None),
+            "interval": report.paper_interval
+            or getattr(application.settings, "default_interval", None),
+            "latest_price": decimal_text(latest.close) if latest is not None else None,
+            "latest_open_price": decimal_text(latest.open) if latest is not None else None,
+            "latest_closed_price": (
+                decimal_text(latest_closed.close) if latest_closed is not None else None
+            ),
+            "cached_candle_count": report.cached_candle_count,
+            "polling_state": report.lifecycle_state.value,
+            "last_successful_market_cycle_time_ms": report.last_success_time_ms,
+            "successful_cycles": report.successful_cycles,
+            "failed_cycles": report.failed_cycles,
+        },
+        strategy={
+            "last_signal": report.shadow_last_signal_direction,
+            "reason": report.shadow_last_error_category,
+            "last_intent": report.shadow_last_intent_id,
+            "last_decision_time_ms": report.last_success_time_ms,
+        },
+        trading={
+            "last_outcome": report.paper_last_outcome,
+            "last_fill_id": report.paper_last_fill_id,
+        },
     )
