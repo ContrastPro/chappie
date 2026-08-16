@@ -169,8 +169,14 @@ def status_for_application(
             "failed_cycles": report.failed_cycles,
         },
         strategy={
+            "name": report.strategy_name,
+            "parameters": report.strategy_parameters,
+            "indicators": {
+                name: decimal_text(value)
+                for name, value in (report.strategy_indicators or {}).items()
+            },
             "last_signal": report.shadow_last_signal_direction,
-            "reason": report.shadow_last_error_category,
+            "reason": report.strategy_reason,
             "last_intent": report.shadow_last_intent_id,
             "last_decision_time_ms": report.last_success_time_ms,
             "fast_ema": decimal_text(report.strategy_fast_ema),

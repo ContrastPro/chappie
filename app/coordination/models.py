@@ -237,6 +237,10 @@ class TradingDecisionCoordinatorStatus:
     last_snapshot_id: str | None = None
     last_pipeline_run_id: str | None = None
     last_signal_direction: SignalDirection | None = None
+    last_signal_reason_code: str | None = None
+    last_strategy_name: str | None = None
+    last_strategy_parameters: ImmutableMapping = field(default_factory=lambda: MappingProxyType({}))
+    last_strategy_indicators: ImmutableMapping = field(default_factory=lambda: MappingProxyType({}))
     last_intent_id: str | None = None
     last_shadow_status: DecisionConsumerStatus | None = None
     last_paper_status: DecisionConsumerStatus | None = None

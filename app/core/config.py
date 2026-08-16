@@ -49,6 +49,19 @@ class Settings(BaseSettings):
     snapshot_stale_after_ms: int = Field(default=120000, gt=0)
     ema_fast_window: int = Field(default=12, ge=2)
     ema_slow_window: int = Field(default=26, gt=2)
+    strategy_name: Literal["ema_crossover", "trend_filtered", "breakout", "mean_reversion"] = (
+        "ema_crossover"
+    )
+    trend_atr_window: int = Field(default=14, ge=2)
+    trend_minimum_spread_bps: Decimal = Decimal(8)
+    trend_minimum_atr_bps: Decimal = Decimal(5)
+    breakout_lookback: int = Field(default=20, ge=2)
+    breakout_atr_window: int = Field(default=14, ge=2)
+    breakout_minimum_atr_bps: Decimal = Decimal(5)
+    breakout_exit_fraction: Decimal = Decimal("0.5")
+    mean_reversion_lookback: int = Field(default=20, ge=2)
+    mean_reversion_entry_deviation_bps: Decimal = Decimal(35)
+    mean_reversion_exit_deviation_bps: Decimal = Decimal(0)
     long_target_exposure: Decimal = Decimal(1)
 
     paper_portfolio_id: str = "paper-btcusdt"
@@ -161,6 +174,19 @@ class Settings(BaseSettings):
             )
         if self.ema_slow_window <= self.ema_fast_window:
             raise ValueError("ema_slow_window must be greater than ema_fast_window")
+        for name in (
+            "trend_minimum_spread_bps",
+            "trend_minimum_atr_bps",
+            "breakout_minimum_atr_bps",
+            "breakout_exit_fraction",
+            "mean_reversion_entry_deviation_bps",
+            "mean_reversion_exit_deviation_bps",
+        ):
+            value = getattr(self, name)
+            if not value.is_finite() or value < 0:
+                raise ValueError(f"{name} must be finite and non-negative")
+        if self.breakout_exit_fraction > Decimal(1):
+            raise ValueError("breakout_exit_fraction must not exceed 1")
         if not self.long_target_exposure.is_finite() or not (
             Decimal(0) < self.long_target_exposure <= Decimal(1)
         ):
@@ -231,6 +257,12 @@ class Settings(BaseSettings):
         "testnet_max_session_submitted_notional",
         "testnet_max_session_executed_turnover",
         "testnet_max_drawdown",
+        "trend_minimum_spread_bps",
+        "trend_minimum_atr_bps",
+        "breakout_minimum_atr_bps",
+        "breakout_exit_fraction",
+        "mean_reversion_entry_deviation_bps",
+        "mean_reversion_exit_deviation_bps",
         mode="before",
     )
     @classmethod

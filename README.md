@@ -71,7 +71,7 @@ server time. Market validation, cache lifecycle, events и trading snapshots и�
 ## Shadow decisions
 
 Shadow mode is disabled by default. Enable it with
-`SHADOW_DECISIONS_ENABLED=true`. Its main settings are `EMA_FAST_WINDOW`,
+`SHADOW_DECISIONS_ENABLED=true`. Its main settings are `STRATEGY_NAME`, `EMA_FAST_WINDOW`,
 `EMA_SLOW_WINDOW`, `LONG_TARGET_EXPOSURE`, `SHADOW_HISTORY_LIMIT`,
 `SHADOW_DEDUP_CAPACITY` and `SNAPSHOT_STALE_AFTER_MS`.
 
@@ -79,6 +79,24 @@ Every result, including `HOLD`, is written as a compact `ShadowDecisions` entry 
 the normal application logs. Shadow mode performs analysis only: it has no Risk
 Manager, execution adapter, portfolio mutation, paper order or live order path.
 Its output is observational and does not promise or guarantee profit.
+
+## Strategy lab (offline Paper research)
+
+`ema_crossover/1.0.0` remains the control strategy. The active configuration can also
+select the pure, deterministic `trend_filtered`, `breakout`, or `mean_reversion`
+signal strategies through `STRATEGY_NAME`. Selection changes signals only: Intent
+planning, Risk, durable execution, fees, and exactly-once behavior remain shared.
+
+Compare the initial baselines over the same local candle JSON fixture with no exchange
+client or order path:
+
+```powershell
+python -m app.tools.strategy_compare .\candles.json
+```
+
+The comparison includes existing Paper fee assumptions, turnover, drawdown, fills,
+round trips, and report-only `TREND` / `RANGE` / `HIGH_VOLATILITY` labels. It is a
+research aid, not an optimizer or profitability claim.
 
 Market Cache атомарно reconciles финальную версию свечи, которая была сохранена
 открытой, и публикует `CandleUpdated` перед однократным `CandleClosed`. Уже

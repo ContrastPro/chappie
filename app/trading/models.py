@@ -26,6 +26,12 @@ class SignalDirection(Enum):
 
 BUY_REASON_CODE = "bullish_crossover"
 SELL_REASON_CODE = "bearish_crossover"
+BUY_REASON_CODES = frozenset(
+    {BUY_REASON_CODE, "trend_confirmed_entry", "breakout_entry", "mean_reversion_entry"}
+)
+SELL_REASON_CODES = frozenset(
+    {SELL_REASON_CODE, "trend_confirmed_exit", "breakout_structure_failed", "mean_reversion_exit"}
+)
 
 
 class OrderIntentAction(Enum):
@@ -197,15 +203,14 @@ class Signal:
             raise InconsistentTradingTimestampError(
                 "M2.2 signals require effective_at_ms equal to created_at_ms"
             )
-        if self.direction is SignalDirection.BUY and self.reason_code != BUY_REASON_CODE:
-            raise InvalidSignalError("BUY signals require reason_code bullish_crossover")
-        if self.direction is SignalDirection.SELL and self.reason_code != SELL_REASON_CODE:
-            raise InvalidSignalError("SELL signals require reason_code bearish_crossover")
-        if self.direction is SignalDirection.HOLD and self.reason_code in {
-            BUY_REASON_CODE,
-            SELL_REASON_CODE,
-        }:
-            raise InvalidSignalError("HOLD signals cannot use crossover direction reason codes")
+        if self.direction is SignalDirection.BUY and self.reason_code not in BUY_REASON_CODES:
+            raise InvalidSignalError("BUY signals require an approved entry reason code")
+        if self.direction is SignalDirection.SELL and self.reason_code not in SELL_REASON_CODES:
+            raise InvalidSignalError("SELL signals require an approved exit reason code")
+        if self.direction is SignalDirection.HOLD and self.reason_code in (
+            BUY_REASON_CODES | SELL_REASON_CODES
+        ):
+            raise InvalidSignalError("HOLD signals cannot use an actionable reason code")
         if self.correlation_id is not None:
             _require_non_empty(self.correlation_id, "correlation_id", InvalidSignalError)
         try:

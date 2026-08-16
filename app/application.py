@@ -50,13 +50,12 @@ from app.paper import (
 from app.paper.exceptions import PaperTradingConfigurationError
 from app.persistence.canonical import canonical_sha256
 from app.persistence.keys import (
-    EmaStrategyFingerprintInput,
     InstrumentRulesFingerprintInput,
     PaperExecutionFingerprintInput,
     PlannerFingerprintInput,
     RiskPolicyFingerprintInput,
     SnapshotPolicyFingerprintInput,
-    fingerprint_ema_strategy,
+    fingerprint_configuration,
     fingerprint_instrument_rules,
     fingerprint_paper_execution,
     fingerprint_planner,
@@ -87,11 +86,7 @@ from app.shadow import (
     UUIDShadowRunIdFactory,
     UUIDSnapshotIdFactory,
 )
-from app.strategies.ema_crossover import (
-    EmaCrossoverConfig,
-    EmaCrossoverStrategy,
-    calculate_ema,
-)
+from app.strategies import StrategySettings, build_strategy, calculate_ema
 from app.trading import (
     LongOnlyIntentPlanner,
     LongOnlyIntentPlannerConfig,
@@ -133,6 +128,10 @@ class StageOneStatusReport:
     shadow_last_signal_direction: str | None = None
     shadow_last_intent_id: str | None = None
     shadow_last_error_category: str | None = None
+    strategy_name: str | None = None
+    strategy_reason: str | None = None
+    strategy_parameters: dict[str, object] | None = None
+    strategy_indicators: dict[str, Decimal] | None = None
     strategy_fast_ema: Decimal | None = None
     strategy_slow_ema: Decimal | None = None
     coordinator_enabled: bool = False
@@ -261,6 +260,27 @@ class ChappieTraderApplication:
             stream_key,
             market_as_of_ms,
         )
+        coordination = self.coordinator.status if self.coordinator is not None else None
+        strategy_name: str | None = (
+            coordination.last_strategy_name if coordination else self.settings.strategy_name
+        )
+        strategy_parameters: dict[str, object] | None = (
+            dict(coordination.last_strategy_parameters)
+            if coordination
+            else {
+                "ema_fast_window": self.settings.ema_fast_window,
+                "ema_slow_window": self.settings.ema_slow_window,
+            }
+        )
+        strategy_indicators: dict[str, Decimal] | None = (
+            {
+                name: value
+                for name, value in coordination.last_strategy_indicators.items()
+                if isinstance(value, Decimal)
+            }
+            if coordination
+            else None
+        )
         strategy_fast_ema: Decimal | None = None
         strategy_slow_ema: Decimal | None = None
         closed = tuple(candle for candle in snapshot if market_as_of_ms > candle.close_time_ms)
@@ -272,7 +292,6 @@ class ChappieTraderApplication:
             except (ArithmeticError, ValueError):
                 # Monitoring must never influence a market cycle.
                 pass
-        coordination = self.coordinator.status if self.coordinator is not None else None
         shadow = self.shadow_consumer.status if self.shadow_consumer is not None else None
         paper = self.paper_engine.status if self.paper_engine is not None else None
         portfolio = self.paper_portfolio.snapshot if self.paper_portfolio is not None else None
@@ -323,6 +342,10 @@ class ChappieTraderApplication:
                 else None
             ),
             shadow_last_error_category=coordination.last_error_category if coordination else None,
+            strategy_name=strategy_name,
+            strategy_reason=(coordination.last_signal_reason_code if coordination else None),
+            strategy_parameters=strategy_parameters,
+            strategy_indicators=strategy_indicators,
             strategy_fast_ema=strategy_fast_ema,
             strategy_slow_ema=strategy_slow_ema,
             coordinator_enabled=coordination is not None,
@@ -483,11 +506,22 @@ def build_application(
         or settings.paper_trading_enabled
         or settings.trading_mode == "testnet"
     ):
-        strategy_config = EmaCrossoverConfig(settings.ema_fast_window, settings.ema_slow_window)
-        strategy = EmaCrossoverStrategy(
-            strategy_config,
-            UUIDSignalIdFactory(),
+        strategy_settings = StrategySettings(
+            name=settings.strategy_name,
+            ema_fast_window=settings.ema_fast_window,
+            ema_slow_window=settings.ema_slow_window,
+            trend_atr_window=settings.trend_atr_window,
+            trend_minimum_spread_bps=settings.trend_minimum_spread_bps,
+            trend_minimum_atr_bps=settings.trend_minimum_atr_bps,
+            breakout_lookback=settings.breakout_lookback,
+            breakout_atr_window=settings.breakout_atr_window,
+            breakout_minimum_atr_bps=settings.breakout_minimum_atr_bps,
+            breakout_exit_fraction=settings.breakout_exit_fraction,
+            mean_reversion_lookback=settings.mean_reversion_lookback,
+            mean_reversion_entry_deviation_bps=settings.mean_reversion_entry_deviation_bps,
+            mean_reversion_exit_deviation_bps=settings.mean_reversion_exit_deviation_bps,
         )
+        strategy = build_strategy(strategy_settings, UUIDSignalIdFactory())
         planner_config = LongOnlyIntentPlannerConfig(settings.long_target_exposure)
         planner = LongOnlyIntentPlanner(
             planner_config,
@@ -638,13 +672,13 @@ def build_application(
                 persistence_adapter,
                 DurablePaperRuntimeConfig(
                     exchange=settings.exchange_name,
-                    strategy_config_fingerprint=fingerprint_ema_strategy(
-                        EmaStrategyFingerprintInput(
-                            strategy_config.fast_window,
-                            strategy_config.slow_window,
-                            strategy_config.strategy_name,
-                            strategy_config.strategy_version,
-                        )
+                    strategy_config_fingerprint=fingerprint_configuration(
+                        "strategy",
+                        {
+                            "name": strategy.name,
+                            "version": strategy.version,
+                            **dict(strategy.configuration),
+                        },
                     ),
                     planner_name=planner_config.planner_name,
                     planner_version=planner_config.planner_version,
