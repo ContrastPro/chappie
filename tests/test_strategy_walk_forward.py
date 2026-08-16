@@ -96,6 +96,9 @@ def test_candidate_spaces_are_small_and_deterministic() -> None:
         "cost_aware_momentum",
         "regime_mean_reversion",
         "multi_timeframe_trend",
+        "volatility_continuation",
+        "trend_retracement_continuation",
+        "compression_expansion_breakout",
     ):
         candidates = research_candidates(name)
         assert 0 < len(candidates) <= MAX_CANDIDATES_PER_STRATEGY

@@ -32,10 +32,13 @@ composition or order execution:
   summaries. Both are local research workflows, never runtime inputs.
 
 The cost-aware research candidates are `cost_aware_momentum`,
-`regime_mean_reversion`, and `multi_timeframe_trend`. They are not runtime
-defaults. Their cost hurdle is an explicit deterministic screening proxy, not
-a return forecast; the multi-timeframe candidate derives completed higher bars
-from a single immutable replay stream and does not add live multi-stream I/O.
+`regime_mean_reversion`, `multi_timeframe_trend`, `volatility_continuation`,
+`trend_retracement_continuation`, and `compression_expansion_breakout`. They
+are not runtime defaults. Their cost hurdle is an explicit deterministic
+screening proxy, not a return forecast; multi-timeframe candidates derive only
+completed higher bars from one immutable replay stream and do not add live
+multi-stream I/O. The latter three implement the research TOP-3 hypotheses;
+the retracement model uses no Fibonacci-specific levels.
 
 ## HISTORICAL
 

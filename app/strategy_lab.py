@@ -127,6 +127,15 @@ def compare_strategy(
                 f"lower={signal.metadata['lower_entry']}"
             )
             observations[observation] = observations.get(observation, 0) + 1
+        if strategy.name in {
+            "volatility_continuation",
+            "trend_retracement_continuation",
+            "compression_expansion_breakout",
+        }:
+            for key, value in signal.metadata.items():
+                if key.startswith("diag_") and value == "true":
+                    observation = f"{strategy.name}/{key.removeprefix('diag_')}"
+                    observations[observation] = observations.get(observation, 0) + 1
         price = candle.close
         if quantity:
             exposed_ms += candle.close_time_ms - previous_time
@@ -207,10 +216,20 @@ def compare_strategy(
 
 
 def compare_all(
-    candles: tuple[Candle, ...], config: StrategyComparisonConfig | None = None
+    candles: tuple[Candle, ...],
+    config: StrategyComparisonConfig | None = None,
+    *,
+    include_research: bool = False,
 ) -> tuple[StrategyComparisonResult, ...]:
     config = config or StrategyComparisonConfig()
-    return tuple(
-        compare_strategy(candles, StrategySettings(name=name), config)
-        for name in ("ema_crossover", "trend_filtered", "breakout", "mean_reversion")
-    )
+    names = ("ema_crossover", "trend_filtered", "breakout", "mean_reversion")
+    if include_research:
+        names += (
+            "cost_aware_momentum",
+            "regime_mean_reversion",
+            "multi_timeframe_trend",
+            "volatility_continuation",
+            "trend_retracement_continuation",
+            "compression_expansion_breakout",
+        )
+    return tuple(compare_strategy(candles, StrategySettings(name=name), config) for name in names)

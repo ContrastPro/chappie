@@ -42,7 +42,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--fee-rate", type=Decimal, default=Decimal("0.001"))
     args = parser.parse_args(argv)
     results = compare_all(
-        _candles(args.candles), StrategyComparisonConfig(args.starting_equity, args.fee_rate)
+        _candles(args.candles),
+        StrategyComparisonConfig(args.starting_equity, args.fee_rate),
+        include_research=True,
     )
     for result in results:
         print(

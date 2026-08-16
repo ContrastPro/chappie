@@ -1,6 +1,10 @@
 """Pure selectable strategies; none perform I/O or execution."""
 
 from app.strategies.breakout import BreakoutConfig, BreakoutStrategy
+from app.strategies.compression_expansion_breakout import (
+    CompressionExpansionBreakoutConfig,
+    CompressionExpansionBreakoutStrategy,
+)
 from app.strategies.cost_aware_momentum import CostAwareMomentumConfig, CostAwareMomentumStrategy
 from app.strategies.ema_crossover import (
     EmaCrossoverConfig,
@@ -18,10 +22,20 @@ from app.strategies.regime_mean_reversion import (
     RegimeMeanReversionStrategy,
 )
 from app.strategies.trend_filtered import TrendFilteredConfig, TrendFilteredStrategy
+from app.strategies.trend_retracement_continuation import (
+    TrendRetracementContinuationConfig,
+    TrendRetracementContinuationStrategy,
+)
+from app.strategies.volatility_continuation import (
+    VolatilityContinuationConfig,
+    VolatilityContinuationStrategy,
+)
 
 __all__ = [
     "BreakoutConfig",
     "BreakoutStrategy",
+    "CompressionExpansionBreakoutConfig",
+    "CompressionExpansionBreakoutStrategy",
     "CostAwareMomentumConfig",
     "CostAwareMomentumStrategy",
     "EmaCrossoverConfig",
@@ -36,6 +50,10 @@ __all__ = [
     "StrategySettings",
     "TrendFilteredConfig",
     "TrendFilteredStrategy",
+    "TrendRetracementContinuationConfig",
+    "TrendRetracementContinuationStrategy",
+    "VolatilityContinuationConfig",
+    "VolatilityContinuationStrategy",
     "build_strategy",
     "calculate_ema",
 ]

@@ -25,6 +25,9 @@ RESEARCH_STRATEGY_NAMES = (
     "cost_aware_momentum",
     "regime_mean_reversion",
     "multi_timeframe_trend",
+    "volatility_continuation",
+    "trend_retracement_continuation",
+    "compression_expansion_breakout",
 )
 
 
@@ -205,6 +208,58 @@ def research_candidates(strategy: str) -> tuple[Candidate, ...]:
                 ),
             )
             for fast, slow, margin in values
+        )
+    elif strategy == "volatility_continuation":
+        values = ((4, 8, 50, 60), (4, 8, 60, 80), (5, 10, 70, 100))
+        candidates = tuple(
+            Candidate(
+                f"research/volatility_continuation/{fast}-{slow}-vol{volatility}-hurdle{hurdle}",
+                StrategySettings(
+                    name="volatility_continuation",
+                    volatility_continuation_fast_window=fast,
+                    volatility_continuation_slow_window=slow,
+                    volatility_continuation_minimum_volatility_bps=Decimal(volatility),
+                    top3_cost_hurdle_bps=Decimal(hurdle),
+                ),
+            )
+            for fast, slow, volatility, hurdle in values
+        )
+    elif strategy == "trend_retracement_continuation":
+        values = ((4, 8, "0.5", "2.5", 60), (4, 8, "0.75", "3.0", 80), (5, 10, "0.5", "3.0", 100))
+        candidates = tuple(
+            Candidate(
+                f"research/trend_retracement/{fast}-{slow}-depth{minimum}-{maximum}-hurdle{hurdle}",
+                StrategySettings(
+                    name="trend_retracement_continuation",
+                    retracement_fast_window=fast,
+                    retracement_slow_window=slow,
+                    retracement_minimum_depth_atr=Decimal(minimum),
+                    retracement_maximum_depth_atr=Decimal(maximum),
+                    top3_cost_hurdle_bps=Decimal(hurdle),
+                ),
+            )
+            for fast, slow, minimum, maximum, hurdle in values
+        )
+    elif strategy == "compression_expansion_breakout":
+        values = (
+            (6, 8, "0.70", "1.25", "1.50", 60),
+            (8, 12, "0.65", "1.30", "1.50", 80),
+            (10, 16, "0.60", "1.40", "1.75", 100),
+        )
+        candidates = tuple(
+            Candidate(
+                f"research/compression_expansion/{window}-{lookback}-hurdle{hurdle}",
+                StrategySettings(
+                    name="compression_expansion_breakout",
+                    compression_window=window,
+                    compression_breakout_lookback=lookback,
+                    compression_ratio=Decimal(compression),
+                    compression_expansion_ratio=Decimal(expansion),
+                    compression_volume_ratio=Decimal(volume),
+                    top3_cost_hurdle_bps=Decimal(hurdle),
+                ),
+            )
+            for window, lookback, compression, expansion, volume, hurdle in values
         )
     else:
         raise ValueError(f"unsupported strategy for research: {strategy}")

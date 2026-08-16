@@ -161,7 +161,18 @@ def test_evaluation_independent_windows_reset_capital_and_export(tmp_path: Path)
     repeated = evaluate((first_path, second_path), StrategyComparisonConfig())
     assert evaluations == repeated
     summary = aggregate(evaluations)
-    assert {"ema_crossover", "trend_filtered", "breakout", "mean_reversion"} == set(summary)
+    assert {
+        "ema_crossover",
+        "trend_filtered",
+        "breakout",
+        "mean_reversion",
+        "cost_aware_momentum",
+        "regime_mean_reversion",
+        "multi_timeframe_trend",
+        "volatility_continuation",
+        "trend_retracement_continuation",
+        "compression_expansion_breakout",
+    } == set(summary)
     assert all(values["total_windows"] == 2 for values in summary.values())
     report_path = tmp_path / "result.json"
     write_report_atomic(report_path, report_payload(evaluations))

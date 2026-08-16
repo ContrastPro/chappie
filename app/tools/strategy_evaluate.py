@@ -59,7 +59,7 @@ def evaluate(
     if not paths:
         raise ValueError("at least one dataset is required")
     return tuple(
-        DatasetEvaluation(dataset, compare_all(dataset.candles, config))
+        DatasetEvaluation(dataset, compare_all(dataset.candles, config, include_research=True))
         for dataset in (load_dataset(path) for path in paths)
     )
 
