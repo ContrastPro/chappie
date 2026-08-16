@@ -21,6 +21,11 @@ composition or order execution:
   local datasets. Each window starts from the same capital; exported reports
   are local research artifacts. It accepts paths or a small manifest such as
   `{"datasets": ["trend.json", "range.json"]}`.
+- `strategy_walk_forward` performs a deliberately small offline preset study
+  using a manifest with disjoint `train`, `validation`, and `test` lists. It
+  selects only on TRAIN, validates that fixed shortlist once, freezes it before
+  TEST, and reports cost/activity flags. It has no exchange, credential, or
+  server-runtime path.
 
 ## HISTORICAL
 
