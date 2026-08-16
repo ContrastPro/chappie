@@ -18,6 +18,14 @@ from app.strategy_lab import StrategyComparisonConfig, StrategyComparisonResult,
 
 MAX_CANDIDATES_PER_STRATEGY = 24
 BASELINE_NAMES = ("ema_crossover", "trend_filtered", "breakout", "mean_reversion")
+RESEARCH_STRATEGY_NAMES = (
+    "trend_filtered",
+    "breakout",
+    "mean_reversion",
+    "cost_aware_momentum",
+    "regime_mean_reversion",
+    "multi_timeframe_trend",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,9 +51,11 @@ class CandidateMetrics:
     median_turnover_equity_percent: Decimal
     total_completed_round_trips: int
     median_average_holding_ms: int | None
+    median_captured_move_percent: Decimal | None
     gross_to_fee_ratio: Decimal | None
     activity: str
     regime_observations: dict[str, int]
+    strategy_observations: dict[str, int]
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,6 +163,49 @@ def research_candidates(strategy: str) -> tuple[Candidate, ...]:
             )
             for lookback, entry, exit in values
         )
+    elif strategy == "cost_aware_momentum":
+        values = ((8, 21, 30, 15), (8, 21, 40, 20), (10, 30, 35, 20), (10, 30, 45, 25))
+        candidates = tuple(
+            Candidate(
+                f"research/cost_aware_momentum/{fast}-{slow}-strength{strength}-margin{margin}",
+                StrategySettings(
+                    name="cost_aware_momentum",
+                    cost_momentum_fast_window=fast,
+                    cost_momentum_slow_window=slow,
+                    cost_momentum_minimum_strength_bps=Decimal(strength),
+                    cost_momentum_safety_margin_bps=Decimal(margin),
+                ),
+            )
+            for fast, slow, strength, margin in values
+        )
+    elif strategy == "regime_mean_reversion":
+        values = ((20, 60, 15), (20, 80, 20), (24, 60, 20), (24, 80, 25))
+        candidates = tuple(
+            Candidate(
+                f"research/regime_mean_reversion/{lookback}-entry{entry}-margin{margin}",
+                StrategySettings(
+                    name="regime_mean_reversion",
+                    regime_reversion_lookback=lookback,
+                    regime_reversion_entry_deviation_bps=Decimal(entry),
+                    cost_momentum_safety_margin_bps=Decimal(margin),
+                ),
+            )
+            for lookback, entry, margin in values
+        )
+    elif strategy == "multi_timeframe_trend":
+        values = ((3, 5, 15), (3, 5, 25), (4, 7, 20))
+        candidates = tuple(
+            Candidate(
+                f"research/multi_timeframe_trend/{fast}-{slow}-margin{margin}",
+                StrategySettings(
+                    name="multi_timeframe_trend",
+                    multi_timeframe_fast_window=fast,
+                    multi_timeframe_slow_window=slow,
+                    cost_momentum_safety_margin_bps=Decimal(margin),
+                ),
+            )
+            for fast, slow, margin in values
+        )
     else:
         raise ValueError(f"unsupported strategy for research: {strategy}")
     if len(candidates) > MAX_CANDIDATES_PER_STRATEGY:
@@ -162,9 +215,7 @@ def research_candidates(strategy: str) -> tuple[Candidate, ...]:
 
 def default_candidates() -> tuple[Candidate, ...]:
     return baseline_candidates() + tuple(
-        candidate
-        for name in ("trend_filtered", "breakout", "mean_reversion")
-        for candidate in research_candidates(name)
+        candidate for name in RESEARCH_STRATEGY_NAMES for candidate in research_candidates(name)
     )
 
 
@@ -204,12 +255,20 @@ def metrics_for(
     holds = [
         result.average_holding_ms for result in results if result.average_holding_ms is not None
     ]
+    captured_moves = [
+        result.average_captured_move_percent
+        for result in results
+        if result.average_captured_move_percent is not None
+    ]
     fees = sum((result.fees for result in results), Decimal(0))
     gross = sum((result.gross_realised_pnl for result in results), Decimal(0))
     regimes: dict[str, int] = {}
+    observations: dict[str, int] = {}
     for result in results:
         for regime, count in result.regime_counts.items():
             regimes[regime] = regimes.get(regime, 0) + count
+        for key, count in result.strategy_observations.items():
+            observations[key] = observations.get(key, 0) + count
     return CandidateMetrics(
         candidate=candidate,
         windows=len(results),
@@ -227,9 +286,11 @@ def metrics_for(
         ),
         total_completed_round_trips=sum(result.completed_round_trips for result in results),
         median_average_holding_ms=int(median(holds)) if holds else None,
+        median_captured_move_percent=_decimal_median(captured_moves) if captured_moves else None,
         gross_to_fee_ratio=gross / fees if fees else None,
         activity=_classify(results),
         regime_observations=regimes,
+        strategy_observations=observations,
     )
 
 
@@ -250,7 +311,7 @@ def _rank(metrics: tuple[CandidateMetrics, ...]) -> tuple[CandidateMetrics, ...]
 
 def _select(metrics: tuple[CandidateMetrics, ...], per_strategy: int = 2) -> tuple[Candidate, ...]:
     selected: list[Candidate] = []
-    for strategy in ("trend_filtered", "breakout", "mean_reversion"):
+    for strategy in RESEARCH_STRATEGY_NAMES:
         eligible = [
             item
             for item in _rank(metrics)

@@ -33,3 +33,24 @@ def average_true_range(
     with localcontext() as context:
         context.prec = 28
         return sum(ranges[-window:], Decimal(0)) / Decimal(window)
+
+
+def simple_regime(
+    highs: Sequence[Decimal], lows: Sequence[Decimal], closes: Sequence[Decimal]
+) -> str:
+    """Deterministic report-only market-regime classification shared by research strategies."""
+    if len(highs) != len(lows) or len(lows) != len(closes):
+        raise StrategyInvariantError("OHLC sequences must have matching lengths")
+    # Preserve the original report-only label's warm-up behavior: index 14
+    # was the first classified candle, hence 15 closed candles are required.
+    if len(closes) < 15:
+        return "UNKNOWN"
+    window_highs, window_lows, window_closes = highs[-14:], lows[-14:], closes[-14:]
+    close = window_closes[-1]
+    if close <= 0:
+        raise StrategyInvariantError("close must be positive")
+    range_bps = (max(window_highs) - min(window_lows)) / close * Decimal(10_000)
+    trend_bps = abs(window_closes[-1] - window_closes[0]) / close * Decimal(10_000)
+    if range_bps >= Decimal(250):
+        return "HIGH_VOLATILITY"
+    return "TREND" if trend_bps >= Decimal(60) else "RANGE"

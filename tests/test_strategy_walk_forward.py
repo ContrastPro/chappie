@@ -89,7 +89,14 @@ def test_manifest_rejects_a_dataset_reused_across_splits(tmp_path) -> None:
 
 
 def test_candidate_spaces_are_small_and_deterministic() -> None:
-    for name in ("trend_filtered", "breakout", "mean_reversion"):
+    for name in (
+        "trend_filtered",
+        "breakout",
+        "mean_reversion",
+        "cost_aware_momentum",
+        "regime_mean_reversion",
+        "multi_timeframe_trend",
+    ):
         candidates = research_candidates(name)
         assert 0 < len(candidates) <= MAX_CANDIDATES_PER_STRATEGY
         assert candidates == research_candidates(name)

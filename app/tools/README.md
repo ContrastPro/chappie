@@ -17,7 +17,7 @@ composition or order execution:
 - `market_history_download` makes bounded public `GET /api/v3/klines` requests
   and writes a digest-verified local dataset under `data/research/`.
 - `strategy_compare` replays one local JSON candle input without network use.
-- `strategy_evaluate` compares all four pure strategies across independent
+- `strategy_evaluate` compares the baseline and explicitly selected pure research strategies across independent
   local datasets. Each window starts from the same capital; exported reports
   are local research artifacts. It accepts paths or a small manifest such as
   `{"datasets": ["trend.json", "range.json"]}`.
@@ -26,6 +26,16 @@ composition or order execution:
   selects only on TRAIN, validates that fixed shortlist once, freezes it before
   TEST, and reports cost/activity flags. It has no exchange, credential, or
   server-runtime path.
+- `long_history_download` uses bounded public `GET /api/v3/klines` pagination
+  to build immutable monthly BTCUSDT chunks. `long_history_analyze` consumes
+  only those verified chunks and writes causal-feature / forward-label research
+  summaries. Both are local research workflows, never runtime inputs.
+
+The cost-aware research candidates are `cost_aware_momentum`,
+`regime_mean_reversion`, and `multi_timeframe_trend`. They are not runtime
+defaults. Their cost hurdle is an explicit deterministic screening proxy, not
+a return forecast; the multi-timeframe candidate derives completed higher bars
+from a single immutable replay stream and does not add live multi-stream I/O.
 
 ## HISTORICAL
 

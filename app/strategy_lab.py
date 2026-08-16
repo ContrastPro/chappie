@@ -7,6 +7,7 @@ from decimal import Decimal
 
 from app.market.models import Candle, MarketStreamKey
 from app.strategies.factory import StrategySettings, build_strategy
+from app.strategies.indicators import simple_regime as _simple_regime
 from app.trading.models import SignalDirection
 from app.trading.snapshot import MarketSnapshotFactory
 from app.trading.strategy import SignalIdFactory, Strategy
@@ -66,21 +67,18 @@ class StrategyComparisonResult:
     turnover: Decimal
     turnover_equity_percent: Decimal
     average_holding_ms: int | None
+    average_captured_move_percent: Decimal | None
     exposure_time_percent: Decimal
     regime_counts: dict[str, int]
+    strategy_observations: dict[str, int]
 
 
 def simple_regime(candles: tuple[Candle, ...], index: int) -> str:
     """Report-only deterministic regime label; it never selects a strategy."""
-    if index < 14:
-        return "UNKNOWN"
     window = candles[max(0, index - 13) : index + 1]
-    high, low, close = max(c.high for c in window), min(c.low for c in window), window[-1].close
-    range_bps = (high - low) / close * Decimal(10_000)
-    trend_bps = abs(window[-1].close - window[0].close) / close * Decimal(10_000)
-    if range_bps >= Decimal(250):
-        return "HIGH_VOLATILITY"
-    return "TREND" if trend_bps >= Decimal(60) else "RANGE"
+    return _simple_regime(
+        tuple(c.high for c in window), tuple(c.low for c in window), tuple(c.close for c in window)
+    )
 
 
 def compare_strategy(
@@ -97,9 +95,11 @@ def compare_strategy(
     cash, quantity, fees, turnover = config.starting_equity, Decimal(0), Decimal(0), Decimal(0)
     entry_cost = Decimal(0)
     entry_time: int | None = None
-    completed: list[tuple[Decimal, Decimal, int]] = []
+    entry_price: Decimal | None = None
+    completed: list[tuple[Decimal, Decimal, int, Decimal]] = []
     peak, max_drawdown, exposed_ms = config.starting_equity, Decimal(0), 0
     regimes: dict[str, int] = {}
+    observations: dict[str, int] = {}
     previous_time = candles[0].close_time_ms
     for index, candle in enumerate(candles):
         closed = tuple(candles[: index + 1])
@@ -111,6 +111,22 @@ def compare_strategy(
             correlation_cycle_id=f"replay-{index}",
         )
         signal = strategy.generate_signal(snapshot)
+        if strategy.name == "regime_mean_reversion" and "regime" in signal.metadata:
+            regime_name = str(signal.metadata["regime"])
+            observation = (
+                "candidate_entries_allowed_in_range"
+                if signal.direction is SignalDirection.BUY
+                else f"candidate_entries_rejected_in_{regime_name.lower()}"
+            )
+            observations[observation] = observations.get(observation, 0) + 1
+        if strategy.name == "multi_timeframe_trend" and "higher_confirmed" in signal.metadata:
+            observation = (
+                "confirmation/"
+                f"higher={signal.metadata['higher_confirmed']}/"
+                f"medium={signal.metadata['medium_confirmed']}/"
+                f"lower={signal.metadata['lower_entry']}"
+            )
+            observations[observation] = observations.get(observation, 0) + 1
         price = candle.close
         if quantity:
             exposed_ms += candle.close_time_ms - previous_time
@@ -131,6 +147,7 @@ def compare_strategy(
                 turnover += gross
                 entry_cost = gross + fee
                 entry_time = candle.close_time_ms
+                entry_price = price
         elif signal.direction is SignalDirection.SELL and quantity > 0:
             gross = quantity * price
             fee = gross * config.fee_rate
@@ -143,9 +160,10 @@ def compare_strategy(
                     proceeds - entry_cost,
                     gross - (entry_cost / (Decimal(1) + config.fee_rate)),
                     candle.close_time_ms - (entry_time or candle.close_time_ms),
+                    (price - (entry_price or price)) / (entry_price or price) * Decimal(100),
                 )
             )
-            quantity, entry_cost, entry_time = Decimal(0), Decimal(0), None
+            quantity, entry_cost, entry_time, entry_price = Decimal(0), Decimal(0), None, None
         equity = cash + quantity * price
         peak = max(peak, equity)
         if peak:
@@ -180,9 +198,11 @@ def compare_strategy(
         max_drawdown,
         turnover,
         turnover / config.starting_equity * Decimal(100),
-        sum(duration for _, _, duration in completed) // len(completed) if completed else None,
+        sum(item[2] for item in completed) // len(completed) if completed else None,
+        sum(item[3] for item in completed) / len(completed) if completed else None,
         Decimal(exposed_ms) / Decimal(total_time) * Decimal(100) if total_time else Decimal(0),
         regimes,
+        observations,
     )
 
 
