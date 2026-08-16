@@ -9,11 +9,14 @@ from decimal import Decimal
 from pathlib import Path
 
 from app.market.models import Candle
+from app.strategy_history import load_dataset
 from app.strategy_lab import StrategyComparisonConfig, compare_all
 
 
 def _candles(path: Path) -> tuple[Candle, ...]:
     records = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(records, dict) and records.get("format") == "chappie-historical-candles/v1":
+        return load_dataset(path).candles
     if not isinstance(records, list):
         raise TypeError("candle JSON must be a list")
     return tuple(

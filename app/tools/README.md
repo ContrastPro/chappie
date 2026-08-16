@@ -9,6 +9,19 @@ There is no separate operational one-shot tool for the continuous MVP. Paper and
 Testnet are configured and started through `app.main`; the normal runtime uses
 the schema-v4 order, reconciliation, settlement, and Portfolio flow.
 
+## RESEARCH_ONLY
+
+The following explicit commands use no credentials and are not part of server
+composition or order execution:
+
+- `market_history_download` makes bounded public `GET /api/v3/klines` requests
+  and writes a digest-verified local dataset under `data/research/`.
+- `strategy_compare` replays one local JSON candle input without network use.
+- `strategy_evaluate` compares all four pure strategies across independent
+  local datasets. Each window starts from the same capital; exported reports
+  are local research artifacts. It accepts paths or a small manifest such as
+  `{"datasets": ["trend.json", "range.json"]}`.
+
 ## HISTORICAL
 
 The following modules preserve M4.10/Stage 4 experiment and forensic evidence
