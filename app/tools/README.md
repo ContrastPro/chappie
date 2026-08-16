@@ -30,6 +30,13 @@ composition or order execution:
   to build immutable monthly BTCUSDT chunks. `long_history_analyze` consumes
   only those verified chunks and writes causal-feature / forward-label research
   summaries. Both are local research workflows, never runtime inputs.
+- `market_intelligence_download` makes bounded public, credential-free Binance
+  USD-M funding-rate or recent open-interest requests and stores immutable,
+  digest-verified context inputs. `market_intelligence_analyze` joins local BTC,
+  ETHUSDT, ETHBTC, funding and OI inputs with explicit as-of semantics. Missing
+  or stale optional context stays unavailable; it is never silently filled.
+  The generated market-intelligence report is descriptive research only, never
+  a strategy or runtime input.
 
 The cost-aware research candidates are `cost_aware_momentum`,
 `regime_mean_reversion`, `multi_timeframe_trend`, `volatility_continuation`,
