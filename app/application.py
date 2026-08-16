@@ -87,7 +87,11 @@ from app.shadow import (
     UUIDShadowRunIdFactory,
     UUIDSnapshotIdFactory,
 )
-from app.strategies.ema_crossover import EmaCrossoverConfig, EmaCrossoverStrategy
+from app.strategies.ema_crossover import (
+    EmaCrossoverConfig,
+    EmaCrossoverStrategy,
+    calculate_ema,
+)
 from app.trading import (
     LongOnlyIntentPlanner,
     LongOnlyIntentPlannerConfig,
@@ -129,6 +133,8 @@ class StageOneStatusReport:
     shadow_last_signal_direction: str | None = None
     shadow_last_intent_id: str | None = None
     shadow_last_error_category: str | None = None
+    strategy_fast_ema: Decimal | None = None
+    strategy_slow_ema: Decimal | None = None
     coordinator_enabled: bool = False
     coordinator_lifecycle: str | None = None
     coordinator_handled_events: int = 0
@@ -255,6 +261,17 @@ class ChappieTraderApplication:
             stream_key,
             market_as_of_ms,
         )
+        strategy_fast_ema: Decimal | None = None
+        strategy_slow_ema: Decimal | None = None
+        closed = tuple(candle for candle in snapshot if market_as_of_ms > candle.close_time_ms)
+        if len(closed) >= self.settings.ema_slow_window:
+            try:
+                closes = tuple(candle.close for candle in closed)
+                strategy_fast_ema = calculate_ema(closes, self.settings.ema_fast_window)[-1]
+                strategy_slow_ema = calculate_ema(closes, self.settings.ema_slow_window)[-1]
+            except (ArithmeticError, ValueError):
+                # Monitoring must never influence a market cycle.
+                pass
         coordination = self.coordinator.status if self.coordinator is not None else None
         shadow = self.shadow_consumer.status if self.shadow_consumer is not None else None
         paper = self.paper_engine.status if self.paper_engine is not None else None
@@ -306,6 +323,8 @@ class ChappieTraderApplication:
                 else None
             ),
             shadow_last_error_category=coordination.last_error_category if coordination else None,
+            strategy_fast_ema=strategy_fast_ema,
+            strategy_slow_ema=strategy_slow_ema,
             coordinator_enabled=coordination is not None,
             coordinator_lifecycle=coordination.lifecycle.value if coordination else None,
             coordinator_handled_events=coordination.handled_events if coordination else 0,

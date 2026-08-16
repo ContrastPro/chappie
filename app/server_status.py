@@ -103,6 +103,22 @@ def status_for_application(
 
     latest = report.latest_candle
     latest_closed = report.latest_closed_candle
+    recent_trades: list[dict[str, object]] = []
+    paper_engine = getattr(application, "paper_engine", None)
+    if paper_engine is not None:
+        for fill in paper_engine.recent_fills:
+            recent_trades.append(
+                {
+                    "fill_id": fill.fill_id,
+                    "order_id": fill.order_id,
+                    "side": fill.side.value,
+                    "quantity": decimal_text(fill.quantity),
+                    "price": decimal_text(fill.price),
+                    "gross_notional": decimal_text(fill.gross_notional),
+                    "fee": decimal_text(fill.fee),
+                    "filled_at_ms": fill.filled_at_ms,
+                }
+            )
     portfolio = None
     if report.paper_enabled:
         portfolio = {
@@ -157,9 +173,18 @@ def status_for_application(
             "reason": report.shadow_last_error_category,
             "last_intent": report.shadow_last_intent_id,
             "last_decision_time_ms": report.last_success_time_ms,
+            "fast_ema": decimal_text(report.strategy_fast_ema),
+            "slow_ema": decimal_text(report.strategy_slow_ema),
+            "ema_spread": (
+                decimal_text(report.strategy_fast_ema - report.strategy_slow_ema)
+                if report.strategy_fast_ema is not None and report.strategy_slow_ema is not None
+                else None
+            ),
+            "exposure": "LONG" if report.paper_position_quantity else "FLAT",
         },
         trading={
             "last_outcome": report.paper_last_outcome,
             "last_fill_id": report.paper_last_fill_id,
+            "recent_trades": recent_trades,
         },
     )

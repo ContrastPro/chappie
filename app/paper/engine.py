@@ -1,10 +1,10 @@
 import logging
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from collections.abc import Callable
 from dataclasses import replace
 from time import monotonic
 
-from app.execution.models import PaperExecutionResult, PaperExecutionStatus
+from app.execution.models import Fill, PaperExecutionResult, PaperExecutionStatus
 from app.execution.provider import ExecutionProvider
 from app.paper.exceptions import (
     PaperTradingConfigurationError,
@@ -92,6 +92,7 @@ class PaperTradingEngine:
             raise PaperTradingConfigurationError("durable_store is invalid")
         self._durable_store = durable_store
         self._dedup: OrderedDict[str, PaperTradingCycleResult] = OrderedDict()
+        self._recent_fills: deque[Fill] = deque(maxlen=10)
         self._status = PaperTradingEngineStatus()
         self._last_result: PaperTradingCycleResult | None = None
 
@@ -102,6 +103,11 @@ class PaperTradingEngine:
     @property
     def last_result(self) -> PaperTradingCycleResult | None:
         return self._last_result
+
+    @property
+    def recent_fills(self) -> tuple[Fill, ...]:
+        """Bounded in-memory observability only; persistence remains the source of truth."""
+        return tuple(reversed(self._recent_fills))
 
     def process(
         self,
@@ -677,6 +683,9 @@ class PaperTradingEngine:
             self._dedup.popitem(last=False)
         self._dedup[key] = result
         self._last_result = result
+        execution = result.execution_result
+        if execution is not None and execution.fill is not None:
+            self._recent_fills.append(execution.fill)
 
     def _complete(self, result: PaperTradingCycleResult) -> None:
         field = {
