@@ -106,7 +106,11 @@ def validate_candles(candles: Sequence[Candle], interval: str) -> tuple[Candle, 
         ):
             raise ValueError("candle OHLC bounds are invalid")
         if candle.close_time_ms != candle.open_time_ms + interval_ms - 1:
-            raise ValueError("candle close time is incompatible with interval")
+            raise ValueError(
+                "candle close time is incompatible with interval "
+                f"at open={candle.open_time_ms}: expected="
+                f"{candle.open_time_ms + interval_ms - 1} actual={candle.close_time_ms}"
+            )
         if previous is not None:
             if candle.open_time_ms == previous.open_time_ms:
                 raise ValueError("duplicate candle open time")

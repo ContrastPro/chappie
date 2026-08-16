@@ -20,7 +20,7 @@ def main(argv: list[str] | None = None) -> int:
         description="Download public Binance candles for offline research"
     )
     parser.add_argument("--symbol", required=True)
-    parser.add_argument("--interval", required=True, choices=("1m", "5m", "15m"))
+    parser.add_argument("--interval", required=True, choices=("1m", "5m", "15m", "1h"))
     parser.add_argument("--start", required=True, help="UTC ISO date, inclusive")
     parser.add_argument("--end", required=True, help="UTC ISO date, exclusive")
     parser.add_argument("--output", required=True, type=Path)
