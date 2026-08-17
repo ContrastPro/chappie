@@ -6,8 +6,8 @@
 - Final review: passed.
 - Real Binance shadow smoke-run: passed, 2026-08-04.
 - Дата: 2026-08-04.
-- Основание: ADR-016, ADR-019–ADR-024, `MARKET_EVENTS_DESIGN.md`,
-  `TRADING_DOMAIN.md` и `TRADING_PIPELINE_DESIGN.md`.
+- Основание: ADR-016, ADR-019–ADR-024, `MARKET_EVENTS_DESIGN.md` and the
+  canonical [Trading decisions](docs/core/TRADING_DECISIONS.md) design.
 
 Runtime evidence: реальный Binance Spot smoke-run `BTCUSDT 1m` завершён с
 `handled=8`, `successful=8`, `hold=8`, `failed=0`, `observation_failures=0` и
