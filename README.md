@@ -172,11 +172,12 @@ decision flag creates one `TradingDecisionCoordinator`, so Strategy/Pipeline is
 evaluated once per confirmed candle. Paper mode uses no private Binance endpoint.
 
 The persistence architecture is documented in
-[`PERSISTENCE_RECOVERY_DESIGN.md`](PERSISTENCE_RECOVERY_DESIGN.md): an append-only
-authoritative paper journal, verified Portfolio checkpoints, stable restart identities
-and fail-closed recovery. M3.13 implements the SQLite core; M3.14 integrates startup
-recovery, durable paper transactions, restart-stable identities, commit-before-memory
-synchronization and checkpoint lifecycle. The M3.15 crash/restart safety review passed;
+[`docs/core/PERSISTENCE.md`](docs/core/PERSISTENCE.md): an append-only authoritative
+Paper journal, verified Portfolio checkpoints, stable restart identities, and
+fail-closed recovery. It also separates the active Testnet schema-v4 contract
+from historical M4.10 / Stage 4 evidence. M3.13 implements the SQLite core;
+M3.14 integrates startup recovery, durable Paper transactions, restart-stable
+identities, commit-before-memory synchronization and checkpoint lifecycle. The M3.15 crash/restart safety review passed;
 its failpoint matrix and operational limits are recorded in
 [`M3_15_CRASH_RESTART_REPORT.md`](docs/historical/milestones/M3_15_CRASH_RESTART_REPORT.md).
 Live execution is absent.

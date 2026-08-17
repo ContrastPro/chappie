@@ -289,7 +289,8 @@ Bootstrap-to-regular cache lifecycle исправлен и покрыт offline 
 
 - Спроектированы authoritative append-only journal, verified Portfolio checkpoints,
   stable decision/execution keys, единая durable paper transaction и fail-closed
-  recovery. Контракт зафиксирован в `PERSISTENCE_RECOVERY_DESIGN.md`.
+  recovery. Контракт зафиксирован в
+  [`docs/core/PERSISTENCE.md`](docs/core/PERSISTENCE.md).
 
 #### M3.13 Persistence Core and SQLite adapter
 

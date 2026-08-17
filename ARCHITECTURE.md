@@ -668,7 +668,8 @@ checkpoint + journal replay и завершить reconciliation до подпи
 Неоднозначное или повреждённое financial state приводит к `RECOVERY_REQUIRED`; fallback
 к пустому Portfolio и автоматическое «исправление» денег запрещены. Observer вызывается
 после business commit и не может инициировать повторный Fill. Подробный контракт:
-`PERSISTENCE_RECOVERY_DESIGN.md`, ADR-048–054 (proposal).
+[`docs/core/PERSISTENCE.md`](docs/core/PERSISTENCE.md); historical ADR-048–054
+material is archived with the Stage 4 evidence.
 
 ## 13. Тестовая стратегия
 
