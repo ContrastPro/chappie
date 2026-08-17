@@ -474,7 +474,7 @@ Testnet и live adapters требуют отдельных design review и до
 `MODIFIED` исполняются сразу одним существующим immutable `Fill` по reference price,
 с нулевым slippage и explicit Decimal fee. Время fill выводится из decision timestamp
 и configured deterministic latency без clock, sleep или random. Подробный контракт
-описан в `PAPER_EXECUTION_PROVIDER_DESIGN.md`.
+описан в [`Paper trading`](docs/core/PAPER_TRADING.md).
 
 M4.1–M4.2 сохраняют paper provider без изменений и утверждают отдельный TESTNET contract:
 stateful `ExchangeExecutionCoordinator` работает через side-effect
@@ -520,12 +520,13 @@ Application-level paper orchestration module. Получает готовые
 `DecisionPipelineResult + MarketSnapshot`, оценивает принадлежащий ему Portfolio на
 каждой закрытой свече, затем координирует обязательный Risk, Paper Execution и Fill
 apply. Он не содержит Strategy, sizing, fee или accounting formulas, не читает Market
-Cache и не знает Binance. Контракт описан в `PAPER_TRADING_ORCHESTRATION_DESIGN.md`.
+Cache и не знает Binance. Контракт описан в [`Paper trading`](docs/core/PAPER_TRADING.md).
 
 PaperTradingEngine является синхронным single-writer application service без
-start/stop lifecycle, background thread, сети и persistence. Composition root владеет
-Portfolio, RiskManager, PaperExecutionProvider, factories и observer; engine владеет
-только bounded process-local dedup и operational status. После неоднозначной ошибки
+start/stop lifecycle, background thread или сети. Composition root владеет
+Portfolio, RiskManager, PaperExecutionProvider, durable Paper store, factories и
+observer; engine владеет bounded process-local dedup и operational status, а durable
+commit предшествует синхронизации in-memory Portfolio. После неоднозначной ошибки
 на границе execution/Portfolio экземпляр становится degraded и не продолжает работу
 до внешней проверки и пересоздания.
 
@@ -544,8 +545,8 @@ Portfolio, RiskManager, PaperExecutionProvider, factories и observer; engine в
 - `PerformanceSnapshot` — показатели результата в определённый момент.
 
 Точные Stage 3 поля и границы paper-контура описаны в
-`PAPER_TRADING_CORE_DESIGN.md`, `RISK_MANAGER_DESIGN.md` и
-`PAPER_EXECUTION_PROVIDER_DESIGN.md`. Portfolio, Risk и Paper Execution реализованы;
+[`Paper trading`](docs/core/PAPER_TRADING.md) и `RISK_MANAGER_DESIGN.md`.
+Portfolio, Risk и Paper Execution реализованы;
 финальная архитектура orchestration утверждена в M3.8, а synchronous in-memory
 PaperTradingEngine реализован и прошёл final safety review в M3.9 без runtime wiring.
 
