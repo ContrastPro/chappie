@@ -10,8 +10,15 @@
 
 ## Core design
 
-Active core-design consolidation is planned for Phase B. The existing design
-documents remain at the repository root until then.
+These are the current authoritative design references:
+
+- [Market system](core/MARKET_SYSTEM.md)
+- [Trading decisions](core/TRADING_DECISIONS.md)
+- [Decision runtime](core/DECISION_RUNTIME.md)
+- [Paper trading](core/PAPER_TRADING.md)
+- [Risk](core/RISK.md)
+- [Persistence](core/PERSISTENCE.md)
+- [Exchange execution](core/EXCHANGE_EXECUTION.md)
 
 ## Operations
 

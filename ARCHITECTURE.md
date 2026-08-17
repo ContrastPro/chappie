@@ -20,6 +20,10 @@ normal continuous MVP composition and are not an operator recovery procedure.
 
 ## Design Principles
 
+Canonical active design references are in [`docs/core/`](docs/README.md):
+market system, trading decisions, decision runtime, Paper trading, Risk,
+persistence, and exchange execution.
+
 Chappie Trader развивается как финансовая подсистема будущей платформы Chappie. В документации и коммуникации система называется **Trading Agent** или **Autonomous Trading System**: её назначение включает анализ, управление риском, исполнение, учёт, аудит и восстановление состояния.
 
 Архитектурные и продуктовые решения принимаются согласно следующим принципам:
@@ -263,7 +267,8 @@ Market Cache не отвечает за:
 - database persistence и восстановление после рестарта;
 - особенности Binance или другого провайдера.
 
-Минимальный design proposal и открытые вопросы описаны в `MARKET_CACHE_DESIGN.md`.
+Детальные market-cache инварианты и исторические вопросы собраны в
+`docs/core/MARKET_SYSTEM.md`.
 
 #### Polling Engine
 
@@ -285,7 +290,7 @@ Polling Engine:
 
 Polling Engine не содержит торговой логики, индикаторов, стратегии, risk или execution. Стратегии и другие внутренние потребители не вызывают его и не используют `MarketProvider` напрямую: они читают состояние только через Market Cache.
 
-`MarketProvider` создаётся и закрывается composition root. Polling Engine использует внедрённый provider, но не владеет его ресурсом и не закрывает его самостоятельно. Детальный lifecycle, state machine и retry policy описаны в `POLLING_ENGINE_DESIGN.md`.
+`MarketProvider` создаётся и закрывается composition root. Polling Engine использует внедрённый provider, но не владеет его ресурсом и не закрывает его самостоятельно. Детальный lifecycle, state machine и retry policy собраны в `docs/core/MARKET_SYSTEM.md`.
 
 #### Market Events
 
@@ -304,7 +309,7 @@ Event Dispatcher синхронно доставляет immutable событи�
 
 Polling Engine после успешного cache commit передаёт подробный mutation result в Market Event Projector, а затем публикует созданные события через dispatcher. Счётчиков `PollCycleResult` и `BatchUpsertResult` недостаточно для восстановления событий: ingestion должен получить типизированные сведения о конкретных вставленных, обновлённых и вытесненных свечах.
 
-Минимальный event model, точная семантика `CandleClosed` и delivery policy описаны в `MARKET_EVENTS_DESIGN.md`.
+Минимальный event model, точная семантика `CandleClosed` и delivery policy собраны в `docs/core/MARKET_SYSTEM.md`.
 
 #### Shadow Trading Decision Engine
 
