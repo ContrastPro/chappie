@@ -14,6 +14,28 @@ ADR-064 through ADR-069 record valuable M4.10/Stage 4 historical experiment and
 forensic boundaries. They remain immutable design/audit history but are not active
 MVP operating procedures or prerequisites for fresh Testnet startup.
 
+## Decision index
+
+### Active decisions
+
+The current MVP is primarily defined by ADR-001–ADR-063. The most important
+operating boundaries are: Decimal financial values (ADR-001), Paper-first and
+LIVE-unavailable mode policy (ADR-005, ADR-015, ADR-062), advisory strategy and
+mandatory Risk (ADR-006, ADR-026), durable local command-before-submission and
+ambiguity-to-reconciliation (ADR-055–ADR-060), runtime SAFE_STOP (ADR-063), and
+disposable development/Testnet persistence under the active schema-v4 contract.
+
+Research is separate from runtime execution. Historical source anomalies are
+excluded rather than repaired, and generated research data is ignored; those
+research policies do not grant trading approval.
+
+### Historical decisions
+
+ADR-064–ADR-069 preserve the M4.10/Stage 4 one-shot authority, recovery,
+continuation, and disposition investigation. They are immutable historical
+design/audit context, not active MVP procedures. See
+[historical Stage 4 evidence](docs/historical/stage4/README.md).
+
 ## ADR-001: Decimal для финансовых значений
 
 - **Статус:** принято
@@ -597,6 +619,11 @@ MVP operating procedures or prerequisites for fresh Testnet startup.
 - **Причины:** Submission safety и runtime availability являются независимыми состояниями; блокировка новых side effects не должна блокировать repair уже существующего durable/exchange state.
 - **Последствия:** `BLOCKED` startup является успешным degraded startup, а не исключением. Fatal local corruption, schema incompatibility и ownership failure по-прежнему завершают startup. In-process promotion запрещён, поэтому capability не может появиться из stale startup lineage.
 - **Evidence:** Full production `build_application()` process tests recreate every graph around one file-backed SQLite authority and fake remote state. They prove lost-ACK recovery, FILLED/PARTIALLY_FILLED exact-once settlement, five repeated NOT_FOUND restarts and ambiguity-persistence loss without replacement submission. M4.8 final acceptance review found no blocking recovery-only safety gap.
+
+## Historical decisions: ADR-064–ADR-069
+
+The following ADRs are historical M4.10/Stage 4 evidence. They do not define
+normal MVP startup, Testnet schema-v4 readiness, or operator procedures.
 
 ## ADR-064: Controlled Testnet smoke uses an isolated managed subledger and durable one-shot authority
 

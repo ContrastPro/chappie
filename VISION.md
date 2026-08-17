@@ -1,74 +1,37 @@
 # Chappie Trader Vision
 
-## Зачем существует проект
+Chappie Trader aims to become a safe, explainable financial subsystem for the
+future Chappie platform: a system that can observe markets, form and evaluate
+hypotheses, manage strategy lifecycles, and execute only through deterministic
+financial controls.
 
-Chappie Trader существует, чтобы создать безопасную, проверяемую и автономную финансовую подсистему для анализа рынка и исполнения торговых решений. Проект должен превратить рыночные данные и стратегии в контролируемый процесс, в котором риск, состояние портфеля и причины каждого действия доступны для проверки.
+## Direction
 
-Chappie Trader является Trading Agent, а в перспективе — Autonomous Trading System. Это не просто механизм отправки ордеров: система охватывает данные, принятие решений, ограничения риска, исполнение, учёт, наблюдаемость и восстановление.
+The long-term platform includes complementary, bounded roles:
 
-## Ближайшая цель
+- a **Market Intelligence Agent** for probabilistic market-state outlooks;
+- **News Intelligence** and **Social Intelligence** for provenance-aware event
+  and crowd context;
+- behavioral/event understanding and historical analogues for research;
+- a **Research Agent** for reproducible data, evaluation, and evidence;
+- a **Strategy Agent** for hypothesis selection, Paper validation, promotion,
+  monitoring, and retirement; and
+- a **Trading Agent** that applies approved decisions through the runtime.
 
-Ближайшая цель — построить воспроизводимый контур:
+These roles can inform an advisory signal. None receives direct order authority.
+Every executable change must still pass deterministic Planner, Risk, execution,
+reconciliation, settlement, and Portfolio boundaries.
 
-```text
-Market Data -> Strategy -> Order Intent -> Risk -> Paper Execution -> Portfolio
-```
+## Principles
 
-Первый практически полезный результат должен включать надёжные рыночные данные, детерминированную baseline-стратегию, backtesting, paper trading и измеримые показатели результата. На этом этапе система не торгует реальным капиталом.
+- Safety, correctness, and explainability matter more than speed or apparent
+  profitability.
+- Historical outcomes and simulations are evidence to examine, never a promise
+  of future returns.
+- Data quality, provenance, causal timing, transaction costs, and failure modes
+  are first-class research concerns.
+- Strategy adaptation is a controlled lifecycle, not automatic self-modification
+  of the execution path.
+- LIVE trading is the last possible admission step, not an implied product mode.
 
-## Долгосрочная цель
-
-Долгосрочная цель — автономная торговая система, способная непрерывно работать, восстанавливаться после сбоев, контролировать риск, вести полный audit trail и безопасно использовать несколько стратегий и источников данных.
-
-AI может помогать анализировать рынок, классифицировать его режим или формировать торговое намерение. AI никогда не отправляет ордера напрямую и не обходит детерминированные ограничения риска.
-
-## Место в будущей платформе Chappie
-
-Chappie Trader развивается как специализированная часть финансового домена будущей платформы:
-
-```text
-Chappie -> Finance -> Chappie Trader
-```
-
-Chappie предоставляет общую платформу и координацию, Finance объединяет финансовые возможности, а Chappie Trader отвечает за автономный торговый контур. Такое разделение сохраняет ясные границы ответственности и не связывает торговую бизнес-логику с интерфейсами всей платформы.
-
-## Главные приоритеты
-
-Важнее скорости разработки и потенциальной прибыли:
-
-1. безопасность капитала и ограничение ущерба;
-2. корректность финансовых расчётов и состояния;
-3. воспроизводимость результатов;
-4. объяснимость каждого торгового решения;
-5. полный audit trail;
-6. устойчивость к сбоям и возможность восстановления;
-7. тестируемость и независимость бизнес-логики от инфраструктуры.
-
-Функция считается готовой не тогда, когда она быстро написана или показала единичную прибыль, а когда её поведение проверяемо, наблюдаемо и безопасно в предусмотренных сценариях отказа.
-
-## Ограничение ожиданий
-
-Chappie Trader не обещает и не может гарантировать доход. Историческая доходность, результаты симуляции и paper trading не гарантируют будущего результата. Рыночный риск, комиссии, проскальзывание, изменение ликвидности, ошибки данных и технические сбои могут привести к убыткам, включая потерю задействованного капитала.
-
-Проект предназначен для инженерно контролируемого проведения торговых экспериментов и автоматизации решений, а не для создания обещания безрисковой прибыли.
-
-## Почему real trading является последним шагом
-
-Real trading допускается только после последовательного прохождения трёх сред:
-
-1. **Backtest** проверяет логику на исторических данных, воспроизводимость расчётов и базовые характеристики стратегии. Он помогает обнаружить ошибки, но не доказывает будущую прибыльность.
-2. **Paper trading** проверяет систему на текущих рыночных данных без риска для капитала, включая непрерывную работу, задержки и поведение сигналов.
-3. **Testnet** проверяет интеграцию с биржевым execution API, жизненный цикл ордеров, ошибки, повторные запросы и восстановление состояния.
-
-Только после этих этапов, отдельного review безопасности и утверждения жёстких лимитов может обсуждаться ограниченный live-допуск. Переход не является автоматическим: любой этап может выявить причины отложить или полностью отказаться от real trading.
-
-## Success Criteria
-
-Через несколько лет проект считается успешным, если:
-
-- способен автономно работать неделями;
-- каждое торговое решение объяснимо;
-- риск всегда контролируется;
-- систему можно безопасно развивать без переписывания ядра;
-- финансовый модуль легко интегрируется в полноценного Chappie;
-- прибыль является следствием качественной архитектуры и дисциплины, а не основной целью разработки.
+The immediate focus remains a safe Paper-first MVP and disciplined research.

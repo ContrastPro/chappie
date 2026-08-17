@@ -1,6 +1,6 @@
 # Chappie documentation
 
-## Current project
+## Current
 
 - [Project overview](../README.md)
 - [Current architecture](../ARCHITECTURE.md)
@@ -8,7 +8,7 @@
 - [Vision](../VISION.md)
 - [Architecture decisions](../DECISIONS.md)
 
-## Core design
+## Core
 
 These are the current authoritative design references:
 

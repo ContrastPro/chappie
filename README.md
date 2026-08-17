@@ -1,194 +1,73 @@
 # Chappie Trader
 
-Chappie Trader is the financial subsystem of the future Chappie platform. The current
-runtime application obtains Binance Spot OHLCV data for `BTCUSDT`, validates it,
-stores bounded normalized state in memory and publishes synchronous typed market
-events. The Stage 2 domain layer contains the deterministic EMA baseline, Intent
-Planner and Trading Decision Pipeline. An optional shadow application layer can
-evaluate that pipeline on confirmed `CandleClosed` events without placing orders.
+Chappie Trader is a safety-first Spot trading research and runtime project. It
+turns completed market observations into advisory strategy signals, applies
+deterministic Risk, and can run the resulting lifecycle in Paper mode or in a
+separately configured Binance Spot Testnet MVP. It does not promise returns.
 
-The default application is Paper/public-data only. The active MVP optionally supports a
-separately configured Binance Spot Testnet runtime; LIVE trading is structurally rejected.
-The project does not promise or guarantee income.
+## Current status
 
-## Installation
+Paper is the default supported runtime. The continuous Testnet MVP is available
+only with explicit configuration and uses the disposable schema-v4 store. LIVE
+trading is structurally unavailable.
+
+Strategies are advisory only. They cannot submit orders, access credentials, or
+bypass Planner and Risk. Testnet ambiguity is reconciled, never blindly retried.
+An unexpected Testnet execution failure enters process-local `SAFE_STOP`: no
+later event in that process can submit, and restarting requires operator
+diagnosis or a fresh disposable development database.
+
+## Quick Paper start
 
 Python 3.13 or newer is required.
 
-```powershell
+```text
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -e ".[dev]"
+.venv/bin/python -m pip install -e ".[dev]"
+cp .env.example .env
+python -m app.main
 ```
 
-## Configuration
-
-Copy the example configuration and review its values:
-
-```powershell
-Copy-Item .env.example .env
-```
-
-Paper mode needs no API keys. Testnet configuration is explicit and disabled by default:
-`TRADING_MODE=testnet`, `TESTNET_EXECUTION_ENABLED=true`, dedicated
-`BINANCE_TESTNET_API_KEY`/`BINANCE_TESTNET_SECRET_KEY`, and the fixed
-`https://testnet.binance.vision` endpoint. Never commit a real `.env`; secrets are redacted and
-must not be logged or persisted. `TRADING_MODE=live` is rejected. Automated validation uses
-only fake exchange dependencies and makes no authenticated request.
-
-The continuous Testnet MVP uses the disposable exchange schema **v4**: durable orders,
-reconciliation, authoritative trades, settlement, and a managed Portfolio. Startup performs bounded
-readiness checks; an unsafe reconciliation, unresolved order, or settlement blocker is recovery-only
-and cannot submit. An unexpected execution failure enters `SAFE_STOP`: later events in that process
-cannot submit, there is no automatic retry, and a fresh process is required after diagnosis or reset.
-
-Testnet and development databases are disposable. Stop the process, retain the database and logs only
-when they help diagnose an issue, otherwise reset the specific database and start fresh. Never manually
-repair financial rows to keep an experiment alive. See
-[`SERVER_MVP_RUNBOOK.md`](docs/operations/SERVER_MVP_RUNBOOK.md).
-
-M4.10 and Stage 4 one-shot/recovery material is retained as historical forensic evidence, not as the
-operational MVP architecture. Historical tools remain explicit modules under `app.tools`; do not use
-them for normal server operation. Their regressions carry the `historical` marker and can be run with
-`pytest -m historical`. MVP readiness uses `pytest -m "not historical"`; full `pytest` continues to
-exercise both active and historical suites. LIVE remains unavailable.
-
-Important defaults:
-
-- market: Binance Spot;
-- symbol: `BTCUSDT`;
-- interval: `1m`;
-- cache capacity and bootstrap limit: `1000` candles;
-- polling cadence: `10` seconds;
-- regular request limit: `2` candles.
-- clock-skew warning threshold: `5` seconds; Binance server time remains authoritative.
-
-Clock-skew warning означает, что локальные часы Windows отличаются от Binance
-server time. Market validation, cache lifecycle, events и trading snapshots используют
-авторитетное exchange time, поэтому warning сам по себе не является runtime failure
-и не блокирует ingestion. Локальные часы рекомендуется синхронизировать вручную в
-настройках Windows; внешний NTP dependency приложению не требуется.
-
-## Shadow decisions
-
-Shadow mode is disabled by default. Enable it with
-`SHADOW_DECISIONS_ENABLED=true`. Its main settings are `STRATEGY_NAME`, `EMA_FAST_WINDOW`,
-`EMA_SLOW_WINDOW`, `LONG_TARGET_EXPOSURE`, `SHADOW_HISTORY_LIMIT`,
-`SHADOW_DEDUP_CAPACITY` and `SNAPSHOT_STALE_AFTER_MS`.
-
-Every result, including `HOLD`, is written as a compact `ShadowDecisions` entry to
-the normal application logs. Shadow mode performs analysis only: it has no Risk
-Manager, execution adapter, portfolio mutation, paper order or live order path.
-Its output is observational and does not promise or guarantee profit.
-
-## Strategy lab (offline Paper research)
-
-`ema_crossover/1.0.0` remains the control strategy. The active configuration can also
-select the pure, deterministic `trend_filtered`, `breakout`, or `mean_reversion`
-signal strategies through `STRATEGY_NAME`. Selection changes signals only: Intent
-planning, Risk, durable execution, fees, and exactly-once behavior remain shared.
-
-Compare the initial baselines over the same local candle JSON fixture with no exchange
-client or order path:
-
-```powershell
-python -m app.tools.strategy_compare .\candles.json
-```
-
-The comparison includes existing Paper fee assumptions, turnover, drawdown, fills,
-round trips, and report-only `TREND` / `RANGE` / `HIGH_VOLATILITY` labels. It is a
-research aid, not an optimizer or profitability claim.
-
-Market Cache атомарно reconciles финальную версию свечи, которая была сохранена
-открытой, и публикует `CandleUpdated` перед однократным `CandleClosed`. Уже
-подтверждённые закрытые свечи остаются immutable.
-
-## Finite smoke-run
-
-Set a positive cycle count in `.env`:
+Paper needs no API credentials. Stop with `Ctrl+C`. The Paper dashboard is
+read-only:
 
 ```text
-SMOKE_RUN_CYCLES=3
+python -m app.tools.paper_monitor
 ```
 
-Then run:
+For configuration, database locations, reset policy, server operation, and the
+separate Testnet-readiness procedure, use the [Server MVP runbook](docs/operations/SERVER_MVP_RUNBOOK.md).
 
-```powershell
-python -m app.main
-```
+## Supported modes
 
-The application performs exactly the configured number of polling cycles unless a fatal error occurs, prints the final Stage 1 status through logging and closes the HTTP provider.
+| Mode | Status | Boundary |
+| --- | --- | --- |
+| Paper | Supported | Local deterministic simulation; no private exchange calls. |
+| Testnet | Explicit MVP configuration | Schema v4, startup readiness, reconciliation, settlement, and `SAFE_STOP`. |
+| LIVE | Unavailable | Rejected by configuration and composition. |
 
-## Logs
+Testnet and development databases are disposable. On unexpected state, stop
+safely, preserve DB/logs only when useful for diagnosis, otherwise reset and
+bootstrap a fresh store. Do not manually repair financial records to keep an
+experiment running.
 
-The application writes two UTF-8 log files:
+## Research
 
-- `logs/chappie.log` is the cumulative history and is opened in append mode;
-- `logs/latest_run.log` is the complete most recent run and is overwritten at startup.
+Offline research tools support strategy comparison, walk-forward evaluation, and
+market-intelligence experiments. Research data under `data/research/` is ignored;
+findings are not strategy approval and do not change the runtime without a
+separate review. Start at [Research documentation](docs/research/README.md).
 
-The per-run path can be changed with `RUN_LOG_FILE`. Every line carries the same
-`run_id`; the run header contains a safe configuration summary without credentials,
-and the footer records the exit code and final lifecycle state. The console remains
-concise: detailed market events and HTTP request logs stay in the files, while
-warnings and errors are still displayed.
+## Documentation
 
-After a smoke-run, inspect its complete log with:
+- [Documentation map](docs/README.md)
+- [Current architecture](ARCHITECTURE.md)
+- [Roadmap](ROADMAP.md)
+- [Vision](VISION.md)
+- [Architecture decisions](DECISIONS.md)
+- [Operations runbooks](docs/operations/README.md)
+- [Canonical core contracts](docs/core/)
 
-```powershell
-Get-Content .\logs\latest_run.log
-```
-
-Or open it in Visual Studio Code:
-
-```powershell
-code .\logs\latest_run.log
-```
-
-## Continuous polling
-
-Leave `SMOKE_RUN_CYCLES` empty and run:
-
-```powershell
-python -m app.main
-```
-
-Stop with `Ctrl+C`. A normal manual stop completes without a traceback and exits with code `0`.
-
-## Quality checks
-
-```powershell
-ruff check .
-pytest
-git diff --check
-```
-
-Automated tests do not require network access. A real smoke-run is a separate manual verification because it contacts Binance and may otherwise run for an unintended duration.
-# Shared decision runtime
-
-Decision processing remains disabled by default. `SHADOW_DECISIONS_ENABLED=true`
-enables observational delivery. `PAPER_TRADING_ENABLED=true` requires
-`PERSISTENCE_ENABLED=true` and enables deterministic durable paper execution. Either
-decision flag creates one `TradingDecisionCoordinator`, so Strategy/Pipeline is
-evaluated once per confirmed candle. Paper mode uses no private Binance endpoint.
-
-The persistence architecture is documented in
-[`docs/core/PERSISTENCE.md`](docs/core/PERSISTENCE.md): an append-only authoritative
-Paper journal, verified Portfolio checkpoints, stable restart identities, and
-fail-closed recovery. It also separates the active Testnet schema-v4 contract
-from historical M4.10 / Stage 4 evidence. M3.13 implements the SQLite core;
-M3.14 integrates startup recovery, durable Paper transactions, restart-stable
-identities, commit-before-memory synchronization and checkpoint lifecycle. The M3.15 crash/restart safety review passed;
-its failpoint matrix and operational limits are recorded in
-[`M3_15_CRASH_RESTART_REPORT.md`](docs/historical/milestones/M3_15_CRASH_RESTART_REPORT.md).
-Live execution is absent.
-
-M3.16 completed Stage 3 with a controlled two-process public Binance data smoke using
-one ignored SQLite database. Recovery restored the exact durable head and a new candle
-advanced Portfolio and journal versions from `0 -> 1 -> 2`; both decisions were HOLD,
-so no real-smoke Fill occurred. Deterministic automated suites cover executable
-BUY/SELL restart and duplicate-Fill behavior. Keep the database together with any
-SQLite-owned WAL/SHM files while it is active; observer delivery remains best-effort.
-`BINANCE_TESTNET_ACCOUNT_FINGERPRINT` is also required as a non-secret durable account-lineage
-identifier. Testnet startup is intentionally fail-closed: an operator must have explicitly cleared
-the durable kill switch, and reconciliation plus settlement must reach typed READY before the
-shared decision coordinator subscribes.
+Historical M4.10/Stage 4 material is preserved as evidence under
+[docs/historical/](docs/historical/README.md). It is not an active operator
+workflow or a prerequisite for fresh MVP startup.

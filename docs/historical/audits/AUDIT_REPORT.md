@@ -64,7 +64,7 @@ Placeholder или мёртвый runtime path в реализованном sco
 
 ## Commands and test totals
 
-Проверяются воспроизводимым developer tool [scripts/full_audit.py](scripts/full_audit.py):
+Проверяются воспроизводимым developer tool [scripts/full_audit.py](../../../scripts/full_audit.py):
 
 - public import smoke test;
 - `git status --short`, `git diff --check`, `git fsck --full`;
