@@ -752,8 +752,10 @@ unconditionally отвергает LIVE до отдельного live-readiness
 не является exchange truth; после ambiguous submit automatic resubmit запрещён, а
 отсутствие strong proof-of-absence требует fail-closed operator resolution. Initial
 scope — MARKET BUY/SELL `BTCUSDT`, base quantity, один non-terminal order, без cancel.
-Полный утверждённый design:
-`EXCHANGE_EXECUTION_DESIGN.md`, ADR-055–ADR-062.
+Полный утверждённый M4.1/Stage 4 design и ADR-055–ADR-062 —
+[исторический материал Stage 4](docs/historical/stage4/README.md). Текущий
+непрерывный Testnet MVP contract находится в
+[Exchange execution](docs/core/EXCHANGE_EXECUTION.md).
 
 ## 17. Future Chappie Integration
 

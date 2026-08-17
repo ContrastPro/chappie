@@ -382,9 +382,9 @@ recovery и изолированным testnet execution до отдельног
 - Спроектированы отдельный TESTNET execution contour, durable multi-state order
   lifecycle, pre-submit client identity, partial-fill accounting boundary,
   reconciliation gate, kill switch и fail-closed LIVE isolation.
-- ADR-055–ADR-062 и полный контракт зафиксированы в
-  `EXCHANGE_EXECUTION_DESIGN.md`. Production code, private API и migration SQL не
-  добавлены.
+- ADR-055–ADR-062 и исходный M4.1 design относятся к
+  [историческому Stage 4](docs/historical/stage4/README.md). Production code,
+  private API и migration SQL в этом milestone не добавлялись.
 
 #### M4.2 Final Design and Safety Review
 

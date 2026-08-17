@@ -4,6 +4,12 @@ The documents in this directory record historical one-shot Testnet experiments,
 forensic reviews, and completion evidence. They do **not** describe the active
 MVP Testnet contract.
 
+The former root `EXCHANGE_EXECUTION_DESIGN.md` is consolidated into the active
+[Exchange execution](../../core/EXCHANGE_EXECUTION.md) contract. Its M4.1–M4.11
+milestone chronology remains historical context; this directory and repository
+history preserve the relevant evidence rather than making it an operational
+runbook.
+
 Active Testnet uses exchange schema v4. Stage 4/M4.10 migrations v5–v10 are
 historical experiment support. Operators must use the current active runbook,
 not these historical documents.
