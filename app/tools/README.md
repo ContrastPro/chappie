@@ -49,6 +49,18 @@ composition or order execution:
   The downloader caps workers at eight, records atomic progress manifests, and
   classifies missing, transient, invalid, and cross-day-duplicate archives
   without interpolation or silent repair.
+- `behavioral_market_analyze` consumes only those local V3B datasets. It
+  collapses adjacent observable-state rows into gap-safe events, uses
+  non-overlapping outcome starts and causal state-matched controls, and writes
+  ignored local reports. Its crowd labels are descriptive shorthand, never
+  psychology facts, trade signals, or runtime inputs.
+
+## FUTURE_RESEARCH_BOUNDARY
+
+A future Market Intelligence Agent may research public news or social context
+as a separately reviewed, archival input. It has no current ingestion, API,
+credential, runtime, strategy, or execution path; any future use requires an
+explicit causal timestamp, source-integrity, and safety design.
 
 The cost-aware research candidates are `cost_aware_momentum`,
 `regime_mean_reversion`, `multi_timeframe_trend`, `volatility_continuation`,
