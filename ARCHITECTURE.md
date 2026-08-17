@@ -461,7 +461,8 @@ OrderIntent + PortfolioSnapshot + MarketSnapshot
 
 Target exposure преобразуется в target position через Portfolio equity и latest
 closed reference price, затем в delta order с применением InstrumentRules. Полный
-контракт, порядок gates, dust и fee boundary описаны в `RISK_MANAGER_DESIGN.md`.
+контракт, порядок gates, dust и fee boundary описаны в
+[`Risk`](docs/core/RISK.md).
 
 ### `execution`
 
@@ -545,7 +546,8 @@ commit предшествует синхронизации in-memory Portfolio. 
 - `PerformanceSnapshot` — показатели результата в определённый момент.
 
 Точные Stage 3 поля и границы paper-контура описаны в
-[`Paper trading`](docs/core/PAPER_TRADING.md) и `RISK_MANAGER_DESIGN.md`.
+[`Paper trading`](docs/core/PAPER_TRADING.md) и
+[`Risk`](docs/core/RISK.md).
 Portfolio, Risk и Paper Execution реализованы;
 финальная архитектура orchestration утверждена в M3.8, а synchronous in-memory
 PaperTradingEngine реализован и прошёл final safety review в M3.9 без runtime wiring.
