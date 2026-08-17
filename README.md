@@ -44,7 +44,8 @@ cannot submit, there is no automatic retry, and a fresh process is required afte
 
 Testnet and development databases are disposable. Stop the process, retain the database and logs only
 when they help diagnose an issue, otherwise reset the specific database and start fresh. Never manually
-repair financial rows to keep an experiment alive. See [`SERVER_MVP_RUNBOOK.md`](SERVER_MVP_RUNBOOK.md).
+repair financial rows to keep an experiment alive. See
+[`SERVER_MVP_RUNBOOK.md`](docs/operations/SERVER_MVP_RUNBOOK.md).
 
 M4.10 and Stage 4 one-shot/recovery material is retained as historical forensic evidence, not as the
 operational MVP architecture. Historical tools remain explicit modules under `app.tools`; do not use
@@ -177,7 +178,8 @@ and fail-closed recovery. M3.13 implements the SQLite core; M3.14 integrates sta
 recovery, durable paper transactions, restart-stable identities, commit-before-memory
 synchronization and checkpoint lifecycle. The M3.15 crash/restart safety review passed;
 its failpoint matrix and operational limits are recorded in
-[`M3_15_CRASH_RESTART_REPORT.md`](M3_15_CRASH_RESTART_REPORT.md). Live execution is absent.
+[`M3_15_CRASH_RESTART_REPORT.md`](docs/historical/milestones/M3_15_CRASH_RESTART_REPORT.md).
+Live execution is absent.
 
 M3.16 completed Stage 3 with a controlled two-process public Binance data smoke using
 one ignored SQLite database. Recovery restored the exact durable head and a new candle

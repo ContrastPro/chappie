@@ -12,7 +12,7 @@ Unexpected Testnet execution failures enter `SAFE_STOP`: no later market event
 may submit an order in that process, and an operator must investigate or reset
 the disposable database before a fresh-process restart. LIVE remains
 structurally unavailable. Operational details are in
-[`SERVER_MVP_RUNBOOK.md`](SERVER_MVP_RUNBOOK.md).
+[`SERVER_MVP_RUNBOOK.md`](docs/operations/SERVER_MVP_RUNBOOK.md).
 
 Historical M4.10/Stage 4 authority, recovery, disposition, and successor flows
 are retained below as archive/audit material. They are not imported by the

@@ -362,7 +362,7 @@ The active MVP starts with a fresh disposable Paper or Testnet database and uses
 order, reconciliation, settlement, and Portfolio flow. Any unexpected Testnet execution failure enters
 `SAFE_STOP`; it never retries in-process and the developer investigates or resets the disposable DB
 before a fresh-process restart. The operator procedure is
-[`SERVER_MVP_RUNBOOK.md`](SERVER_MVP_RUNBOOK.md).
+[`SERVER_MVP_RUNBOOK.md`](docs/operations/SERVER_MVP_RUNBOOK.md).
 
 M4.10/Stage 4 one-shot authorities, recovery, disposition, successor-generation work, and migrations
 v5–v10 are retained as **historical experiment evidence**. They are not prerequisites for fresh MVP
