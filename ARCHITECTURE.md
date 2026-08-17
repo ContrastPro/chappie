@@ -346,7 +346,7 @@ dispatcher и observer, но engine не закрывает эти зависи�
 на Strategy/Pipeline и logging observer. Bootstrap history не replay-ится: первое
 shadow decision появляется только после нового `CandleClosed`. Детальный lifecycle,
 consistency checks, dedup и error policy описаны в
-`SHADOW_DECISION_ENGINE_DESIGN.md`.
+[`Decision runtime`](docs/core/DECISION_RUNTIME.md).
 
 #### Shared Decision Runtime Coordination
 
@@ -374,7 +374,7 @@ consumers и resources принадлежат composition root.
 Если PaperTradingEngine уже `DEGRADED`, paper path не вызывается, но shared decision и
 shadow analysis продолжаются. Текущий ShadowTradingDecisionEngine не должен быть
 одновременно подписан с coordinator; migration выделяет consumer без cache read и
-pipeline evaluation. Полный контракт описан в `SHARED_DECISION_RUNTIME_DESIGN.md`.
+pipeline evaluation. Полный контракт описан в [`Decision runtime`](docs/core/DECISION_RUNTIME.md).
 
 M3.11 реализует этот flow в `app.coordination`. Application composition создаёт
 coordinator только если включён shadow или paper, подписывает только его как decision

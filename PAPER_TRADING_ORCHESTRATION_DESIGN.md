@@ -529,7 +529,7 @@ Paper requires the common decision pipeline but not the shadow observer. Enablin
 must not run Strategy twice and both consumers receive identical snapshot/result
 instances. The coordinator/dispatcher and event subscription are not part of the M3.9
 core implementation; their M3.10 proposal is defined in
-`SHARED_DECISION_RUNTIME_DESIGN.md`.
+[`Decision runtime`](docs/core/DECISION_RUNTIME.md).
 
 Delivery order is shared compute, shadow, paper, final coordination result. Ordinary
 consumer failures are isolated. A degraded PaperTradingEngine is not called; the
