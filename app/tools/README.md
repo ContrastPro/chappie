@@ -1,7 +1,7 @@
 # Tool classification
 
 `app.tools` is not part of normal server composition. Start the server with
-`python -m app.main` and follow [`SERVER_MVP_RUNBOOK.md`](../../SERVER_MVP_RUNBOOK.md).
+`python -m app.main` and follow [`SERVER_MVP_RUNBOOK.md`](../../docs/operations/SERVER_MVP_RUNBOOK.md).
 
 ## ACTIVE_MVP
 
@@ -54,6 +54,12 @@ composition or order execution:
   non-overlapping outcome starts and causal state-matched controls, and writes
   ignored local reports. Its crowd labels are descriptive shorthand, never
   psychology facts, trade signals, or runtime inputs.
+- `leverage_stress_download` downloads credential-free Binance Vision USD-M
+  mark/index 1m archives into a resumable, digest-recorded research cache and
+  emits completed, gap-safe 5m mark/index-derived basis rows.  It does not use
+  `premiumIndexKlines` as an interchangeable value.  `leverage_stress_analyze`
+  joins those local rows with local V3B funding/OI context as descriptive
+  research only; neither command is imported by the server or execution path.
 
 ## FUTURE_RESEARCH_BOUNDARY
 
