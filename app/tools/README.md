@@ -37,6 +37,18 @@ composition or order execution:
   or stale optional context stays unavailable; it is never silently filled.
   The generated market-intelligence report is descriptive research only, never
   a strategy or runtime input.
+- `market_intelligence_flow_download` imports a bounded BTCUSDT/ETHUSDT
+  public-archive range into canonical 5m research rows: completed 1m spot
+  participation, USD-M metrics, and funding. It sorts unordered metrics rows,
+  rejects duplicate observations, and keeps source gaps unavailable rather
+  than filling them. `market_intelligence_flow_analyze` produces only local
+  conditional-outcome reports and a structured `CAPITAL_FLOW_PROXY v2`; neither
+  command imports execution or emits a trading signal.
+  USD-M metrics are cached per verified day beneath
+  `data/research/cache/usdm_metrics/`; reruns reuse those inputs by default.
+  The downloader caps workers at eight, records atomic progress manifests, and
+  classifies missing, transient, invalid, and cross-day-duplicate archives
+  without interpolation or silent repair.
 
 The cost-aware research candidates are `cost_aware_momentum`,
 `regime_mean_reversion`, `multi_timeframe_trend`, `volatility_continuation`,
