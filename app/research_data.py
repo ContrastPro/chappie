@@ -15,6 +15,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 SCHEMA_VERSION = "chappie-research-data/v2"
+ALIGNMENT_SCHEMA_VERSION = "chappie-intelligence-alignment/v1"
 HORIZON_BARS = {"1h": 12, "3h": 36, "6h": 72, "12h": 144, "24h": 288}
 
 
@@ -106,6 +107,77 @@ class ResearchStore:
                 PRIMARY KEY(dataset, timestamp_ms)
             ) WITHOUT ROWID;
             CREATE INDEX IF NOT EXISTS basis_asset_segment_time ON basis_observations_v1(asset, segment_id, timestamp_ms);
+            CREATE TABLE IF NOT EXISTS intelligence_observations_v1 (
+                asset TEXT NOT NULL, timestamp_ms INTEGER NOT NULL,
+                aligned_segment_id INTEGER NOT NULL, flow_segment_id INTEGER NOT NULL,
+                basis_segment_id INTEGER, flow_available INTEGER NOT NULL,
+                basis_available INTEGER NOT NULL, close REAL NOT NULL,
+                relative_volume REAL, taker_buy_ratio REAL, signed_imbalance REAL,
+                open_interest REAL, open_interest_value REAL, oi_change_5m REAL,
+                oi_change_15m REAL, oi_change_1h REAL, price_oi_state TEXT,
+                futures_taker_ratio REAL, global_positioning REAL, top_positioning REAL,
+                funding REAL, positioning_state TEXT, futures_taker_state TEXT,
+                trend TEXT, volatility_bucket TEXT, mark_price REAL, index_price REAL,
+                premium_bps REAL, premium_change_5m REAL, premium_change_15m REAL,
+                premium_change_1h REAL, premium_state TEXT, premium_dynamic_state TEXT,
+                PRIMARY KEY(asset, timestamp_ms)
+            ) WITHOUT ROWID;
+            CREATE INDEX IF NOT EXISTS intelligence_v1_asset_segment_time
+              ON intelligence_observations_v1(asset, aligned_segment_id, timestamp_ms);
+            CREATE TABLE IF NOT EXISTS aligned_manifest_v1 (
+                asset TEXT PRIMARY KEY, state TEXT NOT NULL, alignment_schema TEXT NOT NULL,
+                flow_dataset TEXT NOT NULL, basis_dataset TEXT NOT NULL,
+                flow_content_digest TEXT NOT NULL, basis_content_digest TEXT NOT NULL,
+                flow_source_sha256 TEXT NOT NULL, basis_source_sha256 TEXT NOT NULL,
+                build_config_digest TEXT NOT NULL, row_count INTEGER NOT NULL DEFAULT 0,
+                flow_only_rows INTEGER NOT NULL DEFAULT 0, flow_basis_rows INTEGER NOT NULL DEFAULT 0,
+                first_timestamp_ms INTEGER, last_timestamp_ms INTEGER,
+                aligned_segment_count INTEGER NOT NULL DEFAULT 0, content_digest TEXT,
+                detail TEXT, started_at TEXT, verified_at TEXT
+            ) WITHOUT ROWID;
+            CREATE TABLE IF NOT EXISTS intelligence_outcomes_v1 (
+                asset TEXT NOT NULL, timestamp_ms INTEGER NOT NULL,
+                aligned_segment_id INTEGER NOT NULL, horizon_minutes INTEGER NOT NULL,
+                forward_return_bps REAL, max_favorable_excursion_bps REAL,
+                max_adverse_excursion_bps REAL, hit_plus_60_bps INTEGER,
+                hit_plus_100_bps INTEGER, hit_plus_150_bps INTEGER,
+                hit_minus_60_bps INTEGER, hit_minus_100_bps INTEGER,
+                hit_minus_150_bps INTEGER, outcome_available INTEGER NOT NULL,
+                unavailable_reason TEXT,
+                PRIMARY KEY(asset, timestamp_ms, horizon_minutes)
+            ) WITHOUT ROWID;
+            CREATE INDEX IF NOT EXISTS intelligence_outcomes_v1_asset_segment_time
+              ON intelligence_outcomes_v1(asset, aligned_segment_id, timestamp_ms, horizon_minutes);
+            CREATE TABLE IF NOT EXISTS outcome_manifest_v1 (
+                asset TEXT PRIMARY KEY, state TEXT NOT NULL, outcome_schema TEXT NOT NULL,
+                aligned_content_digest TEXT NOT NULL, outcome_config_digest TEXT NOT NULL,
+                horizons_json TEXT NOT NULL, thresholds_json TEXT NOT NULL,
+                row_count INTEGER NOT NULL DEFAULT 0, availability_json TEXT NOT NULL DEFAULT '{}',
+                first_timestamp_ms INTEGER, last_timestamp_ms INTEGER, content_digest TEXT,
+                detail TEXT, started_at TEXT, verified_at TEXT
+            ) WITHOUT ROWID;
+            CREATE TABLE IF NOT EXISTS intelligence_events_v1 (
+                event_id TEXT PRIMARY KEY, event_type TEXT NOT NULL, asset TEXT NOT NULL,
+                start_timestamp_ms INTEGER NOT NULL, end_timestamp_ms INTEGER NOT NULL,
+                anchor_timestamp_ms INTEGER NOT NULL, aligned_segment_id INTEGER NOT NULL,
+                raw_row_count INTEGER NOT NULL, causal_snapshot_json TEXT NOT NULL
+            ) WITHOUT ROWID;
+            CREATE INDEX IF NOT EXISTS intelligence_events_v1_asset_type_time
+              ON intelligence_events_v1(asset, event_type, anchor_timestamp_ms);
+            CREATE TABLE IF NOT EXISTS event_matches_v1 (
+                event_id TEXT NOT NULL, asset TEXT NOT NULL, horizon_minutes INTEGER NOT NULL,
+                event_anchor_timestamp_ms INTEGER NOT NULL, control_anchor_timestamp_ms INTEGER,
+                matching_signature TEXT NOT NULL, matching_status TEXT NOT NULL,
+                PRIMARY KEY(event_id, horizon_minutes)
+            ) WITHOUT ROWID;
+            CREATE TABLE IF NOT EXISTS event_match_manifest_v1 (
+                asset TEXT NOT NULL, event_type TEXT NOT NULL, state TEXT NOT NULL,
+                bridge_schema TEXT NOT NULL, aligned_content_digest TEXT NOT NULL,
+                outcome_content_digest TEXT NOT NULL, config_digest TEXT NOT NULL,
+                event_count INTEGER NOT NULL DEFAULT 0, match_count INTEGER NOT NULL DEFAULT 0,
+                content_digest TEXT, detail TEXT, verified_at TEXT,
+                PRIMARY KEY(asset,event_type)
+            ) WITHOUT ROWID;
             """
         )
         # Existing local research caches predate the expanded v2D manifest.
