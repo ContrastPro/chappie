@@ -13,6 +13,9 @@ Future canonical research documentation will include architecture, datasets,
 strategies, a durable research log, and a tools index. News/Event and Social
 Intelligence are future research directions, not runtime capabilities.
 
+[News & Event Intelligence v1](NEWS_EVENT_INTELLIGENCE.md) defines the
+research-only provenance, causality, deduplication, and optional-AI boundary.
+
 The migration of `app/tools/README.md` remains pending until the current
 in-progress research diff is resolved; this index does not change that file.
 # Canonical compact methodology
