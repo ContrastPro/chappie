@@ -1,4 +1,4 @@
-"""Build bounded, public BTC/ETH flow-positioning research datasets.
+"""Build bounded, public flow-positioning research datasets.
 
 The command is deliberately research-only: it uses public Binance Vision
 archives and public funding history, writes only under ``data/research``, and
@@ -30,11 +30,13 @@ import httpx
 from app.market_intelligence import ContextDataset, ContextObservation
 from app.market_intelligence_flow import (
     MetricsDataset,
+    SpotFlowObservation,
     aggregate_completed_spot_5m,
     build_flow_observations,
     canonicalize_metrics_rows,
     flow_digest,
     flow_to_payload,
+    load_flow_payload,
     load_metrics_payload,
     metrics_digest,
     metrics_to_payload,
@@ -462,6 +464,246 @@ def _write_gzip_atomic(path: Path, payload: dict[str, object]) -> None:
         raise
 
 
+def _read_gzip_payload(path: Path) -> dict[str, object]:
+    """Read one locally verified JSON artifact; never fetch as a fallback here."""
+    with gzip.open(path, "rt", encoding="utf-8") as source:
+        payload = json.load(source)
+    if not isinstance(payload, dict):
+        raise TypeError(f"invalid JSON object in {path}")
+    return payload
+
+
+def _funding_payload(dataset: ContextDataset) -> dict[str, object]:
+    rows = [
+        {
+            "timestamp_ms": item.timestamp_ms,
+            "published_at_ms": item.published_at_ms,
+            "value": str(item.value),
+            "source": item.source,
+        }
+        for item in dataset.observations
+    ]
+    digest = hashlib.sha256(
+        json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return {
+        "format": "chappie-funding-rate/v1",
+        "symbol": dataset.symbol,
+        "interval": dataset.frequency,
+        "source": dataset.source,
+        "rows": rows,
+        "content_digest": digest,
+    }
+
+
+def _funding_cache_path(cache_root: Path, symbol: str, start: str, end: str) -> Path:
+    return cache_root / "funding" / symbol / f"{start}_{end}.json.gz"
+
+
+def _cached_funding(
+    *, cache_root: Path, symbol: str, start: str, end: str
+) -> ContextDataset | None:
+    path = _funding_cache_path(cache_root, symbol, start, end)
+    if not path.exists():
+        return None
+    payload = _read_gzip_payload(path)
+    if (
+        payload.get("format") != "chappie-funding-rate/v1"
+        or payload.get("symbol") != symbol
+        or not isinstance(payload.get("rows"), list)
+    ):
+        raise ValueError("funding cache identity does not match requested artifact")
+    rows = payload["rows"]
+    canonical = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()
+    if payload.get("content_digest") != hashlib.sha256(canonical).hexdigest():
+        raise ValueError("funding cache digest does not match rows")
+    observations = tuple(
+        ContextObservation(
+            int(row["timestamp_ms"]),
+            int(row["published_at_ms"]),
+            Decimal(str(row["value"])),
+            str(row["source"]),
+        )
+        for row in rows
+    )
+    if not observations or tuple(sorted(item.timestamp_ms for item in observations)) != tuple(
+        item.timestamp_ms for item in observations
+    ):
+        raise ValueError("funding cache observations must be non-empty and ordered")
+    return ContextDataset("funding_rate", symbol, "8h", str(payload["source"]), observations)
+
+
+def _load_spot_source(symbol: str) -> tuple[SpotFlowObservation, ...]:
+    """Use only the separately verified canonical spot timeline."""
+    from app.research_paths import spot_source_dir
+
+    payload = _read_gzip_payload(spot_source_dir(symbol) / "flow_5m.json.gz")
+    rows = load_flow_payload(payload)
+    if not rows or any(row.symbol != symbol for row in rows):
+        raise ValueError("canonical spot flow identity does not match requested symbol")
+    return tuple(row.spot for row in rows)
+
+
+def _derivatives_source_manifest(
+    *,
+    symbol: str,
+    start: str,
+    end: str,
+    metrics: MetricsDataset,
+    funding: ContextDataset,
+    daily_results: dict[str, DailyMetricsResult],
+    days: tuple[str, ...],
+    cross_day_anomalies: tuple[dict[str, object], ...],
+    flow: tuple[object, ...],
+    metrics_path: Path,
+    funding_path: Path,
+    flow_path: Path,
+) -> dict[str, object]:
+    metric_digest = metrics_digest(metrics)
+    funding_payload = _funding_payload(funding)
+    flow_payload = flow_to_payload(flow)  # type: ignore[arg-type]
+    counts = _progress_payload(daily_results.values(), requested_days=days)["counts"]
+    return {
+        "format": "chappie-derivatives-source/v1",
+        "state": "VERIFIED",
+        "schema_version": "market-intelligence-derivatives/v1",
+        "symbol": symbol,
+        "requested_start": start,
+        "requested_end": end,
+        "metrics": {
+            "source": ARCHIVE_BASE_URL,
+            "dataset": str(metrics_path),
+            "content_digest": metric_digest,
+            "first_timestamp_ms": metrics.observations[0].timestamp_ms,
+            "last_timestamp_ms": metrics.observations[-1].timestamp_ms,
+            "row_count": len(metrics.observations),
+            "segment_count": len(metrics.gaps_after_ms) + 1,
+            "gap_count": len(metrics.gaps_after_ms),
+            "gaps_after_ms": list(metrics.gaps_after_ms),
+            "source_ordered": metrics.was_source_ordered,
+            "daily_status_counts": counts,
+            "source_anomalies": list(cross_day_anomalies),
+        },
+        "funding": {
+            "source": funding.source,
+            "dataset": str(funding_path),
+            "content_digest": funding_payload["content_digest"],
+            "first_timestamp_ms": funding.observations[0].timestamp_ms,
+            "last_timestamp_ms": funding.observations[-1].timestamp_ms,
+            "row_count": len(funding.observations),
+        },
+        "flow": {
+            "dataset": str(flow_path),
+            "content_digest": flow_payload["digest"],
+            "row_count": len(flow),
+        },
+    }
+
+
+def _build_derivatives_only(
+    *,
+    symbols: tuple[str, ...],
+    start: str,
+    end: str,
+    workers: int,
+    cache_root: Path,
+) -> dict[str, object]:
+    """Backfill only futures facts onto pre-verified canonical spot flow.
+
+    This is deliberately separate from the old V3B study builder: it neither
+    downloads spot data nor recreates study-local source copies.
+    """
+    from app.research_paths import futures_source_dir
+
+    days = _days(start, end)
+    start_ms, end_ms = utc_date_to_ms(start), utc_date_to_ms(end)
+    output: dict[str, object] = {
+        "format": "chappie-derivatives-backfill-manifest/v1",
+        "requested_start": start,
+        "requested_end": end,
+        "assets": {},
+    }
+    with (
+        httpx.Client(base_url=ARCHIVE_BASE_URL, timeout=60.0) as archive_client,
+        httpx.Client(base_url=FUTURES_BASE_URL, timeout=30.0) as futures_client,
+    ):
+        for symbol in symbols:
+            try:
+                target = futures_source_dir(symbol)
+                daily_results: dict[str, DailyMetricsResult] = {}
+                pending = []
+                for day in days:
+                    cached = _load_cached_metrics(cache_root, symbol, day)
+                    if cached is None:
+                        pending.append(day)
+                    else:
+                        daily_results[day] = cached
+                progress = cache_root / "progress" / f"{symbol}_{start}_{end}.json"
+                write_report_atomic(
+                    progress, _progress_payload(daily_results.values(), requested_days=days)
+                )
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    jobs = {
+                        pool.submit(
+                            _download_metrics_day, archive_client, cache_root, symbol, day
+                        ): day
+                        for day in pending
+                    }
+                    for job in as_completed(jobs):
+                        item = job.result()
+                        daily_results[item.day] = item
+                        write_report_atomic(
+                            progress, _progress_payload(daily_results.values(), requested_days=days)
+                        )
+                validated, anomalies = _reject_cross_day_duplicates(
+                    tuple(daily_results[day] for day in days)
+                )
+                daily_results = {item.day: item for item in validated}
+                metrics = _assemble_metrics(validated, symbol=symbol)
+                funding = _cached_funding(
+                    cache_root=cache_root, symbol=symbol, start=start, end=end
+                )
+                if funding is None:
+                    funding = _funding(futures_client, symbol, start_ms, end_ms)
+                    _write_gzip_atomic(
+                        _funding_cache_path(cache_root, symbol, start, end),
+                        _funding_payload(funding),
+                    )
+                spot = _load_spot_source(symbol)
+                flow = build_flow_observations(
+                    symbol=symbol, spot=spot, metrics=metrics, funding=funding
+                )
+                metrics_path = target / "metrics_5m.json.gz"
+                funding_path = target / "funding_8h.json.gz"
+                flow_path = target / "flow_5m.json.gz"
+                _write_gzip_atomic(metrics_path, metrics_to_payload(metrics))
+                _write_gzip_atomic(funding_path, _funding_payload(funding))
+                _write_gzip_atomic(flow_path, flow_to_payload(flow))
+                manifest = _derivatives_source_manifest(
+                    symbol=symbol,
+                    start=start,
+                    end=end,
+                    metrics=metrics,
+                    funding=funding,
+                    daily_results=daily_results,
+                    days=days,
+                    cross_day_anomalies=anomalies,
+                    flow=flow,
+                    metrics_path=metrics_path,
+                    funding_path=funding_path,
+                    flow_path=flow_path,
+                )
+                write_report_atomic(target / "source_manifest.json", manifest)
+                output["assets"][symbol] = manifest
+            except (OSError, RuntimeError, ValueError, httpx.HTTPError) as error:
+                output["assets"][symbol] = {
+                    "state": "FAILED",
+                    "symbol": symbol,
+                    "detail": str(error),
+                }
+    return output
+
+
 def _build_spot_only(
     *,
     symbols: tuple[str, ...],
@@ -554,9 +796,16 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="build canonical spot flow with derivatives explicitly NOT_REQUESTED",
     )
+    parser.add_argument(
+        "--derivatives-only",
+        action="store_true",
+        help="extend verified canonical spot flow with canonical USD-M/funding facts only",
+    )
     args = parser.parse_args(argv)
     if not 1 <= args.workers <= MAX_WORKERS:
         parser.error(f"--workers must be between 1 and {MAX_WORKERS}")
+    if args.spot_only and args.derivatives_only:
+        parser.error("--spot-only and --derivatives-only are mutually exclusive")
     if args.spot_only:
         result = _build_spot_only(
             symbols=tuple(args.symbols),
@@ -566,6 +815,17 @@ def main(argv: list[str] | None = None) -> int:
             cache_root=args.spot_cache_root,
         )
         write_report_atomic(results_dir() / "spot_flow_backfill_manifest.json", result)
+        print(json.dumps(result, sort_keys=True))
+        return int(any(item.get("state") == "FAILED" for item in result["assets"].values()))
+    if args.derivatives_only:
+        result = _build_derivatives_only(
+            symbols=tuple(args.symbols),
+            start=args.start,
+            end=args.end,
+            workers=args.workers,
+            cache_root=args.cache_root,
+        )
+        write_report_atomic(results_dir() / "derivatives_backfill_manifest.json", result)
         print(json.dumps(result, sort_keys=True))
         return int(any(item.get("state") == "FAILED" for item in result["assets"].values()))
     months = _months(args.start, args.end)

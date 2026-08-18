@@ -31,10 +31,15 @@ from app.tools.market_intelligence_flow_download import (
     MAX_WORKERS,
     DailyMetricsResult,
     _assemble_metrics,
+    _cached_funding,
+    _derivatives_source_manifest,
     _download_metrics_day,
+    _funding_cache_path,
+    _funding_payload,
     _load_cached_metrics,
     _progress_payload,
     _reject_cross_day_duplicates,
+    _write_gzip_atomic,
 )
 
 
@@ -212,6 +217,27 @@ def test_metrics_staleness_is_unavailable_not_arbitrarily_forward_filled() -> No
     assert rows[2].metrics is None
 
 
+def test_oi_change_never_crosses_an_explicit_metrics_gap() -> None:
+    spot = aggregate_completed_spot_5m(tuple(_minute(index) for index in range(30)))
+    metrics = _metrics(
+        FuturesMetricsObservation(0, "BTCUSDT", Decimal(100), Decimal(1), None, None, None),
+        FuturesMetricsObservation(
+            FIVE_MINUTES_MS, "BTCUSDT", Decimal(101), Decimal(1), None, None, None
+        ),
+        FuturesMetricsObservation(
+            3 * FIVE_MINUTES_MS, "BTCUSDT", Decimal(103), Decimal(1), None, None, None
+        ),
+    )
+    rows = build_flow_observations(symbol="BTCUSDT", spot=spot, metrics=metrics, funding=None)
+    # The 15m source item has no exact 10m predecessor, so no change/state
+    # may bridge that source discontinuity.
+    after_gap = next(
+        row for row in rows if row.metrics and row.metrics.timestamp_ms == 3 * FIVE_MINUTES_MS
+    )
+    assert after_gap.oi_change_5m is None
+    assert after_gap.price_oi_state is None
+
+
 def test_spot_only_flow_preserves_participation_and_marks_derivatives_unavailable() -> None:
     spot = aggregate_completed_spot_5m(tuple(_minute(index) for index in range(15)))
     no_derivatives = MetricsDataset("SOLUSDT", "NOT_REQUESTED", (), 0, True, ())
@@ -342,6 +368,78 @@ def test_daily_metrics_cache_reuses_verified_artifact_and_preserves_canonical_or
     assert client.calls == 1
     assert _load_cached_metrics(tmp_path, "BTCUSDT", "2024-01-01") == second
     assert load_metrics_payload(metrics_to_payload(second.dataset)) == second.dataset  # type: ignore[arg-type]
+
+
+def test_funding_cache_is_identity_and_digest_checked_and_reusable(tmp_path) -> None:
+    funding = ContextDataset(
+        "funding_rate",
+        "SOLUSDT",
+        "8h",
+        "fixture",
+        (
+            ContextObservation(0, 0, Decimal("0.001"), "fixture"),
+            ContextObservation(
+                8 * 60 * 60 * 1_000, 8 * 60 * 60 * 1_000, Decimal("-0.001"), "fixture"
+            ),
+        ),
+    )
+    path = _funding_cache_path(tmp_path, "SOLUSDT", "2023-01-01", "2023-01-02")
+    _write_gzip_atomic(path, _funding_payload(funding))
+    assert (
+        _cached_funding(cache_root=tmp_path, symbol="SOLUSDT", start="2023-01-01", end="2023-01-02")
+        == funding
+    )
+    assert (
+        _cached_funding(cache_root=tmp_path, symbol="BNBUSDT", start="2023-01-01", end="2023-01-02")
+        is None
+    )
+
+
+def test_derivatives_manifest_is_verified_and_preserves_gap_and_source_status(tmp_path) -> None:
+    metrics = canonicalize_metrics_rows(
+        (
+            METRICS_COLUMNS,
+            _metrics_row("2024-01-01 00:05:00"),
+            _metrics_row("2024-01-01 00:15:00"),
+        ),
+        symbol="BTCUSDT",
+        source="fixture",
+    )
+    funding = ContextDataset(
+        "funding_rate",
+        "BTCUSDT",
+        "8h",
+        "fixture",
+        (ContextObservation(0, 0, Decimal("0.001"), "fixture"),),
+    )
+    flow = build_flow_observations(
+        symbol="BTCUSDT",
+        spot=aggregate_completed_spot_5m(tuple(_minute(index) for index in range(10))),
+        metrics=metrics,
+        funding=funding,
+    )
+    manifest = _derivatives_source_manifest(
+        symbol="BTCUSDT",
+        start="2024-01-01",
+        end="2024-01-02",
+        metrics=metrics,
+        funding=funding,
+        daily_results={
+            "2024-01-01": DailyMetricsResult("2024-01-01", "VERIFIED", metrics, "source", 10, True)
+        },
+        days=("2024-01-01",),
+        cross_day_anomalies=({"type": "CROSS_DAY_DUPLICATE_METRICS_TIMESTAMP"},),
+        flow=flow,
+        metrics_path=tmp_path / "metrics.json.gz",
+        funding_path=tmp_path / "funding.json.gz",
+        flow_path=tmp_path / "flow.json.gz",
+    )
+    assert manifest["state"] == "VERIFIED"
+    assert manifest["metrics"]["gap_count"] == 1  # type: ignore[index]
+    assert manifest["metrics"]["segment_count"] == 2  # type: ignore[index]
+    assert manifest["metrics"]["source_anomalies"] == [  # type: ignore[index]
+        {"type": "CROSS_DAY_DUPLICATE_METRICS_TIMESTAMP"}
+    ]
 
 
 def test_transient_retry_and_permanent_missing_archive_are_classified(tmp_path) -> None:

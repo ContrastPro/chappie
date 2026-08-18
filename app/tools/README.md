@@ -37,8 +37,8 @@ composition or order execution:
   or stale optional context stays unavailable; it is never silently filled.
   The generated market-intelligence report is descriptive research only, never
   a strategy or runtime input.
-- `market_intelligence_flow_download` imports a bounded BTCUSDT/ETHUSDT
-  public-archive range into canonical 5m research rows: completed 1m spot
+- `market_intelligence_flow_download` imports a bounded public-archive range
+  into canonical 5m research rows: completed 1m spot
   participation, USD-M metrics, and funding. It sorts unordered metrics rows,
   rejects duplicate observations, and keeps source gaps unavailable rather
   than filling them. `market_intelligence_flow_analyze` produces only local
@@ -49,6 +49,11 @@ composition or order execution:
   The downloader caps workers at eight, records atomic progress manifests, and
   classifies missing, transient, invalid, and cross-day-duplicate archives
   without interpolation or silent repair.
+  Its `--derivatives-only` mode reuses a separately VERIFIED canonical spot
+  timeline and writes USD-M metrics, funding, flow rows, and a verified source
+  manifest below `data/research/source/futures/<SYMBOL>/`; it never recreates
+  a study-specific spot copy. Funding is cached with a deterministic content
+  digest and is available only through its bounded causal as-of policy.
 - `behavioral_market_analyze` consumes only those local V3B datasets. It
   collapses adjacent observable-state rows into gap-safe events, uses
   non-overlapping outcome starts and causal state-matched controls, and writes

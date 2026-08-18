@@ -92,6 +92,112 @@ class UniverseObservation:
     rotation_state: str
 
 
+@dataclass(frozen=True, slots=True)
+class DerivativesPoint:
+    """One already-causal derivatives observation for cross-asset context.
+
+    ``None`` is source absence, not a bearish or neutral value.  This compact
+    type keeps four-asset aggregation independent of a particular downloader
+    or storage format.
+    """
+
+    timestamp_ms: int
+    oi_change_5m: float | None
+    funding: float | None
+    futures_taker_state: str | None
+    positioning_state: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class DerivativesContext:
+    timestamp_ms: int
+    available_assets: tuple[str, ...]
+    core_available: int
+    high_beta_available: int
+    oi_expansion_fraction: float | None
+    funding_positive_fraction: float | None
+    futures_buy_fraction: float | None
+    crowded_long_fraction: float | None
+    leverage_state: str | None
+    funding_state: str | None
+    futures_flow_state: str | None
+
+
+def build_derivatives_context(
+    series: dict[str, tuple[DerivativesPoint, ...]],
+) -> tuple[DerivativesContext, ...]:
+    """Build coverage-aware descriptive aggregates for BTC/ETH/SOL/BNB.
+
+    Exact timestamps only: there is no cross-asset as-of fill and missing
+    derivatives never enter a denominator.  Labels describe the source facts
+    and are intentionally separate from spot rotation states.
+    """
+    permitted = {"BTC", "ETH", "SOL", "BNB"}
+    if set(series) - permitted:
+        raise ValueError("derivatives context supports BTC, ETH, SOL, and BNB only")
+    indexes: dict[str, dict[int, DerivativesPoint]] = {}
+    for asset, points in series.items():
+        timestamps = tuple(point.timestamp_ms for point in points)
+        if timestamps != tuple(sorted(timestamps)) or len(timestamps) != len(set(timestamps)):
+            raise ValueError("derivatives points must be strictly ordered and unique")
+        indexes[asset] = {point.timestamp_ms: point for point in points}
+    timestamps = sorted({timestamp for index in indexes.values() for timestamp in index})
+    result = []
+    for timestamp in timestamps:
+        available = {
+            asset: index[timestamp] for asset, index in indexes.items() if timestamp in index
+        }
+
+        def fraction(values: list[bool]) -> float | None:
+            return sum(values) / len(values) if values else None
+
+        oi = [item.oi_change_5m > 0 for item in available.values() if item.oi_change_5m is not None]
+        funding = [item.funding > 0 for item in available.values() if item.funding is not None]
+        futures_buy = [
+            item.futures_taker_state == "FUTURES_BUYING"
+            for item in available.values()
+            if item.futures_taker_state is not None
+        ]
+        crowded = [
+            item.positioning_state == "EXTREME_LONG"
+            for item in available.values()
+            if item.positioning_state is not None
+        ]
+        oi_fraction, funding_fraction, buy_fraction = (
+            fraction(oi),
+            fraction(funding),
+            fraction(futures_buy),
+        )
+        result.append(
+            DerivativesContext(
+                timestamp,
+                tuple(sorted(available)),
+                sum(asset in available for asset in ("BTC", "ETH")),
+                sum(asset in available for asset in ("SOL", "BNB")),
+                oi_fraction,
+                funding_fraction,
+                buy_fraction,
+                fraction(crowded),
+                "LEVERAGE_EXPANDING"
+                if oi_fraction is not None and oi_fraction > 0.5
+                else "LEVERAGE_CONTRACTING"
+                if oi_fraction is not None and oi_fraction < 0.5
+                else None,
+                "FUNDING_POSITIVE_BROAD"
+                if len(funding) >= 2 and funding_fraction is not None and funding_fraction > 0.5
+                else "FUNDING_NEGATIVE_BROAD"
+                if len(funding) >= 2 and funding_fraction is not None and funding_fraction < 0.5
+                else None,
+                "FUTURES_BUY_PRESSURE"
+                if buy_fraction is not None and buy_fraction > 0.5
+                else "FUTURES_SELL_PRESSURE"
+                if buy_fraction is not None and buy_fraction < 0.5
+                else None,
+            )
+        )
+    return tuple(result)
+
+
 def _return(now: PricePoint, before: PricePoint) -> float | None:
     if now.segment_id != before.segment_id or now.timestamp_ms - before.timestamp_ms <= 0:
         return None

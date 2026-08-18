@@ -5,7 +5,11 @@ and LIVE runtime persistence. The canonical layout is rooted at
 `data/research/`:
 
 - `source/` contains reusable immutable market inputs, organized by market
-  type and asset. Mark/index archives live under `source/basis/archives/`.
+  type and asset. Mark/index archives live under `source/basis/archives/`;
+  USD-M metrics, funding, verified manifests, and flow rows live under
+  `source/futures/<SYMBOL>/`. A futures source may record explicit source
+  gaps or unavailable fields: consumers must preserve those as unavailable,
+  never forward-fill them.
 - `compact/research.sqlite3` is the verified, research-only compact store.
 - `cache/downloads/`, `cache/conversion/`, and `cache/temporary/` separate
   producer caches from durable source and study data.

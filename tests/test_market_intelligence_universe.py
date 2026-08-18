@@ -2,7 +2,9 @@ from app.market_intelligence_universe import (
     ASSETS,
     GROUPS,
     MEMBERS,
+    DerivativesPoint,
     PricePoint,
+    build_derivatives_context,
     build_universe_observations,
     transition_matrix,
     universe_digest,
@@ -68,3 +70,29 @@ def test_repeated_build_is_deterministic_and_rotation_is_descriptive():
         "MIXED",
     }
     assert transition_matrix(first)
+
+
+def test_derivatives_context_is_exact_timestamp_and_coverage_aware():
+    context = build_derivatives_context(
+        {
+            "BTC": (
+                DerivativesPoint(0, 1, 0.001, "FUTURES_BUYING", "LONG_BIASED"),
+                DerivativesPoint(300_000, -1, -0.001, "FUTURES_SELLING", "EXTREME_LONG"),
+            ),
+            "ETH": (DerivativesPoint(0, 2, 0.002, "FUTURES_BUYING", "NEUTRAL"),),
+            "SOL": (DerivativesPoint(0, None, None, None, None),),
+            # BNB has no source observation and must not count as negative.
+        }
+    )
+    first, second = context
+    assert first.available_assets == ("BTC", "ETH", "SOL")
+    assert first.core_available == 2 and first.high_beta_available == 1
+    assert first.oi_expansion_fraction == 1
+    assert first.funding_positive_fraction == 1
+    assert first.futures_buy_fraction == 1
+    assert first.leverage_state == "LEVERAGE_EXPANDING"
+    assert first.funding_state == "FUNDING_POSITIVE_BROAD"
+    assert first.futures_flow_state == "FUTURES_BUY_PRESSURE"
+    assert second.available_assets == ("BTC",)
+    assert second.oi_expansion_fraction == 0
+    assert second.funding_positive_fraction == 0
