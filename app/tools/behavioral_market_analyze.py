@@ -9,6 +9,7 @@ from pathlib import Path
 
 from app.behavioral_market import analyze_behavioral_market
 from app.market_intelligence_flow import FlowObservation, load_flow_payload
+from app.research_paths import flow_read_root, results_dir
 from app.tools.strategy_evaluate import write_report_atomic
 
 
@@ -55,8 +56,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Validate behavioural market events from local V3B data"
     )
-    parser.add_argument("--root", type=Path, default=Path("data/research/market_intelligence_v3b"))
-    parser.add_argument("--output-dir", type=Path, default=Path("data/research/results"))
+    parser.add_argument("--root", type=Path, default=flow_read_root())
+    parser.add_argument("--output-dir", type=Path, default=results_dir())
     args = parser.parse_args(argv)
     manifest = json.loads((args.root / "source_manifest.json").read_text(encoding="utf-8"))
     datasets = {

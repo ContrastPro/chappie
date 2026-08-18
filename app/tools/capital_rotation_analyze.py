@@ -21,6 +21,7 @@ from app.capital_rotation import (
 )
 from app.market.intervals import fixed_binance_spot_interval_ms
 from app.market_intelligence import load_context_payload
+from app.research_paths import results_dir
 from app.strategy_history import load_dataset
 from app.tools.strategy_evaluate import write_report_atomic
 
@@ -146,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--spot", action="append", required=True, metavar="SYMBOL=PATH")
     parser.add_argument("--direct", action="append", default=[], metavar="SYMBOL=PATH")
     parser.add_argument("--funding", type=Path, help="optional verified BTCUSDT funding dataset")
-    parser.add_argument("--output-dir", type=Path, default=Path("data/research/results"))
+    parser.add_argument("--output-dir", type=Path, default=results_dir())
     parser.add_argument("--lookback-bars", type=int, default=6)
     args = parser.parse_args(argv)
     spot_paths = _named_paths(args.spot, expected={f"{asset}USDT" for asset in ASSETS})

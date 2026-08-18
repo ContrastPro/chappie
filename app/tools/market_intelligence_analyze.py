@@ -17,6 +17,7 @@ from app.market_intelligence import (
     load_context_payload,
     price_oi_state,
 )
+from app.research_paths import results_dir
 from app.strategy_history import load_dataset
 from app.tools.strategy_evaluate import write_report_atomic
 
@@ -47,7 +48,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--ethbtc", type=Path, required=True)
     parser.add_argument("--funding", type=Path, required=True)
     parser.add_argument("--open-interest", type=Path)
-    parser.add_argument("--output-dir", type=Path, default=Path("data/research/results"))
+    parser.add_argument("--output-dir", type=Path, default=results_dir())
     args = parser.parse_args(argv)
     btc, ethusdt, ethbtc = (
         load_dataset(args.btc),

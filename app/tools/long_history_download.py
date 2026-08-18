@@ -24,6 +24,7 @@ from app.research_anomalies import (
     quality_status,
     split_historical_rows,
 )
+from app.research_paths import spot_source_dir
 from app.strategy_history import (
     HistoricalDataset,
     HistoricalDatasetMetadata,
@@ -154,7 +155,7 @@ def _verified_or_download(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build long-history public spot research chunks")
-    parser.add_argument("--root", type=Path, default=Path("data/research/long_history"))
+    parser.add_argument("--root", type=Path, default=spot_source_dir("BTCUSDT") / "long_history")
     parser.add_argument(
         "--end", default=datetime.now(UTC).date().isoformat(), help="exclusive completed UTC date"
     )

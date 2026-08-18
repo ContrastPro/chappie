@@ -52,11 +52,9 @@ def _months(start: str, end: str) -> tuple[str, ...]:
     return tuple(result)
 
 
-def _cache_path(root: Path, symbol: str, kind: str, period: str, *, monthly: bool) -> Path:
+def _cache_path(cache_root: Path, symbol: str, kind: str, period: str, *, monthly: bool) -> Path:
     return (
-        root
-        / "cache"
-        / "basis"
+        cache_root
         / ("monthly" if monthly else "daily")
         / symbol
         / kind
@@ -79,9 +77,9 @@ def _read_cache(path: Path) -> tuple[tuple[tuple[object, ...], ...], str] | None
 
 
 def _download_period(
-    client: httpx.Client, *, root: Path, symbol: str, kind: str, period: str, monthly: bool
+    client: httpx.Client, *, cache_root: Path, symbol: str, kind: str, period: str, monthly: bool
 ) -> tuple[tuple[tuple[object, ...], ...], str, bool]:
-    path = _cache_path(root, symbol, kind, period, monthly=monthly)
+    path = _cache_path(cache_root, symbol, kind, period, monthly=monthly)
     cached = _read_cache(path)
     if cached is not None:
         return *cached, True
@@ -118,6 +116,7 @@ def _download_period(
 def build_dataset(
     *,
     root: Path,
+    cache_root: Path | None = None,
     start: str,
     end: str,
     symbols: tuple[str, ...] = SYMBOLS,
@@ -126,6 +125,7 @@ def build_dataset(
 ) -> dict[str, object]:
     """Build deterministic completed-five-minute basis datasets from cached archives."""
     periods = _months(start, end) if monthly else _days(start, end)
+    cache_root = cache_root or root / "cache" / "basis"
     if not 1 <= workers <= MAX_WORKERS:
         raise ValueError(f"workers must be 1..{MAX_WORKERS}")
     output: dict[str, object] = {
@@ -147,7 +147,7 @@ def build_dataset(
                     executor.submit(
                         _download_period,
                         client,
-                        root=root,
+                        cache_root=cache_root,
                         symbol=symbol,
                         kind=kind,
                         period=period,
@@ -185,14 +185,22 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Download public mark/index basis research archives"
     )
-    parser.add_argument("--root", type=Path, default=Path("data/research/leverage_stress_v4c"))
+    from app.research_paths import basis_archive_root, study_dir
+
+    parser.add_argument("--root", type=Path, default=study_dir("leverage_stress") / "v4c")
+    parser.add_argument("--cache-root", type=Path, default=basis_archive_root())
     parser.add_argument("--start", default="2023-01-01")
     parser.add_argument("--end", default=datetime.now(UTC).date().isoformat())
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--daily", action="store_true")
     args = parser.parse_args(argv)
     result = build_dataset(
-        root=args.root, start=args.start, end=args.end, monthly=not args.daily, workers=args.workers
+        root=args.root,
+        cache_root=args.cache_root,
+        start=args.start,
+        end=args.end,
+        monthly=not args.daily,
+        workers=args.workers,
     )
     print(json.dumps(result, sort_keys=True))
     return 0

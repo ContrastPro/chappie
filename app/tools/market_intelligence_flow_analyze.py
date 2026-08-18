@@ -218,8 +218,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Analyze local V3B flow-positioning research datasets"
     )
-    parser.add_argument("--root", type=Path, default=Path("data/research/market_intelligence_v3b"))
-    parser.add_argument("--output-dir", type=Path, default=Path("data/research/results"))
+    from app.research_paths import flow_read_root, results_dir
+
+    parser.add_argument("--root", type=Path, default=flow_read_root())
+    parser.add_argument("--output-dir", type=Path, default=results_dir())
     args = parser.parse_args(argv)
     btc = _load(args.root / "datasets" / "btcusdt_flow_5m.json.gz")
     eth = _load(args.root / "datasets" / "ethusdt_flow_5m.json.gz")

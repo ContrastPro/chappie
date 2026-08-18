@@ -10,6 +10,7 @@ from pathlib import Path
 
 from app.leverage_stress import leverage_state, load_basis_payload
 from app.market_intelligence_flow import conditional_lift, future_return_bps, load_flow_payload
+from app.research_paths import flow_read_root, leverage_read_root, results_dir
 from app.tools.strategy_evaluate import write_report_atomic
 
 HORIZONS = {"1h": 12, "3h": 36, "6h": 72, "12h": 144, "24h": 288}
@@ -63,13 +64,9 @@ def analyze(flow_rows, basis_rows) -> dict[str, object]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Analyze V4C leverage-stress basis context")
-    parser.add_argument(
-        "--basis-root", type=Path, default=Path("data/research/leverage_stress_v4c")
-    )
-    parser.add_argument(
-        "--flow-root", type=Path, default=Path("data/research/market_intelligence_v3b")
-    )
-    parser.add_argument("--output-dir", type=Path, default=Path("data/research/results"))
+    parser.add_argument("--basis-root", type=Path, default=leverage_read_root())
+    parser.add_argument("--flow-root", type=Path, default=flow_read_root())
+    parser.add_argument("--output-dir", type=Path, default=results_dir())
     args = parser.parse_args(argv)
     assets = {}
     for symbol in ("BTCUSDT", "ETHUSDT"):

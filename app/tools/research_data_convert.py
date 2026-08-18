@@ -11,6 +11,7 @@ from pathlib import Path
 
 from app.research_data import ResearchStore
 from app.research_json import iter_legacy_rows
+from app.research_paths import compact_db_path
 
 BATCH_SIZE = 1_000
 CONVERSION_SCHEMA = "research-conversion/v2d"
@@ -298,9 +299,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("kind", choices=("flow", "basis"))
     parser.add_argument("source", type=Path)
     parser.add_argument("--dataset", required=True)
-    parser.add_argument(
-        "--store", type=Path, default=Path("data/research/cache/research_data_v2.sqlite3")
-    )
+    parser.add_argument("--store", type=Path, default=compact_db_path())
     parser.add_argument(
         "--max-chunks",
         type=int,

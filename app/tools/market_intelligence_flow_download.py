@@ -48,7 +48,16 @@ FUTURES_BASE_URL = "https://fapi.binance.com"
 MAX_MONTHS = 72
 MAX_WORKERS = 8
 MAX_RETRIES = 3
-SYMBOLS = ("BTCUSDT", "ETHUSDT")
+SYMBOLS = (
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "BNBUSDT",
+    "AVAXUSDT",
+    "XRPUSDT",
+    "LINKUSDT",
+    "DOGEUSDT",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +113,54 @@ def _archive_rows(client: httpx.Client, path: str) -> tuple[tuple[tuple[str, ...
         ), hashlib.sha256(response.content).hexdigest()
     except zipfile.BadZipFile as error:
         raise ValueError(f"invalid public archive: {source}") from error
+
+
+def _spot_cache_path(cache_root: Path, symbol: str, month: str) -> Path:
+    return cache_root / symbol / month[:4] / f"{month}.zip"
+
+
+def _spot_archive_rows(
+    client: httpx.Client, *, cache_root: Path, symbol: str, month: str
+) -> tuple[tuple[tuple[str, ...], ...], str, bool]:
+    """Load one immutable monthly spot archive, reusing its atomic local cache."""
+    cache_path = _spot_cache_path(cache_root, symbol, month)
+    if cache_path.exists():
+        raw = cache_path.read_bytes()
+        reused = True
+    else:
+        path = f"/data/spot/monthly/klines/{symbol}/1m/{symbol}-1m-{month}.zip"
+        response = client.get(path)
+        response.raise_for_status()
+        raw = response.content
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temporary = tempfile.mkstemp(
+            prefix=f".{cache_path.name}.", dir=cache_path.parent
+        )
+        try:
+            with os.fdopen(descriptor, "wb") as output:
+                output.write(raw)
+                output.flush()
+                os.fsync(output.fileno())
+            os.replace(temporary, cache_path)
+        except BaseException:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+            raise
+        reused = False
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(raw))
+        members = archive.namelist()
+        if len(members) != 1 or not members[0].endswith(".csv"):
+            raise ValueError("unexpected public archive members")
+        rows = tuple(
+            tuple(row)
+            for row in csv.reader(io.TextIOWrapper(archive.open(members[0]), encoding="utf-8"))
+        )
+    except zipfile.BadZipFile as error:
+        raise ValueError(f"invalid public archive cache: {cache_path}") from error
+    return rows, hashlib.sha256(raw).hexdigest(), reused
 
 
 def _cache_path(cache_root: Path, symbol: str, day: str) -> Path:
@@ -405,17 +462,112 @@ def _write_gzip_atomic(path: Path, payload: dict[str, object]) -> None:
         raise
 
 
+def _build_spot_only(
+    *,
+    symbols: tuple[str, ...],
+    start: str,
+    end: str,
+    workers: int,
+    cache_root: Path,
+) -> dict[str, object]:
+    """Build canonical spot-only flow artifacts without any derivatives request."""
+    from app.research_paths import spot_source_dir
+
+    months = _months(start, end)
+    start_ms, end_ms = utc_date_to_ms(start), utc_date_to_ms(end)
+    output: dict[str, object] = {"format": "chappie-spot-flow-source-manifest/v1", "assets": {}}
+    with httpx.Client(base_url=ARCHIVE_BASE_URL, timeout=60.0) as client:
+        for symbol in symbols:
+            target_root = spot_source_dir(symbol)
+            try:
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    archives = tuple(
+                        pool.map(
+                            lambda month, symbol=symbol: _spot_archive_rows(
+                                client, cache_root=cache_root, symbol=symbol, month=month
+                            ),
+                            months,
+                        )
+                    )
+                source_rows: list[tuple[str, ...]] = []
+                digests: list[str] = []
+                reused = 0
+                for rows, digest, was_reused in archives:
+                    source_rows.extend(rows)
+                    digests.append(digest)
+                    reused += int(was_reused)
+                parsed, anomalies = parse_spot_minute_rows_excluding_invalid(source_rows)
+                minutes = tuple(item for item in parsed if start_ms <= item.open_time_ms < end_ms)
+                spot = aggregate_completed_spot_5m(minutes)
+                if not spot:
+                    raise ValueError("no completed five-minute spot observations")
+                metrics = MetricsDataset(symbol, "NOT_REQUESTED", (), 0, True, ())
+                flow = build_flow_observations(
+                    symbol=symbol, spot=spot, metrics=metrics, funding=None
+                )
+                dataset_path = target_root / "flow_5m.json.gz"
+                _write_gzip_atomic(dataset_path, flow_to_payload(flow))
+                manifest = {
+                    "format": "chappie-spot-flow-source/v1",
+                    "state": "VERIFIED",
+                    "symbol": symbol,
+                    "requested_start": start,
+                    "requested_end": end,
+                    "flow_dataset": str(dataset_path),
+                    "flow_digest": flow_digest(flow),
+                    "spot_1m": {
+                        "source": ARCHIVE_BASE_URL,
+                        "first_timestamp_ms": spot[0].timestamp_ms,
+                        "last_timestamp_ms": spot[-1].timestamp_ms,
+                        "observation_count": len(spot),
+                        "source_digest": hashlib.sha256("".join(digests).encode()).hexdigest(),
+                        "anomalies": list(anomalies),
+                        "reused_archives": reused,
+                        "newly_downloaded_archives": len(months) - reused,
+                    },
+                    "derivatives": "NOT_REQUESTED",
+                }
+                write_report_atomic(target_root / "source_manifest.json", manifest)
+                output["assets"][symbol] = manifest
+            except (OSError, RuntimeError, ValueError, httpx.HTTPError) as error:
+                output["assets"][symbol] = {
+                    "state": "FAILED",
+                    "symbol": symbol,
+                    "detail": str(error),
+                }
+    return output
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build public flow/positioning research inputs")
-    parser.add_argument("--root", type=Path, default=Path("data/research/market_intelligence_v3b"))
-    parser.add_argument("--cache-root", type=Path, default=Path("data/research/cache/usdm_metrics"))
+    from app.research_paths import download_cache_dir, results_dir, study_dir
+
+    parser.add_argument("--root", type=Path, default=study_dir("market_intelligence") / "v3b")
+    parser.add_argument("--cache-root", type=Path, default=download_cache_dir() / "usdm_metrics")
+    parser.add_argument("--spot-cache-root", type=Path, default=download_cache_dir() / "spot_1m")
     parser.add_argument("--start", default="2022-01-01")
     parser.add_argument("--end", default="2026-08-01", help="exclusive UTC calendar date")
     parser.add_argument("--symbols", nargs="+", choices=SYMBOLS, default=list(SYMBOLS))
     parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument(
+        "--spot-only",
+        action="store_true",
+        help="build canonical spot flow with derivatives explicitly NOT_REQUESTED",
+    )
     args = parser.parse_args(argv)
     if not 1 <= args.workers <= MAX_WORKERS:
         parser.error(f"--workers must be between 1 and {MAX_WORKERS}")
+    if args.spot_only:
+        result = _build_spot_only(
+            symbols=tuple(args.symbols),
+            start=args.start,
+            end=args.end,
+            workers=args.workers,
+            cache_root=args.spot_cache_root,
+        )
+        write_report_atomic(results_dir() / "spot_flow_backfill_manifest.json", result)
+        print(json.dumps(result, sort_keys=True))
+        return int(any(item.get("state") == "FAILED" for item in result["assets"].values()))
     months = _months(args.start, args.end)
     days = _days(args.start, args.end)
     start_ms, end_ms = utc_date_to_ms(args.start), utc_date_to_ms(args.end)

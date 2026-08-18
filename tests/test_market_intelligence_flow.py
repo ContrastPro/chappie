@@ -212,6 +212,19 @@ def test_metrics_staleness_is_unavailable_not_arbitrarily_forward_filled() -> No
     assert rows[2].metrics is None
 
 
+def test_spot_only_flow_preserves_participation_and_marks_derivatives_unavailable() -> None:
+    spot = aggregate_completed_spot_5m(tuple(_minute(index) for index in range(15)))
+    no_derivatives = MetricsDataset("SOLUSDT", "NOT_REQUESTED", (), 0, True, ())
+    rows = build_flow_observations(
+        symbol="SOLUSDT", spot=spot, metrics=no_derivatives, funding=None
+    )
+
+    assert len(rows) == len(spot)
+    assert all(row.metrics is None and row.funding is None for row in rows)
+    assert all(row.oi_change_5m is None and row.price_oi_state is None for row in rows)
+    assert rows[-1].spot.signed_taker_quote_imbalance == Decimal("0.2")
+
+
 def test_nonpositive_source_open_interest_leaves_price_oi_state_unavailable() -> None:
     spot = aggregate_completed_spot_5m(tuple(_minute(index) for index in range(10)))
     metrics = _metrics(

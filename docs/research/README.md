@@ -2,6 +2,8 @@
 
 Research is offline and read-only relative to trading execution. Generated
 datasets and reports live under the ignored `data/research/` directory.
+The active path contract and retention policy are documented in
+[Research datasets](DATASETS.md).
 
 Strategies and hypotheses are not automatically approved for Paper or Testnet.
 Research Data Engine v2 and V4C leverage-stress research are currently in
@@ -25,3 +27,14 @@ reproduction and sanity checks, but exact parity is not a compact-methodology
 release requirement. This validation establishes research-engine behavior only;
 it does not establish strategy profitability. V4C remains the next pending
 research experiment.
+
+## Market Intelligence Universe v1
+
+The research-only `market_intelligence_universe_v1/1.0.0` fixes an eight-member
+universe: BTC, ETH, SOL, BNB, AVAX, XRP, LINK, and DOGE. BTC is the primary
+benchmark and ETH secondary; derived relative strength uses exact synchronized
+USDT closes, never as-of or forward-filled values. Breadth, group participation,
+leadership, and rotation observations are descriptive context only. Basis is
+secondary context following V4C, not a required participation field or a
+basis-led state. Membership is retrospective and therefore subject to survivorship
+and listing-history limitations; missing pre-listing data remains unavailable.
