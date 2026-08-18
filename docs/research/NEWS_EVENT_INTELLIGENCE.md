@@ -67,3 +67,40 @@ SEC/CFTC/Federal Register regulatory events, official ETF decisions, and only
 exchange incident histories with reproducible timestamps. Social sources remain
 a later input class feeding the same normalized model; they are not a separate
 event counter.
+
+## Official macro corpus (Phase 2)
+
+The first factual corpus is restricted to the Federal Reserve FOMC statement
+archive and BLS CPI and Employment Situation releases. `news_event_official_macro_sources/1.0.0`
+is the versioned primary-source registry. The downloader caches only official
+representations under `data/research/source/news/macro/` and
+`data/research/cache/downloads/news/macro/`; these generated research files are
+ignored.
+
+The normalizer preserves official URL, title, minimal excerpt, raw digest,
+published/update evidence, and parser version. It classifies only factual macro
+subtypes. A precise `MARKET_KNOWN_AT` is created only when the preserved source
+itself supplies an explicit publication/release timestamp; date-only source
+records remain preserved but are excluded from intraday RDE alignment.
+
+For eligible records, the bridge uses the first fully closed 5-minute interval
+strictly after market knowledge. The AI-ready export is facts plus the causal
+snapshot at that anchor only. Forward outcomes are structurally separate and
+cannot affect its context digest.
+
+## Phase 2 implementation status
+
+IMPLEMENTED:
+- Official macro source registry and versioned provenance contract.
+- Official FOMC/CPI/Employment parser contracts (offline normalization).
+- Intraday anchoring, causal bridge emission, and separate forward outcomes.
+- `official_macro_*` paths and deterministic offline test coverage.
+
+PENDING:
+- Full historical official corpus backfill across 2023-01-01 → 2026-08-01.
+- Manifested production-scale official download/replay reports.
+
+BLOCKER:
+- Real BLS official page access is blocked by this environment (HTTP 403 /
+  TLS trust path), so this phase must not claim historical corpus completeness
+  from this run.

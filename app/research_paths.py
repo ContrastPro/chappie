@@ -31,6 +31,15 @@ def source_root() -> Path:
     return research_root() / "source"
 
 
+def news_macro_source_dir() -> Path:
+    """Preserved official macro representations; generated and research-only."""
+    return source_root() / "news" / "macro"
+
+
+def news_macro_download_cache_dir() -> Path:
+    return download_cache_dir() / "news" / "macro"
+
+
 def spot_source_dir(asset: str) -> Path:
     return source_root() / "spot" / _asset(asset)
 
