@@ -16,6 +16,10 @@ Intelligence are future research directions, not runtime capabilities.
 [News & Event Intelligence v1](NEWS_EVENT_INTELLIGENCE.md) defines the
 research-only provenance, causality, deduplication, and optional-AI boundary.
 
+[Chappie AI v1](CHAPPIE_AI.md) defines the provider-neutral local reasoning
+boundary, strict fact references, causal cutoffs, unvalidated hypotheses, and
+the separation from RDE evidence, Risk, and execution.
+
 The migration of `app/tools/README.md` remains pending until the current
 in-progress research diff is resolved; this index does not change that file.
 # Canonical compact methodology
