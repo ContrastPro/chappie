@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -286,6 +287,7 @@ class SetupEngineV1:
         developer: bool = False,
         ai_profile: AIModelProfileV1 | None = None,
         dry_run: bool = False,
+        progress: Callable[[SetupActionV1, SetupStepResultV1 | None], None] | None = None,
     ) -> SetupRunStateV1:
         self._profile = ai_profile or AIModelProfileV1.BALANCED
         actions = self.plan(developer=developer, ai_profile=ai_profile)
@@ -307,6 +309,8 @@ class SetupEngineV1:
             item.code for item in previous.steps if item.state == SetupStepStateV1.COMPLETED
         }
         for action in actions:
+            if progress is not None:
+                progress(action, None)
             if not self._dependencies_complete(action, completed):
                 results.append(
                     SetupStepResultV1(
@@ -344,6 +348,8 @@ class SetupEngineV1:
                         round((time.monotonic() - started) * 1000),
                     )
             results.append(result)
+            if progress is not None:
+                progress(action, result)
             if action.code == SetupActionCodeV1.INSTALL_AI_PROVIDER:
                 self._provider_runtime_ready = ready
             if (

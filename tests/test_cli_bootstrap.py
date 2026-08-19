@@ -189,6 +189,31 @@ def test_phase_two_acceptance_hardware_recommendations_are_platform_neutral() ->
     assert "qwen3:8b" in recommend_model_profiles(server, TEST_MODEL_CATALOG)["recommended"]
 
 
+def test_windows_rtx_4070_ti_is_recommended_when_windows_memory_is_available(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app import bootstrap
+
+    monkeypatch.setattr(bootstrap, "_memory_bytes", lambda _: 32 * 1024**3)
+    monkeypatch.setattr(
+        bootstrap, "_windows_gpu_info", lambda: (("NVIDIA GeForce RTX 4070 Ti",), 12 * 1024**3)
+    )
+    hardware = detect_hardware(_paths(tmp_path), system="Windows", machine="AMD64", cpu_count=16)
+    recommendation = recommend_model_profiles(hardware, bootstrap.TEST_MODEL_CATALOG)
+    assert hardware.gpu_names == ("NVIDIA GeForce RTX 4070 Ti",)
+    assert hardware.gpu_memory_bytes == 12 * 1024**3
+    assert "qwen3:8b" in recommendation["recommended"]
+
+
+def test_unknown_windows_vram_keeps_safe_cpu_compatible_recommendations() -> None:
+    profile = HardwareProfileV1(
+        "Windows", "x", "x86_64", None, 12, 32 * 1024**3, ("NVIDIA fixture",), None, None
+    )
+    from app.bootstrap import TEST_MODEL_CATALOG
+
+    assert "qwen3:8b" in recommend_model_profiles(profile, TEST_MODEL_CATALOG)["recommended"]
+
+
 def test_cli_status_json_and_namespaces(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     paths = _paths(tmp_path)
     exit_code = main(["status", "--json"], paths=paths)

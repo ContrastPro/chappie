@@ -189,3 +189,20 @@ class WindowsOllamaInstallerV1:
         return ExternalActionResultV1(
             "PULL_MODEL", ExternalActionStatusV1.COMPLETED, "Windows", "ollama CLI"
         )
+
+    def model_available(self, model: str) -> bool:
+        """Return whether ``ollama ls`` reports this exact installed model ID."""
+        if not MODEL_RE.fullmatch(model):
+            raise ValueError("invalid model identifier")
+        executable = self.executable()
+        if executable is None:
+            return False
+        try:
+            output = self.runner([str(executable), "ls"], capture_output=True, text=True).stdout
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return any(
+            fields and fields[0] == model
+            for line in output.splitlines()[1:]
+            if (fields := line.split())
+        )

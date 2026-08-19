@@ -5,7 +5,9 @@ from __future__ import annotations
 import argparse
 import platform
 import subprocess
+import threading
 from collections.abc import Sequence
+from typing import ClassVar
 
 from app.ai_setup_smoke import ChappieAISetupSmokeV1
 from app.bootstrap import (
@@ -23,7 +25,7 @@ from app.bootstrap import (
 from app.ollama_readiness import OllamaReadinessProbe
 from app.ollama_start import OllamaReadinessCoordinatorV1
 from app.project_qa_setup_smoke import ProjectQASetupSmokeV1
-from app.setup_engine import AIModelProfileV1, SetupApprovalV1, SetupEngineV1
+from app.setup_engine import AIModelProfileV1, SetupActionCodeV1, SetupApprovalV1, SetupEngineV1
 from app.windows_ollama import WindowsOllamaInstallerV1
 
 
@@ -47,6 +49,57 @@ def _setup_engine(paths: ChappiePaths) -> SetupEngineV1:
     return SetupEngineV1(paths)
 
 
+class _SetupProgress:
+    """Human-only bounded progress for potentially silent setup actions."""
+
+    _LONG: ClassVar[set[SetupActionCodeV1]] = {
+        SetupActionCodeV1.CREATE_VENV,
+        SetupActionCodeV1.INSTALL_PROJECT,
+        SetupActionCodeV1.BUILD_KNOWLEDGE,
+        SetupActionCodeV1.INSTALL_AI_PROVIDER,
+        SetupActionCodeV1.INSTALL_AI_MODEL,
+        SetupActionCodeV1.VERIFY_AI,
+        SetupActionCodeV1.PROJECT_QA_SMOKE,
+    }
+    _LABELS: ClassVar[dict[SetupActionCodeV1, str]] = {
+        SetupActionCodeV1.BUILD_KNOWLEDGE: "Building Chappie Knowledge",
+        SetupActionCodeV1.INSTALL_AI_PROVIDER: "Installing and starting Ollama",
+        SetupActionCodeV1.INSTALL_AI_MODEL: "Installing selected local model",
+        SetupActionCodeV1.VERIFY_AI: "Verifying Chappie AI structured response",
+        SetupActionCodeV1.PROJECT_QA_SMOKE: "Verifying Chappie Project Knowledge",
+    }
+
+    def __init__(self, total: int) -> None:
+        self._total, self._number, self._stop = total, 0, threading.Event()
+        self._thread: threading.Thread | None = None
+
+    def __call__(self, action, result) -> None:  # type: ignore[no-untyped-def]
+        if result is None:
+            self.close()
+            self._number += 1
+            label = self._LABELS.get(action.code, action.description)
+            print(f"[{self._number}/{self._total}] {label}...")
+            if action.code in self._LONG:
+                self._stop.clear()
+                self._thread = threading.Thread(target=self._heartbeat, daemon=True)
+                self._thread.start()
+            return
+        self.close()
+        print("      Complete." if result.state.value != "FAILED" else f"      {result.message}.")
+
+    def _heartbeat(self) -> None:
+        elapsed = 0
+        while not self._stop.wait(15):
+            elapsed += 15
+            print(f"      Still working... {elapsed}s")
+
+    def close(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=0.1)
+            self._thread = None
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="chappie", description="Chappie product control plane")
     parser.add_argument("--version", action="version", version=f"Chappie {CHAPPIE_VERSION}")
@@ -62,6 +115,7 @@ def _parser() -> argparse.ArgumentParser:
     setup.add_argument("--developer", action="store_true")
     setup.add_argument("--non-interactive", action="store_true")
     setup.add_argument("--interactive", action="store_true")
+    setup.add_argument("--json", action="store_true")
     setup.add_argument("--ai-profile", choices=[item.value.lower() for item in AIModelProfileV1])
     ai = sub.add_parser("ai")
     ai_sub = ai.add_subparsers(dest="ai_command")
@@ -141,17 +195,30 @@ def main(argv: Sequence[str] | None = None, *, paths: ChappiePaths | None = None
                 end="",
             )
             return 0
-        result = engine.execute(
-            approval=SetupApprovalV1(
-                allow_safe=args.yes,
-                allow_external=args.allow_external,
-                non_interactive=args.non_interactive,
-            ),
-            developer=args.developer,
-            ai_profile=profile,
-            dry_run=args.dry_run,
-        )
-        print(json_output(result.payload()), end="")
+        progress = None if args.json else _SetupProgress(len(actions))
+        try:
+            result = engine.execute(
+                approval=SetupApprovalV1(
+                    allow_safe=args.yes,
+                    allow_external=args.allow_external,
+                    non_interactive=args.non_interactive,
+                ),
+                developer=args.developer,
+                ai_profile=profile,
+                dry_run=args.dry_run,
+                progress=progress,
+            )
+        finally:
+            if progress is not None:
+                progress.close()
+        if args.json:
+            print(json_output(result.payload()), end="")
+        else:
+            print(
+                "CHAPPIE SETUP COMPLETE"
+                if all(x.state.value != "FAILED" for x in result.steps)
+                else "CHAPPIE SETUP FAILED"
+            )
         return 0 if all(item.state != "FAILED" for item in result.steps) else 1
     if args.command == "ai" and args.ai_command in {"status", "models"}:
         if args.ai_command == "status":

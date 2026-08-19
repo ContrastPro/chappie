@@ -39,6 +39,37 @@ def test_installer_and_model_commands_use_argv(tmp_path, monkeypatch):
         installer.pull_model("qwen3:8b;whoami", allow_external=True)
 
 
+def test_model_availability_requires_exact_identity(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.windows_ollama.shutil.which", lambda _: None)
+    executable = tmp_path / "Programs" / "Ollama" / "ollama.exe"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    calls = []
+
+    def runner(argv, **kwargs):
+        calls.append(argv)
+        return subprocess.CompletedProcess(
+            argv,
+            0,
+            "NAME ID SIZE MODIFIED\nqwen3:4b fixture 1 GB now\nqwen3:8b fixture 2 GB now\n",
+            "",
+        )
+
+    installer = WindowsOllamaInstallerV1(local_app_data=tmp_path, runner=runner)
+    assert installer.model_available("qwen3:8b") is True
+    assert installer.model_available("qwen3:14b") is False
+    assert calls == [[str(executable), "ls"], [str(executable), "ls"]]
+
+
+def test_production_installer_exposes_setup_engine_model_operations(tmp_path):
+    installer = WindowsOllamaInstallerV1(local_app_data=tmp_path, runner=_runner([]))
+    assert callable(installer.executable)
+    assert callable(installer.version)
+    assert callable(installer.install)
+    assert callable(installer.model_available)
+    assert callable(installer.pull_model)
+
+
 def test_untrusted_download_source_is_impossible(tmp_path):
     installer = WindowsOllamaInstallerV1(local_app_data=tmp_path)
     assert installer.source == "https://ollama.com/download/OllamaSetup.exe"

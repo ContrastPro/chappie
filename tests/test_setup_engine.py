@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from app.ai_setup_smoke import AISetupSmokeResultV1, AISetupSmokeStateV1
@@ -83,6 +84,24 @@ def test_dry_run_is_non_mutating_and_external_needs_separate_approval(tmp_path: 
     assert SetupActionCodeV1.INITIALIZE_DIRECTORIES in engine.applied
     assert any(item.message == "APPROVAL_REQUIRED:EXTERNAL" for item in run.steps)
     assert SetupActionCodeV1.INSTALL_AI_PROVIDER not in engine.applied
+
+
+def test_setup_progress_receives_start_and_result_for_each_action(tmp_path: Path) -> None:
+    engine = FakeSetupEngine(_paths(tmp_path))
+    events: list[tuple[SetupActionCodeV1, str]] = []
+
+    def progress(action, result):  # type: ignore[no-untyped-def]
+        events.append((action.code, "START" if result is None else result.state.value))
+
+    run = engine.execute(
+        approval=SetupApprovalV1(allow_safe=True, allow_external=True),
+        ai_profile=AIModelProfileV1.BALANCED,
+        progress=progress,
+    )
+
+    assert len(events) == len(run.steps) * 2
+    assert all(events[index][1] == "START" for index in range(0, len(events), 2))
+    assert all(events[index][1] == "COMPLETED" for index in range(1, len(events), 2))
 
 
 def test_clean_machine_second_run_and_resume_do_not_duplicate_work(tmp_path: Path) -> None:
@@ -504,6 +523,52 @@ def test_existing_model_binds_config_without_pull_after_provider_ready(tmp_path:
     assert result.steps[1].state == SetupStepStateV1.COMPLETED
     assert installer.pull_calls == 0
     assert "CONFIG_WRITTEN" in events
+
+
+def test_actual_windows_installer_completes_missing_model_setup_path(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    local_app_data = tmp_path / "local-app-data"
+    executable = local_app_data / "Programs" / "Ollama" / "ollama.exe"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    installed_models: set[str] = set()
+    calls: list[list[str]] = []
+
+    def runner(argv: list[str], **kwargs: object):
+        calls.append(argv)
+        if argv[-1] == "--version":
+            return subprocess.CompletedProcess(argv, 0, "ollama version fixture", "")
+        if argv[-1] == "ls":
+            rows = "".join(f"{model} fixture 1 GB now\n" for model in sorted(installed_models))
+            return subprocess.CompletedProcess(argv, 0, f"NAME ID SIZE MODIFIED\n{rows}", "")
+        assert argv == [str(executable), "pull", "qwen3:8b"]
+        installed_models.add("qwen3:8b")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr("app.windows_ollama.shutil.which", lambda _: None)
+    events: list[str] = []
+    engine = _AiSetupEngine(
+        _paths(tmp_path / "actual-production"),
+        events=events,
+        windows_installer=WindowsOllamaInstallerV1(local_app_data=local_app_data, runner=runner),
+        ollama_readiness_coordinator=_FakeReadinessCoordinator(
+            events, OllamaReadinessStateV1.READY
+        ),
+        smoke=lambda _: True,
+    )
+
+    result = engine.execute(
+        approval=SetupApprovalV1(allow_external=True), ai_profile=AIModelProfileV1.BALANCED
+    )
+
+    assert [step.state for step in result.steps] == [
+        SetupStepStateV1.SKIPPED,
+        SetupStepStateV1.COMPLETED,
+        SetupStepStateV1.COMPLETED,
+    ]
+    assert calls.count([str(executable), "pull", "qwen3:8b"]) == 1
+    assert installed_models == {"qwen3:8b"}
 
 
 def test_model_command_success_without_exact_verification_never_binds_config(

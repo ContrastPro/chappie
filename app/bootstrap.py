@@ -7,6 +7,7 @@ setup engine.
 
 from __future__ import annotations
 
+import ctypes
 import importlib.metadata
 import json
 import os
@@ -408,6 +409,8 @@ def detect_hardware(
     system = system or platform.system() or "UNKNOWN"
     machine = machine or platform.machine() or "UNKNOWN"
     memory_bytes = memory_bytes if memory_bytes is not None else _memory_bytes(system)
+    if gpu_names is None and system == "Windows":
+        gpu_names, gpu_memory_bytes = _windows_gpu_info()
     try:
         disk = shutil.disk_usage(paths.state_root if paths.state_root.exists() else paths.root).free
     except OSError:
@@ -439,9 +442,57 @@ def _memory_bytes(system: str) -> int | None:
             for line in Path("/proc/meminfo").read_text().splitlines():
                 if line.startswith("MemTotal:"):
                     return int(line.split()[1]) * 1024
-    except (OSError, ValueError, subprocess.SubprocessError):
+        if system == "Windows":
+
+            class MemoryStatus(ctypes.Structure):
+                _fields_ = [
+                    ("length", ctypes.c_ulong),
+                    ("memory_load", ctypes.c_ulong),
+                    ("total_physical", ctypes.c_ulonglong),
+                    ("available_physical", ctypes.c_ulonglong),
+                    ("total_page_file", ctypes.c_ulonglong),
+                    ("available_page_file", ctypes.c_ulonglong),
+                    ("total_virtual", ctypes.c_ulonglong),
+                    ("available_virtual", ctypes.c_ulonglong),
+                    ("available_extended_virtual", ctypes.c_ulonglong),
+                ]
+
+            status = MemoryStatus()
+            status.length = ctypes.sizeof(status)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                return int(status.total_physical)
+    except (AttributeError, OSError, ValueError, subprocess.SubprocessError):
         return None
     return None
+
+
+def _windows_gpu_info() -> tuple[tuple[str, ...], int | None]:
+    """Best-effort built-in CIM discovery; unknown VRAM stays unknown, never zero."""
+    command = (
+        "Get-CimInstance Win32_VideoController | "
+        "Select-Object Name,AdapterRAM | ConvertTo-Json -Compress"
+    )
+    try:
+        raw = subprocess.check_output(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", command],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+        rows = json.loads(raw)
+        rows = rows if isinstance(rows, list) else [rows]
+        names = tuple(
+            str(row["Name"])
+            for row in rows
+            if isinstance(row, dict) and isinstance(row.get("Name"), str) and row["Name"].strip()
+        )
+        vram = [
+            int(row["AdapterRAM"])
+            for row in rows
+            if isinstance(row, dict) and isinstance(row.get("AdapterRAM"), (int, float))
+        ]
+        return names, max(vram) if vram else None
+    except (OSError, ValueError, TypeError, json.JSONDecodeError, subprocess.SubprocessError):
+        return (), None
 
 
 def _cuda_available() -> bool | None:
