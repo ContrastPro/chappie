@@ -34,12 +34,12 @@ def _launch_current_user_ollama(argv: list[str]) -> None:
     subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def _setup_engine(paths: ChappiePaths) -> SetupEngineV1:
+def _setup_engine(paths: ChappiePaths, *, interactive_output: bool = True) -> SetupEngineV1:
     """Construct platform-owned setup dependencies; Windows has a real executor."""
     if platform.system() == "Windows":
         return SetupEngineV1(
             paths,
-            windows_installer=WindowsOllamaInstallerV1(),
+            windows_installer=WindowsOllamaInstallerV1(interactive_output=interactive_output),
             ollama_readiness_coordinator=OllamaReadinessCoordinatorV1(
                 OllamaReadinessProbe(), "ollama", _launch_current_user_ollama
             ),
@@ -57,7 +57,6 @@ class _SetupProgress:
         SetupActionCodeV1.INSTALL_PROJECT,
         SetupActionCodeV1.BUILD_KNOWLEDGE,
         SetupActionCodeV1.INSTALL_AI_PROVIDER,
-        SetupActionCodeV1.INSTALL_AI_MODEL,
         SetupActionCodeV1.VERIFY_AI,
         SetupActionCodeV1.PROJECT_QA_SMOKE,
     }
@@ -182,7 +181,7 @@ def main(argv: Sequence[str] | None = None, *, paths: ChappiePaths | None = None
             if args.non_interactive or args.plan or args.dry_run or not args.interactive
             else _interactive_ai_profile(paths, parser)
         )
-        engine = _setup_engine(paths)
+        engine = _setup_engine(paths, interactive_output=not args.json)
         actions = engine.plan(developer=args.developer, ai_profile=profile)
         if args.plan:
             print(

@@ -39,6 +39,53 @@ def test_installer_and_model_commands_use_argv(tmp_path, monkeypatch):
         installer.pull_model("qwen3:8b;whoami", allow_external=True)
 
 
+def test_streamed_model_pull_finishes_with_a_clean_newline(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr("app.windows_ollama.shutil.which", lambda _: None)
+    executable = tmp_path / "Programs" / "Ollama" / "ollama.exe"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+
+    def runner(argv, **kwargs):
+        print("raw pull progress", end="\r")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    installer = WindowsOllamaInstallerV1(local_app_data=tmp_path, runner=runner)
+    installer.pull_model("qwen3:8b", allow_external=True)
+    assert capsys.readouterr().out == "raw pull progress\r\n"
+
+
+def test_non_interactive_model_pull_captures_output_for_machine_mode(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.windows_ollama.shutil.which", lambda _: None)
+    executable = tmp_path / "Programs" / "Ollama" / "ollama.exe"
+    executable.parent.mkdir(parents=True)
+    executable.touch()
+    calls = []
+    installer = WindowsOllamaInstallerV1(
+        local_app_data=tmp_path, runner=_runner(calls), interactive_output=False
+    )
+    installer.pull_model("qwen3:8b", allow_external=True)
+    assert calls[-1] == [str(executable), "pull", "qwen3:8b"]
+
+
+def test_non_interactive_installer_launch_captures_console_output(tmp_path):
+    calls = []
+
+    def downloader(url, destination):
+        destination.write_bytes(b"fixture")
+
+    installer = WindowsOllamaInstallerV1(
+        local_app_data=tmp_path,
+        runner=lambda argv, **kwargs: (
+            calls.append((argv, kwargs)) or subprocess.CompletedProcess(argv, 0, "", "")
+        ),
+        downloader=downloader,
+        interactive_output=False,
+    )
+    installer.install(allow_external=True)
+    assert calls[0][1]["capture_output"] is True
+    assert calls[0][1]["text"] is True
+
+
 def test_model_availability_requires_exact_identity(tmp_path, monkeypatch):
     monkeypatch.setattr("app.windows_ollama.shutil.which", lambda _: None)
     executable = tmp_path / "Programs" / "Ollama" / "ollama.exe"

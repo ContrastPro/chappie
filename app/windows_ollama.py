@@ -87,9 +87,11 @@ class WindowsOllamaInstallerV1:
         runner: CommandRunner = subprocess.run,
         downloader: Downloader = download_official_windows_installer,
         local_app_data: Path | None = None,
+        interactive_output: bool = True,
     ) -> None:
         self.runner, self.downloader = runner, downloader
         self.local_app_data = local_app_data or Path(os.environ.get("LOCALAPPDATA", ""))
+        self.interactive_output = interactive_output
 
     def executable(self) -> Path | None:
         found = shutil.which("ollama")
@@ -135,7 +137,10 @@ class WindowsOllamaInstallerV1:
             try:
                 self.downloader(self.source, installer)
                 # The official docs do not document a silent flag. Launch only the UI installer.
-                self.runner([str(installer)], check=True)
+                kwargs: dict[str, object] = {"check": True}
+                if not self.interactive_output:
+                    kwargs.update(capture_output=True, text=True)
+                self.runner([str(installer)], **kwargs)
             except (OSError, subprocess.SubprocessError):
                 return ExternalActionResultV1(
                     "INSTALL_OLLAMA",
@@ -177,7 +182,12 @@ class WindowsOllamaInstallerV1:
                 error_code="OLLAMA_NOT_INSTALLED",
             )
         try:
-            self.runner([str(executable), "pull", model], check=True)
+            kwargs: dict[str, object] = {"check": True}
+            if not self.interactive_output:
+                kwargs.update(capture_output=True, text=True)
+            self.runner([str(executable), "pull", model], **kwargs)
+            if self.interactive_output:
+                print(flush=True)
         except subprocess.SubprocessError:
             return ExternalActionResultV1(
                 "PULL_MODEL",

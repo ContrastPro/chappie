@@ -28,3 +28,10 @@ def test_non_windows_cli_does_not_construct_windows_executor(monkeypatch, tmp_pa
     engine = cli._setup_engine(_paths(tmp_path))
     assert engine._windows_installer is None
     assert engine._ollama_readiness_coordinator is None
+
+
+def test_windows_json_setup_uses_non_interactive_provider_output(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli.platform, "system", lambda: "Windows")
+    engine = cli._setup_engine(_paths(tmp_path), interactive_output=False)
+    assert engine._windows_installer is not None
+    assert engine._windows_installer.interactive_output is False

@@ -232,3 +232,18 @@ def test_cli_bridges_knowledge_without_rebuilding_store(
     output = json.loads(capsys.readouterr().out)
     assert output["component"] == "KNOWLEDGE"
     assert not paths.knowledge_file.exists()
+
+
+def test_model_pull_progress_is_a_single_writer_stage(capsys: pytest.CaptureFixture[str]) -> None:
+    from app.cli import _SetupProgress
+    from app.setup_engine import ActionSafetyV1, SetupActionCodeV1, SetupActionV1
+
+    progress = _SetupProgress(1)
+    action = SetupActionV1(
+        SetupActionCodeV1.INSTALL_AI_MODEL, ActionSafetyV1.EXTERNAL, "model", None
+    )
+    progress(action, None)
+    progress.close()
+    output = capsys.readouterr().out
+    assert "Installing selected local model" in output
+    assert "Still working" not in output
