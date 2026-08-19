@@ -14,8 +14,6 @@ try {
   & $venvPython -m pip install -e $root
   if ($LASTEXITCODE -ne 0) { throw 'Chappie package installation failed.' }
   $setupArgs = @('setup', '--yes', '--interactive') + $args
-  $consent = Read-Host 'Allow external AI downloads/installations (Ollama and a selected model)? [y/N]'
-  if ($consent -match '^(?i)y(?:es)?$') { $setupArgs += '--allow-external' }
   & (Join-Path $root '.venv\Scripts\chappie.exe') @setupArgs
   $setupExit = $LASTEXITCODE
   if ($setupExit -ne 0) { exit $setupExit }

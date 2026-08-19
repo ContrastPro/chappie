@@ -19,6 +19,7 @@ from app.bootstrap import (
     doctor,
     format_status,
     json_output,
+    load_local_config,
     recommend_model_profiles,
     status_exit_code,
 )
@@ -147,6 +148,67 @@ def _interactive_ai_profile(
         raise AssertionError("argparse.error must exit")
 
 
+def _config_profile(paths: ChappiePaths) -> AIModelProfileV1 | None:
+    try:
+        config = load_local_config(paths)
+    except ValueError:
+        return None
+    if config is None or config.provider != "ollama":
+        return None
+    if not config.enabled_capabilities:
+        return None
+    try:
+        return AIModelProfileV1(config.enabled_capabilities[0].upper())
+    except ValueError:
+        return None
+
+
+def _config_represented_model(
+    config_profile: AIModelProfileV1, config_model: str | None
+) -> str | None:
+    if config_model is None:
+        return None
+    expected = {
+        AIModelProfileV1.LIGHT: "qwen3:4b",
+        AIModelProfileV1.BALANCED: "qwen3:8b",
+        AIModelProfileV1.ADVANCED: "qwen3:14b",
+    }.get(config_profile)
+    return expected
+
+
+def _can_reuse_existing_ai_profile(
+    engine: SetupEngineV1, paths: ChappiePaths
+) -> AIModelProfileV1 | None:
+    config_profile = _config_profile(paths)
+    if config_profile is None:
+        return None
+    config = load_local_config(paths)
+    if config is None:
+        return None
+    expected_model = _config_represented_model(config_profile, config.model)
+    if expected_model is None or config.model != expected_model:
+        return None
+    if engine.required_external_actions(ai_profile=config_profile):
+        return None
+    return config_profile
+
+
+def _ask_for_external_authorization(needed: tuple[SetupActionCodeV1, ...]) -> bool:
+    if not needed:
+        print("External work   NOT REQUIRED")
+        return True
+    print("External work   REQUIRED")
+    for action in needed:
+        if action == SetupActionCodeV1.INSTALL_AI_PROVIDER:
+            print(" - Ollama provider install/update")
+        elif action == SetupActionCodeV1.INSTALL_AI_MODEL:
+            print(" - AI model selection/download")
+    answer = (
+        input("Allow Chappie to download/install external AI components? [y/N] ").strip().lower()
+    )
+    return answer in {"y", "yes"}
+
+
 def main(argv: Sequence[str] | None = None, *, paths: ChappiePaths | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
@@ -174,15 +236,23 @@ def main(argv: Sequence[str] | None = None, *, paths: ChappiePaths | None = None
                 print("No issues detected.")
         return status_exit_code(report.status)
     if args.command == "setup":
-        profile = (
-            AIModelProfileV1(args.ai_profile.upper())
-            if args.ai_profile
-            else None
-            if args.non_interactive or args.plan or args.dry_run or not args.interactive
-            else _interactive_ai_profile(paths, parser)
-        )
         engine = _setup_engine(paths, interactive_output=not args.json)
+        profile = None
+        if args.ai_profile:
+            profile = AIModelProfileV1(args.ai_profile.upper())
+        elif not (args.non_interactive or args.plan or args.dry_run or not args.interactive):
+            profile = _can_reuse_existing_ai_profile(engine, paths)
+            if profile is not None:
+                config = load_local_config(paths)
+                print("Current AI configuration:")
+                print("  Provider: ollama")
+                print(f"  Profile: {profile.name}")
+                print(f"  Model: {config.model if config is not None else 'unknown'}")
+                print("Using existing verified AI configuration.")
+            else:
+                profile = _interactive_ai_profile(paths, parser)
         actions = engine.plan(developer=args.developer, ai_profile=profile)
+        needs_external = engine.required_external_actions(ai_profile=profile)
         if args.plan:
             print(
                 json_output(
@@ -195,6 +265,35 @@ def main(argv: Sequence[str] | None = None, *, paths: ChappiePaths | None = None
             )
             return 0
         progress = None if args.json else _SetupProgress(len(actions))
+        if needs_external and not args.allow_external:
+            if args.non_interactive:
+                if args.json:
+                    print(
+                        json_output(
+                            {
+                                "identity": "chappie_setup/1.0.0",
+                                "status": "SETUP_REQUIRED",
+                                "external_authorization_required": True,
+                                "missing_external_work": [item.value for item in needs_external],
+                            }
+                        ),
+                        end="",
+                    )
+                else:
+                    print("External authorization required for required AI work.")
+                return 1
+            if (
+                args.interactive
+                and not args.json
+                and not _ask_for_external_authorization(needs_external)
+            ):
+                print("External authorization required to continue setup.")
+                return 1
+        if args.json and args.non_interactive and not needs_external:
+            # JSON mode intentionally stays silent; success is represented in result payload.
+            pass
+        elif not args.json and profile is not None and not needs_external and args.interactive:
+            print("External work   NOT REQUIRED")
         try:
             result = engine.execute(
                 approval=SetupApprovalV1(

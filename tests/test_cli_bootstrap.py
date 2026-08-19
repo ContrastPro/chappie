@@ -31,6 +31,13 @@ from app.bootstrap import (
     setup_plan,
 )
 from app.cli import main
+from app.setup_engine import (
+    SetupActionCodeV1,
+    SetupApprovalV1,
+    SetupRunStateV1,
+    SetupStepResultV1,
+    SetupStepStateV1,
+)
 
 
 def _paths(tmp_path: Path) -> ChappiePaths:
@@ -52,13 +59,48 @@ def test_project_declares_official_console_entry_point() -> None:
 
 def test_windows_bootstrap_hands_off_to_authorized_venv_cli_without_ai_duplication() -> None:
     script = Path("setup.ps1").read_text(encoding="utf-8")
-    assert "Read-Host 'Allow external AI downloads/installations" in script
     assert "$setupArgs = @('setup', '--yes', '--interactive') + $args" in script
-    assert "$setupArgs += '--allow-external'" in script
     assert ".venv\\Scripts\\chappie.exe') @setupArgs" in script
     assert "$setupExit = $LASTEXITCODE" in script and "exit $setupExit" in script
     assert "if (-not (Test-Path $venvPython))" in script
     assert "OllamaProvider" not in script and "ollama pull" not in script
+
+
+class _DummySetupEngine:
+    def __init__(
+        self, profile_to_actions: dict[AIModelProfileV1 | None, tuple[SetupActionCodeV1, ...]]
+    ) -> None:
+        self.profile_to_actions = profile_to_actions
+        self.executed: list[AIModelProfileV1 | None] = []
+
+    def plan(self, *, developer: bool = False, ai_profile: AIModelProfileV1 | None = None):
+        return ()
+
+    def required_external_actions(self, *, ai_profile: AIModelProfileV1 | None = None):
+        return self.profile_to_actions.get(ai_profile or AIModelProfileV1.BALANCED, ())
+
+    def execute(
+        self,
+        *,
+        approval: SetupApprovalV1,
+        developer: bool = False,
+        ai_profile: AIModelProfileV1 | None = None,
+        dry_run: bool = False,
+        progress=None,
+    ):
+        del approval, developer, dry_run, progress
+        self.executed.append(ai_profile)
+        return SetupRunStateV1(
+            "chappie_setup_engine/1.0.0",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            (
+                SetupStepResultV1(
+                    SetupActionCodeV1.INSTALL_AI_PROVIDER,
+                    SetupStepStateV1.SKIPPED,
+                    "SKIPPED",
+                ),
+            ),
+        )
 
 
 def test_setup_profile_prompt_is_cli_owned_and_plans_never_prompt(
@@ -71,6 +113,138 @@ def test_setup_profile_prompt_is_cli_owned_and_plans_never_prompt(
     (tmp_path / "plan").mkdir()
     assert main(["setup", "--plan"], paths=_paths(tmp_path / "plan")) == 0
     assert "actions" in capsys.readouterr().out
+
+
+def test_cli_reuses_verified_existing_ai_config_without_profile_prompt(
+    tmp_path: Path, monkeypatch, capsys
+):
+    paths = _paths(tmp_path)
+    paths.config_file.parent.mkdir(parents=True)
+    paths.config_file.write_text(
+        '{"schema":"chappie_local_config/1.0.0","setup_version":"1.0.0","provider":"ollama","model":"qwen3:8b","enabled_capabilities":["balanced"]}\n'
+    )
+    from app import cli
+
+    engine = _DummySetupEngine({AIModelProfileV1.BALANCED: ()})
+    monkeypatch.setattr(cli, "_setup_engine", lambda *_args, **_kwargs: engine)
+    monkeypatch.setattr(
+        "builtins.input", lambda _: (_ for _ in ()).throw(AssertionError("prompted unexpectedly"))
+    )
+
+    assert main(["setup", "--interactive", "--yes"], paths=paths) == 0
+    output = capsys.readouterr().out
+    assert "Current AI configuration:" in output
+    assert "Profile: BALANCED" in output
+    assert "External work   NOT REQUIRED" in output
+    assert "CHAPPIE SETUP COMPLETE" in output
+    assert engine.executed == [AIModelProfileV1.BALANCED]
+
+
+def test_cli_reuses_balanced_config_even_when_hardware_prefers_light(tmp_path: Path, monkeypatch):
+    paths = _paths(tmp_path)
+    paths.config_file.parent.mkdir(parents=True)
+    paths.config_file.write_text(
+        '{"schema":"chappie_local_config/1.0.0","setup_version":"1.0.0","provider":"ollama","model":"qwen3:8b","enabled_capabilities":["balanced"]}\n'
+    )
+    from app import cli
+
+    engine = _DummySetupEngine({AIModelProfileV1.BALANCED: ()})
+    monkeypatch.setattr(cli, "_setup_engine", lambda *_args, **_kwargs: engine)
+    monkeypatch.setattr(
+        "app.bootstrap.recommend_model_profiles",
+        lambda *_a, **_k: {"recommended": ("qwen3:4b",), "unsupported": ()},
+    )
+    monkeypatch.setattr(
+        "builtins.input", lambda _: (_ for _ in ()).throw(AssertionError("prompted unexpectedly"))
+    )
+
+    assert main(["setup", "--interactive", "--yes"], paths=paths) == 0
+    assert engine.executed == [AIModelProfileV1.BALANCED]
+
+
+def test_cli_external_consent_required_for_fresh_windows_like_state(tmp_path: Path, monkeypatch):
+    from app import cli
+
+    engine = _DummySetupEngine(
+        {
+            AIModelProfileV1.BALANCED: (
+                SetupActionCodeV1.INSTALL_AI_PROVIDER,
+                SetupActionCodeV1.INSTALL_AI_MODEL,
+            )
+        }
+    )
+    monkeypatch.setattr(cli, "_setup_engine", lambda *_args, **_kwargs: engine)
+
+    monkeypatch.setattr("builtins.input", lambda _: "n")
+    assert (
+        main(
+            ["setup", "--interactive", "--yes", "--ai-profile", "balanced"], paths=_paths(tmp_path)
+        )
+        == 1
+    )
+    assert engine.executed == []
+
+
+def test_cli_freshly_prompts_for_provider_and_model_if_missing(tmp_path: Path, monkeypatch):
+    from app import cli
+
+    engine = _DummySetupEngine(
+        {
+            AIModelProfileV1.BALANCED: (
+                SetupActionCodeV1.INSTALL_AI_PROVIDER,
+                SetupActionCodeV1.INSTALL_AI_MODEL,
+            )
+        }
+    )
+    monkeypatch.setattr(cli, "_setup_engine", lambda *_args, **_kwargs: engine)
+
+    monkeypatch.setattr("builtins.input", lambda _: "n")
+    assert main(["setup", "--non-interactive", "--yes"], paths=_paths(tmp_path)) == 1
+
+
+def test_cli_noninteractive_external_needed_fails_with_json_payload(
+    tmp_path: Path, monkeypatch, capsys
+):
+    from app import cli
+
+    engine = _DummySetupEngine(
+        {AIModelProfileV1.BALANCED: (SetupActionCodeV1.INSTALL_AI_PROVIDER,)}
+    )
+    monkeypatch.setattr(cli, "_setup_engine", lambda *_args, **_kwargs: engine)
+
+    assert (
+        main(
+            ["setup", "--non-interactive", "--json", "--ai-profile", "balanced", "--yes"],
+            paths=_paths(tmp_path),
+        )
+        == 1
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["status"] == "SETUP_REQUIRED"
+    assert payload["external_authorization_required"]
+
+
+def test_cli_explicit_profile_overrides_existing_config_and_requests_external_when_needed(
+    tmp_path: Path, monkeypatch
+):
+    paths = _paths(tmp_path)
+    paths.config_file.parent.mkdir(parents=True)
+    paths.config_file.write_text(
+        '{"schema":"chappie_local_config/1.0.0","setup_version":"1.0.0","provider":"ollama","model":"qwen3:8b","enabled_capabilities":["balanced"]}\n'
+    )
+    from app import cli
+
+    engine = _DummySetupEngine(
+        {
+            AIModelProfileV1.BALANCED: (SetupActionCodeV1.INSTALL_AI_PROVIDER,),
+            AIModelProfileV1.ADVANCED: (SetupActionCodeV1.INSTALL_AI_MODEL,),
+        }
+    )
+    monkeypatch.setattr(cli, "_setup_engine", lambda *_args, **_kwargs: engine)
+    monkeypatch.setattr("builtins.input", lambda _: "n")
+
+    assert main(["setup", "--interactive", "--yes", "--ai-profile", "advanced"], paths=paths) == 1
+    assert engine.executed == []
 
 
 @pytest.mark.parametrize(

@@ -280,6 +280,33 @@ class SetupEngineV1:
     ) -> tuple[SetupActionV1, ...]:
         return default_actions(developer=developer, ai_profile=ai_profile)
 
+    def required_external_actions(
+        self, *, ai_profile: AIModelProfileV1 | None = None
+    ) -> tuple[SetupActionCodeV1, ...]:
+        """Return external action codes that are not already satisfied for this plan.
+
+        This is a pure planning helper used by CLI consent gating.
+        """
+
+        previous_profile = getattr(self, "_profile", None)
+        try:
+            profile = ai_profile or AIModelProfileV1.BALANCED
+            self._profile = profile
+            required: list[SetupActionCodeV1] = []
+            for action in self.plan(ai_profile=profile):
+                if action.code == SetupActionCodeV1.INSTALL_AI_PROVIDER:
+                    if action.safety == ActionSafetyV1.EXTERNAL and not self._check(action):
+                        required.append(action.code)
+                elif action.code == SetupActionCodeV1.INSTALL_AI_MODEL and not self._check(action):
+                    required.append(action.code)
+            return tuple(dict.fromkeys(required))
+        finally:
+            if previous_profile is None:
+                if hasattr(self, "_profile"):
+                    delattr(self, "_profile")
+            else:
+                self._profile = previous_profile
+
     def execute(
         self,
         *,
