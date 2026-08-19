@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from app.ai.research_reasoning import ResearchReasoningOutputV11
 from app.ai.schemas import FactV1, ReasoningOutputV1
 from app.ai.tasks import AITask, ModelProfile
 
@@ -45,7 +46,7 @@ class ModelResponse:
     model_version: str
     task: AITask
     prompt_version: str
-    structured_output: ReasoningOutputV1
+    structured_output: ReasoningOutputV1 | ResearchReasoningOutputV11
     latency_ms: int
     input_digest: str
     output_digest: str

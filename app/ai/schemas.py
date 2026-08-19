@@ -35,6 +35,10 @@ class FactV1:
     value: str | int | float | bool | None
     unit: str | None
     provenance_digest: str
+    asset: str | None = None
+    canonical_field: str | None = None
+    value_type: str | None = None
+    availability: str = "AVAILABLE"
 
     def __post_init__(self) -> None:
         if not self.fact_id or not self.source_type or not self.field:
@@ -42,9 +46,21 @@ class FactV1:
         timestamp_ms(self.timestamp)
         if not self.provenance_digest:
             raise AIValidationError("fact provenance digest is required")
+        if self.availability not in {"AVAILABLE", "UNAVAILABLE"}:
+            raise AIValidationError("fact availability must be AVAILABLE or UNAVAILABLE")
+        if self.value_type is not None and self.value_type not in {
+            "STRING",
+            "INTEGER",
+            "FLOAT",
+            "BOOLEAN",
+            "NULL",
+        }:
+            raise AIValidationError("fact value type is unsupported")
+        if self.value_type is not None and self.value_type != _value_type(self.value):
+            raise AIValidationError("fact value type must match the supplied value")
 
     def payload(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "fact_id": self.fact_id,
             "source_type": self.source_type,
             "timestamp_ms": timestamp_ms(self.timestamp),
@@ -53,6 +69,31 @@ class FactV1:
             "unit": self.unit,
             "provenance_digest": self.provenance_digest,
         }
+        # Retain the exact frozen payload for legacy benchmark facts that do not
+        # yet carry compiler metadata.
+        metadata = {
+            "asset": self.asset,
+            "canonical_field": self.canonical_field,
+            "value_type": self.value_type,
+            "availability": self.availability,
+        }
+        if any(value is not None for key, value in metadata.items() if key != "availability") or (
+            self.availability != "AVAILABLE"
+        ):
+            payload["metadata"] = metadata
+        return payload
+
+
+def _value_type(value: str | float | bool | None) -> str:
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "BOOLEAN"
+    if isinstance(value, int):
+        return "INTEGER"
+    if isinstance(value, float):
+        return "FLOAT"
+    return "STRING"
 
 
 @dataclass(frozen=True, slots=True)

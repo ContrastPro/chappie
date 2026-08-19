@@ -8,6 +8,21 @@ class AIError(Exception):
 class AIValidationError(AIError):
     """A request or model response violated a canonical contract."""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "VALIDATION_ERROR",
+        field_path: str | None = None,
+        received: object | None = None,
+        expected: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.field_path = field_path
+        self.received = received
+        self.expected = expected
+
 
 class AIProviderError(AIError):
     """A model provider failed without producing a trustworthy result."""

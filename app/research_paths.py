@@ -77,12 +77,22 @@ def temporary_cache_dir() -> Path:
     return cache_root() / "temporary"
 
 
+def rde_execution_cache_dir() -> Path:
+    """Ignored, research-only cache for verified existing-cache query evidence."""
+    return cache_root() / "ai" / "rde_queries"
+
+
 def study_dir(name: str) -> Path:
     return research_root() / "studies" / _study(name)
 
 
 def results_dir() -> Path:
     return research_root() / "results"
+
+
+def rde_execution_results_dir() -> Path:
+    """Ignored, user-requested RDE evidence artifacts; never a runtime data path."""
+    return results_dir() / "ai" / "rde_queries"
 
 
 def legacy_dir() -> Path:

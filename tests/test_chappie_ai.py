@@ -22,6 +22,7 @@ from app.ai import (
 from app.ai.prompts import prompt_digest, system_instruction
 from app.ai.provider import ModelProvider
 from app.ai.providers import MockMode, MockProvider, OllamaProvider
+from app.ai.research_reasoning import RESEARCH_REASONING_JSON_SCHEMA
 from app.ai.router import ModelRouter
 from app.ai.schemas import REASONING_OUTPUT_JSON_SCHEMA
 from app.ai.tasks import task_contract
@@ -57,6 +58,16 @@ def test_provider_protocol_router_and_mock_valid_response() -> None:
     assert response.structured_output.observed_facts[0].fact_id == "btc-return"
     assert provider.requests[0].response_schema == REASONING_OUTPUT_JSON_SCHEMA
     assert provider.requests[0].timeout_seconds == 30.0
+
+
+def test_configured_timeout_flows_to_the_provider_neutral_model_request() -> None:
+    provider = MockProvider()
+    _ai(provider, timeout_seconds=120.0).generate(
+        task=AITask.MARKET_INTERPRETATION,
+        facts=(_fact(),),
+        information_cutoff=NOW,
+    )
+    assert provider.requests[0].timeout_seconds == 120.0
 
 
 def test_router_fails_closed_for_unconfigured_profile() -> None:
@@ -267,6 +278,7 @@ def test_ollama_normalizes_fixture_and_excludes_thinking() -> None:
     )
     assert (result.input_tokens, result.output_tokens) == (11, 7)
     assert "thinking" not in str(result.provider_metadata).lower()
+    assert ("provider_reasoning_present", "true") in result.provider_metadata
     client.close()
 
 
@@ -282,4 +294,47 @@ def test_ollama_invalid_json_is_provider_error() -> None:
             facts=(_fact(),),
             information_cutoff=NOW,
         )
+    client.close()
+
+
+def test_ollama_serializes_the_recursive_v11_provider_schema() -> None:
+    output = {
+        "observed_facts": [{"fact_id": "btc-return"}],
+        "interpretations": [],
+        "hypotheses": [
+            {
+                "condition": [{"fact_id": "btc-return", "operator": "IS", "value": -1.2}],
+                "target_asset": "BTCUSDT",
+                "target_metric": "FORWARD_RETURN_BPS",
+                "target_horizon": "1h",
+                "expected_relationship": "GREATER_THAN_MATCHED_CONTROL",
+                "comparison_basis": "MATCHED_CONTROL",
+                "supporting_fact_ids": ["btc-return"],
+                "unknown_dependencies": [],
+                "falsification_condition": "Matched control is not exceeded at 1h.",
+                "status": "UNVALIDATED",
+            }
+        ],
+        "contradictions": [],
+        "unknowns": [],
+        "evidence_requests": [],
+        "confidence": 0.5,
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body["format"] == RESEARCH_REASONING_JSON_SCHEMA
+        hypothesis = body["format"]["properties"]["hypotheses"]["items"]
+        assert hypothesis["additionalProperties"] is False
+        assert "target_metric" in hypothesis["required"]
+        return httpx.Response(200, json={"message": {"content": json.dumps(output)}})
+
+    client = httpx.Client(transport=httpx.MockTransport(handler), base_url="http://ollama.test")
+    provider = OllamaProvider(client=client)
+    response = ChappieAI(ModelRouter({ModelProfile.LOCAL_DEFAULT: provider})).generate(
+        task=AITask.RESEARCH_REASONING_V11,
+        facts=(_fact(),),
+        information_cutoff=NOW,
+    )
+    assert response.structured_output.hypotheses[0].target_metric == "FORWARD_RETURN_BPS"
     client.close()

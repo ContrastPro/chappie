@@ -9,6 +9,10 @@ class AITask(StrEnum):
     MARKET_INTERPRETATION = "MARKET_INTERPRETATION"
     HYPOTHESIS_GENERATION = "HYPOTHESIS_GENERATION"
     HYPOTHESIS_CRITIQUE = "HYPOTHESIS_CRITIQUE"
+    RESEARCH_REASONING_V11 = "RESEARCH_REASONING_V11"
+    RESEARCH_REASONING_V111 = "RESEARCH_REASONING_V111"
+    RESEARCH_EVIDENCE_CRITIQUE_V1 = "RESEARCH_EVIDENCE_CRITIQUE_V1"
+    RESEARCH_EVIDENCE_CRITIQUE_V11 = "RESEARCH_EVIDENCE_CRITIQUE_V11"
 
 
 class ModelProfile(StrEnum):
@@ -36,6 +40,18 @@ TASKS = {
         TaskContract(AITask.MARKET_INTERPRETATION, "market_interpretation"),
         TaskContract(AITask.HYPOTHESIS_GENERATION, "hypothesis_generation"),
         TaskContract(AITask.HYPOTHESIS_CRITIQUE, "hypothesis_critique"),
+        TaskContract(AITask.RESEARCH_REASONING_V11, "research_reasoning", "1.1.0"),
+        TaskContract(AITask.RESEARCH_REASONING_V111, "research_reasoning", "1.1.1"),
+        TaskContract(
+            AITask.RESEARCH_EVIDENCE_CRITIQUE_V1,
+            "research_evidence_critique",
+            "1.0.0",
+        ),
+        TaskContract(
+            AITask.RESEARCH_EVIDENCE_CRITIQUE_V11,
+            "research_evidence_critique",
+            "1.1.0",
+        ),
     )
 }
 

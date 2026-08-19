@@ -11,9 +11,41 @@ timestamps. Keep observed facts separate from interpretations. Mark every hypoth
 List unknowns and contradictions explicitly. Do not provide, approve, or imply trade orders.
 Return only the required JSON schema. Hidden reasoning is not part of the result."""
 
+RESEARCH_REASONING_V11_INSTRUCTION = """You are Chappie AI, a research-only reasoning subsystem.
+Use supplied facts and separately supplied deterministic market semantics only. Never invent
+causes, participant identities, missing-data causes, or trade actions. Hypotheses must be
+UNVALIDATED and RDE-queryable: use exact supplied fact conditions, one approved target asset,
+metric, horizon, relationship, MATCHED_CONTROL comparison basis, unknown dependencies, and a
+deterministic falsification condition. Do not rewrite semantic definitions. Return only the
+required JSON schema. Hidden reasoning is not part of the result."""
+
+RESEARCH_EVIDENCE_CRITIQUE_V1_INSTRUCTION = """You are Chappie AI, a research-only
+evidence-review subsystem. Deterministic RDE evidence is authoritative and immutable. Assess the
+original unvalidated hypothesis only against supplied evidence facts. Never replace evidence,
+invent evidence, rationalize a contradiction into support, or provide trade actions. A changed
+hypothesis is a distinct, UNVALIDATED proposal with explicit lineage; it does not validate the
+original hypothesis. Return only the required JSON schema. Hidden reasoning is not part of the
+result."""
+
+RESEARCH_EVIDENCE_CRITIQUE_V11_INSTRUCTION = """You are Chappie AI, a research-only
+evidence-review subsystem. Chappie has already derived the immutable RDE evidence relation.
+Do not classify, replace, or override that relation. Interpret only the supplied evidence
+strength, revise model confidence cautiously, identify unknowns, and optionally propose a
+distinct UNVALIDATED hypothesis with explicit lineage. Never invent evidence, rationalize
+opposed evidence into support, or provide trade actions. Return only the required JSON schema.
+Hidden reasoning is not part of the result."""
+
 
 def system_instruction(contract: TaskContract) -> str:
-    return f"{BASE_INSTRUCTION}\nTask: {contract.task.value}. Prompt: {contract.prompt_identity}."
+    instruction = {
+        "research_reasoning": RESEARCH_REASONING_V11_INSTRUCTION,
+        "research_evidence_critique": (
+            RESEARCH_EVIDENCE_CRITIQUE_V11_INSTRUCTION
+            if contract.prompt_version == "1.1.0"
+            else RESEARCH_EVIDENCE_CRITIQUE_V1_INSTRUCTION
+        ),
+    }.get(contract.prompt_name, BASE_INSTRUCTION)
+    return f"{instruction}\nTask: {contract.task.value}. Prompt: {contract.prompt_identity}."
 
 
 def prompt_digest(contract: TaskContract) -> str:

@@ -86,6 +86,11 @@ class OllamaProvider:
         metadata: list[tuple[str, str]] = []
         if done_reason := payload.get("done_reason"):
             metadata.append(("done_reason", str(done_reason)))
+        if (
+            payload.get("thinking") is not None
+            or payload.get("message", {}).get("thinking") is not None
+        ):
+            metadata.append(("provider_reasoning_present", "true"))
         return ProviderResult(
             structured,
             str(payload.get("model", self.model)),

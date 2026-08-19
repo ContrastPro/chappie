@@ -16,9 +16,16 @@ class MockMode(StrEnum):
 
 
 class MockProvider:
-    def __init__(self, mode: MockMode = MockMode.VALID, output: object | None = None) -> None:
+    def __init__(
+        self,
+        mode: MockMode = MockMode.VALID,
+        output: object | None = None,
+        *,
+        modes: tuple[MockMode, ...] | None = None,
+    ) -> None:
         self.mode = mode
         self.output = output
+        self.modes = modes
         self.requests: list[ModelRequest] = []
 
     @property
@@ -34,9 +41,14 @@ class MockProvider:
 
     def generate(self, request: ModelRequest) -> ProviderResult:
         self.requests.append(request)
-        if self.mode == MockMode.TIMEOUT:
+        mode = (
+            self.modes[len(self.requests) - 1]
+            if self.modes is not None and len(self.requests) <= len(self.modes)
+            else self.mode
+        )
+        if mode == MockMode.TIMEOUT:
             raise AIProviderTimeoutError("mock provider timed out")
-        if self.mode == MockMode.ERROR:
+        if mode == MockMode.ERROR:
             raise AIProviderError("mock provider failed")
         if self.output is not None:
             output = self.output
@@ -51,18 +63,18 @@ class MockProvider:
                 "evidence_requests": [],
                 "confidence": 0.5,
             }
-        if self.mode == MockMode.INVALID_SCHEMA:
+        if mode == MockMode.INVALID_SCHEMA:
             output = {"answer": "not the contract"}
-        elif self.mode == MockMode.UNKNOWN_FACT:
+        elif mode == MockMode.UNKNOWN_FACT:
             output = {**output, "observed_facts": [{"fact_id": "hallucinated"}]}
-        elif self.mode == MockMode.VALIDATED_HYPOTHESIS:
+        elif mode == MockMode.VALIDATED_HYPOTHESIS:
             output = {
                 **output,
                 "hypotheses": [
                     {"claim": "unsupported", "supporting_fact_ids": [], "status": "SUPPORTED"}
                 ],
             }
-        return ProviderResult(output, "deterministic-mock", "1.0.0", 0)
+        return ProviderResult(output, self.model_identity, "1.0.0", 0)
 
     def close(self) -> None:
         return None
