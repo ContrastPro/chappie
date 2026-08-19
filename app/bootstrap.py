@@ -973,6 +973,7 @@ def _disk_status(hardware: HardwareProfileV1) -> ComponentStatusV1:
 
 
 def format_status(status: ChappieStatusV1) -> str:
+    separator = "-" * 24
     components = {item.component: item for item in status.components}
     provider = components.get("AI_PROVIDER")
     model = components.get("AI_MODEL")
@@ -981,24 +982,24 @@ def format_status(status: ChappieStatusV1) -> str:
         "CHAPPIE STATUS",
         "",
         "System",
-        "─" * 24,
+        separator,
         f"OS              {status.platform}",
         f"Architecture    {status.architecture}",
         f"Hardware class  {status.hardware.capability.value}",
         f"AI profile      {profile}",
         "",
         "AI",
-        "в”Ђ" * 24,
+        separator,
         f"Provider        {provider.detected_version if provider else 'UNKNOWN'}",
         f"Runtime         {provider.state.value if provider else 'UNKNOWN'}",
         f"Model           {model.detected_version if model else 'UNKNOWN'}",
         f"Model status    {model.state.value if model else 'UNKNOWN'}",
         "",
         "Components",
-        "─" * 24,
+        separator,
     ]
     lines.extend(f"{item.component:<20}{item.state.value}" for item in status.components)
-    lines.extend(["", "Overall", "─" * 24, status.overall_state.value])
+    lines.extend(["", "Overall", separator, status.overall_state.value])
     return "\n".join(lines)
 
 

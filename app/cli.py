@@ -72,6 +72,7 @@ class _SetupProgress:
     def __init__(self, total: int) -> None:
         self._total, self._number, self._stop = total, 0, threading.Event()
         self._thread: threading.Thread | None = None
+        self._last_step_complete_emitted = False
 
     def __call__(self, action, result) -> None:  # type: ignore[no-untyped-def]
         if result is None:
@@ -85,7 +86,16 @@ class _SetupProgress:
                 self._thread.start()
             return
         self.close()
-        print("      Complete." if result.state.value != "FAILED" else f"      {result.message}.")
+        if result.state.value == "FAILED":
+            print(f"      {result.message}.")
+            return
+        self._last_step_complete_emitted = self._number == self._total
+        print("      Complete.")
+
+    def emit_last_step_complete_if_missing(self) -> None:
+        if not self._last_step_complete_emitted and self._number == self._total:
+            print("      Complete.")
+            self._last_step_complete_emitted = True
 
     def _heartbeat(self) -> None:
         elapsed = 0
@@ -312,6 +322,13 @@ def main(argv: Sequence[str] | None = None, *, paths: ChappiePaths | None = None
         if args.json:
             print(json_output(result.payload()), end="")
         else:
+            if (
+                progress is not None
+                and all(item.state.value != "FAILED" for item in result.steps)
+                and result.steps
+                and result.steps[-1].code == SetupActionCodeV1.PROJECT_QA_SMOKE
+            ):
+                progress.emit_last_step_complete_if_missing()
             print(
                 "CHAPPIE SETUP COMPLETE"
                 if all(x.state.value != "FAILED" for x in result.steps)

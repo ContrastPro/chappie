@@ -32,7 +32,9 @@ from app.bootstrap import (
 )
 from app.cli import main
 from app.setup_engine import (
+    ActionSafetyV1,
     SetupActionCodeV1,
+    SetupActionV1,
     SetupApprovalV1,
     SetupRunStateV1,
     SetupStepResultV1,
@@ -101,6 +103,170 @@ class _DummySetupEngine:
                 ),
             ),
         )
+
+
+class _ResultSetupEngine:
+    def __init__(self, steps: tuple[SetupStepResultV1, ...]) -> None:
+        self.steps = steps
+
+    def plan(self, *, developer: bool = False, ai_profile: AIModelProfileV1 | None = None):
+        del developer, ai_profile
+        return tuple(
+            SetupActionV1(item.code, ActionSafetyV1.SAFE, item.message, None) for item in self.steps
+        )
+
+    def required_external_actions(self, *, ai_profile: AIModelProfileV1 | None = None):
+        del ai_profile
+        return ()
+
+    def execute(
+        self,
+        *,
+        approval: SetupApprovalV1,
+        developer: bool = False,
+        ai_profile: AIModelProfileV1 | None = None,
+        dry_run: bool = False,
+        progress=None,
+    ):
+        del approval, developer, ai_profile, dry_run
+        for step in self.steps:
+            if progress is not None:
+                progress(
+                    SetupActionV1(
+                        code=step.code,
+                        safety=ActionSafetyV1.SAFE,
+                        description=step.message,
+                        source=None,
+                    ),
+                    None,
+                )
+                progress(
+                    SetupActionV1(
+                        code=step.code,
+                        safety=ActionSafetyV1.SAFE,
+                        description=step.message,
+                        source=None,
+                    ),
+                    step,
+                )
+        return SetupRunStateV1(
+            "chappie_setup_engine/1.0.0",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            self.steps,
+        )
+
+
+def test_cli_bootstrap_ascii_separator_is_windows_friendly(tmp_path: Path) -> None:
+    from app.bootstrap import format_status
+
+    status = collect_status(_paths(tmp_path))
+    rendered = format_status(status)
+    assert "------------------------" in rendered
+    assert "AI" in rendered
+    assert "\u2500" not in rendered
+    assert "в”Ђ" not in rendered
+
+
+def test_cli_setup_prints_final_complete_before_setup_complete(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    from app import cli
+
+    engine = _ResultSetupEngine(
+        (
+            SetupStepResultV1(
+                SetupActionCodeV1.PROJECT_QA_SMOKE,
+                SetupStepStateV1.COMPLETED,
+                "Checking project QA smoke",
+            ),
+        )
+    )
+    monkeypatch.setattr(cli, "_setup_engine", lambda *_args, **_kwargs: engine)
+    code = main(["setup", "--yes", "--non-interactive"], paths=_paths(tmp_path))
+    output = capsys.readouterr().out
+    assert code == 0
+    complete_index = output.index("      Complete.")
+    assert output.index("CHAPPIE SETUP COMPLETE") > complete_index
+    assert "      Complete." in output
+    assert "CHAPPIE SETUP COMPLETE" in output
+
+
+def test_cli_setup_json_output_has_no_human_progress(tmp_path: Path, monkeypatch, capsys) -> None:
+    from app import cli
+
+    engine = _ResultSetupEngine(
+        (
+            SetupStepResultV1(
+                SetupActionCodeV1.PROJECT_QA_SMOKE,
+                SetupStepStateV1.COMPLETED,
+                "Checking project QA smoke",
+            ),
+        )
+    )
+    monkeypatch.setattr(cli, "_setup_engine", lambda *_args, **_kwargs: engine)
+    code = main(["setup", "--yes", "--non-interactive", "--json"], paths=_paths(tmp_path))
+    payload_text = capsys.readouterr().out
+    assert code == 0
+    payload = json.loads(payload_text)
+    assert payload["identity"] == "chappie_setup_engine/1.0.0"
+    assert "steps" in payload
+    assert "      Complete." not in payload_text
+
+
+def test_cli_setup_missing_complete_is_not_printed_on_final_stage_failure(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    from app import cli
+
+    engine = _ResultSetupEngine(
+        (
+            SetupStepResultV1(
+                SetupActionCodeV1.PROJECT_QA_SMOKE,
+                SetupStepStateV1.FAILED,
+                "final stage failed",
+            ),
+        )
+    )
+    monkeypatch.setattr(cli, "_setup_engine", lambda *_args, **_kwargs: engine)
+    code = main(["setup", "--yes", "--non-interactive"], paths=_paths(tmp_path))
+    output = capsys.readouterr().out
+    assert code == 1
+    assert "      Complete." not in output
+    assert "CHAPPIE SETUP COMPLETE" not in output
+    assert "CHAPPIE SETUP FAILED" in output
+    assert "final stage failed." in output
+
+
+def test_cli_setup_prints_single_complete_per_successful_step(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    from app import cli
+
+    engine = _ResultSetupEngine(
+        (
+            SetupStepResultV1(
+                SetupActionCodeV1.INSTALL_AI_PROVIDER,
+                SetupStepStateV1.COMPLETED,
+                "installing provider",
+            ),
+            SetupStepResultV1(
+                SetupActionCodeV1.PROJECT_QA_SMOKE,
+                SetupStepStateV1.COMPLETED,
+                "checking project QA smoke",
+            ),
+        )
+    )
+    monkeypatch.setattr(cli, "_setup_engine", lambda *_args, **_kwargs: engine)
+    code = main(["setup", "--yes", "--non-interactive"], paths=_paths(tmp_path))
+    output = capsys.readouterr().out
+    assert code == 0
+    assert output.count("      Complete.") == 2
+    complete_indexes = [i for i, _ in enumerate(output.splitlines()) if "      Complete." in _]
+    assert len(complete_indexes) == 2
+    assert "[2/2]" in output
+    assert output.index("      Complete.", output.index("[2/2]")) < output.index(
+        "CHAPPIE SETUP COMPLETE"
+    )
 
 
 def test_setup_profile_prompt_is_cli_owned_and_plans_never_prompt(
