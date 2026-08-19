@@ -26,7 +26,14 @@ Operator-facing runbooks live in [operations/](operations/README.md).
 
 ## Research
 
+- [CLI and bootstrap](cli/README.md) — product control plane and offline setup diagnostics.
+
 Research documentation lives in [research/](research/README.md).
+
+## Knowledge
+
+[Chappie Knowledge v1](knowledge/README.md) is the deterministic, provenance-bound
+project-knowledge index. It is separate from AI prompts and runtime state.
 
 ## Historical evidence
 

@@ -13,6 +13,7 @@ class AITask(StrEnum):
     RESEARCH_REASONING_V111 = "RESEARCH_REASONING_V111"
     RESEARCH_EVIDENCE_CRITIQUE_V1 = "RESEARCH_EVIDENCE_CRITIQUE_V1"
     RESEARCH_EVIDENCE_CRITIQUE_V11 = "RESEARCH_EVIDENCE_CRITIQUE_V11"
+    PROJECT_QA_V1 = "PROJECT_QA_V1"
 
 
 class ModelProfile(StrEnum):
@@ -47,6 +48,7 @@ TASKS = {
             "research_evidence_critique",
             "1.0.0",
         ),
+        TaskContract(AITask.PROJECT_QA_V1, "project_qa", "1.0.0"),
         TaskContract(
             AITask.RESEARCH_EVIDENCE_CRITIQUE_V11,
             "research_evidence_critique",

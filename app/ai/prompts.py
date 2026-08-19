@@ -35,6 +35,13 @@ distinct UNVALIDATED hypothesis with explicit lineage. Never invent evidence, ra
 opposed evidence into support, or provide trade actions. Return only the required JSON schema.
 Hidden reasoning is not part of the result."""
 
+PROJECT_QA_V1_INSTRUCTION = """You answer questions about Chappie using only supplied
+canonical knowledge facts. Cite only supplied knowledge fact IDs. Preserve each record's
+authority and status; never turn research evidence into a project decision, never promote a
+summary above evidence, and never invent repository facts. If context is insufficient, say so
+using bounded unknowns. Do not provide trade actions or write canonical knowledge. Return only
+the required JSON schema. Hidden reasoning is not part of the result."""
+
 
 def system_instruction(contract: TaskContract) -> str:
     instruction = {
@@ -44,6 +51,7 @@ def system_instruction(contract: TaskContract) -> str:
             if contract.prompt_version == "1.1.0"
             else RESEARCH_EVIDENCE_CRITIQUE_V1_INSTRUCTION
         ),
+        "project_qa": PROJECT_QA_V1_INSTRUCTION,
     }.get(contract.prompt_name, BASE_INSTRUCTION)
     return f"{instruction}\nTask: {contract.task.value}. Prompt: {contract.prompt_identity}."
 

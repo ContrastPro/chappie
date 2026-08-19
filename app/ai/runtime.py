@@ -10,6 +10,12 @@ from datetime import UTC, datetime
 from app.ai.errors import AIError, AIValidationError
 from app.ai.market_semantics import semantics_context
 from app.ai.models import ModelRequest, ModelResponse
+from app.ai.project_qa import (
+    PROJECT_QA_JSON_SCHEMA,
+    ProjectQAAnswerV1,
+    knowledge_facts,
+    parse_project_qa,
+)
 from app.ai.prompts import prompt_digest, system_instruction
 from app.ai.research_evidence_review import (
     RESEARCH_EVIDENCE_CRITIQUE_JSON_SCHEMA,
@@ -153,6 +159,44 @@ class ChappieAI:
 
     def close(self) -> None:
         self.router.close()
+
+    def answer_project_qa(
+        self, *, question: str, knowledge_context, request_id: str | None = None
+    ) -> ProjectQAAnswerV1:
+        if not question.strip():
+            raise AIValidationError("project QA question is required")
+        task = AITask.PROJECT_QA_V1
+        contract = task_contract(task)
+        facts = knowledge_facts(knowledge_context, datetime.now(tz=UTC))
+        payload = {
+            "task": task.value,
+            "question": question,
+            "context_digest": knowledge_context.context_digest,
+            "facts": [x.payload() for x in facts],
+            "prompt": contract.prompt_identity,
+        }
+        request = ModelRequest(
+            request_id or uuid.uuid4().hex,
+            task,
+            self.config.profile,
+            system_instruction(contract),
+            contract.prompt_identity,
+            facts,
+            {"question": question, "knowledge_context_digest": knowledge_context.context_digest},
+            PROJECT_QA_JSON_SCHEMA,
+            self.config.temperature,
+            self.config.timeout_seconds,
+            datetime.now(tz=UTC),
+            digest(payload),
+        )
+        provider = self.router.provider_for(self.config.profile)
+        try:
+            raw = provider.generate(request)
+            return parse_project_qa(raw.structured_output, knowledge_context)
+        except AIValidationError as error:
+            error.request_digest = request.input_digest  # type: ignore[attr-defined]
+            error.rejected_output = _sanitized_rejected_output(raw.structured_output)  # type: ignore[attr-defined]
+            raise
 
     def review_research_evidence(
         self,
