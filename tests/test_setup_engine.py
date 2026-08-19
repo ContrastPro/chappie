@@ -71,6 +71,25 @@ def test_engine_identity_and_safe_external_action_classification() -> None:
     )
 
 
+def test_existing_knowledge_store_requires_current_canonical_snapshot(
+    tmp_path: Path, monkeypatch
+) -> None:  # type: ignore[no-untyped-def]
+    """A readable old store must not suppress the canonical rebuild step."""
+    from app.knowledge import KnowledgeManifestV1, RepositorySnapshotV1
+
+    engine = SetupEngineV1(_paths(tmp_path))
+    action = SetupActionV1(SetupActionCodeV1.BUILD_KNOWLEDGE, ActionSafetyV1.SAFE, "x", None)
+    current = RepositorySnapshotV1("b" * 40, True)
+    old = KnowledgeManifestV1(RepositorySnapshotV1("a" * 40, True), (), "fixture")
+    monkeypatch.setattr("app.knowledge.read_store", lambda _path: ((), old))
+    monkeypatch.setattr("app.knowledge.committed_snapshot", lambda _root: current)
+    assert engine._check(action) is False
+
+    matching = KnowledgeManifestV1(current, (), "fixture")
+    monkeypatch.setattr("app.knowledge.read_store", lambda _path: ((), matching))
+    assert engine._check(action) is True
+
+
 def test_dry_run_is_non_mutating_and_external_needs_separate_approval(tmp_path: Path) -> None:
     engine = FakeSetupEngine(_paths(tmp_path))
     dry = engine.execute(

@@ -326,9 +326,31 @@ def main(argv: Sequence[str] | None = None, *, paths: ChappiePaths | None = None
                 for item in status.components
                 if item.component in {"AI_PROVIDER", "AI_MODEL"}
             }
-            print(json_output(data), end="") if args.json else print(
-                "\n".join(f"{key}: {value['state']}" for key, value in data.items())
-            )
+            config = load_local_config(paths)
+            payload = {
+                **data,
+                "PROVIDER": config.provider if config and config.provider else None,
+                "PROFILE": (
+                    config.enabled_capabilities[0].upper()
+                    if config and config.enabled_capabilities
+                    else None
+                ),
+                "MODEL": config.model if config and config.model else None,
+            }
+            if args.json:
+                print(json_output(payload), end="")
+            else:
+                print(
+                    "\n".join(
+                        (
+                            f"AI_PROVIDER: {data['AI_PROVIDER']['state']}",
+                            f"AI_MODEL: {data['AI_MODEL']['state']}",
+                            f"PROVIDER: {payload['PROVIDER'] or 'UNKNOWN'}",
+                            f"PROFILE: {payload['PROFILE'] or 'UNKNOWN'}",
+                            f"MODEL: {payload['MODEL'] or 'UNKNOWN'}",
+                        )
+                    )
+                )
             return 0
         data = {
             "identity": TEST_MODEL_CATALOG.identity,

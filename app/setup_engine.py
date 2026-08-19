@@ -423,11 +423,11 @@ class SetupEngineV1:
             ).exists()
         if action.code == SetupActionCodeV1.BUILD_KNOWLEDGE:
             try:
-                from app.knowledge import read_store
+                from app.knowledge import committed_snapshot, read_store
 
-                read_store(self.paths.knowledge_file)
-                return True
-            except (OSError, ValueError):
+                _, stored_manifest = read_store(self.paths.knowledge_file)
+                return stored_manifest.snapshot == committed_snapshot(self.paths.root)
+            except (OSError, ValueError, subprocess.SubprocessError):
                 return False
         if action.code == SetupActionCodeV1.INSTALL_AI_PROVIDER:
             if self._windows_installer is not None:

@@ -70,3 +70,10 @@ under `chappie dev ...`; they are never run by status, doctor, or setup planning
 Local configuration is non-secret and portable. In a checkout it lives under
 ignored `data/config/chappie.json`; future packaged installs use a user-local
 Chappie state directory through `ChappiePaths`.
+
+`status`, `doctor`, and `ai status` are observation-only. They may probe the
+configured local Ollama endpoint and inspect `ollama ls`, but never start or
+install Ollama, pull a model, rebuild Knowledge, generate AI output, or write
+configuration. `RESEARCH_STORAGE: PARTIAL` means the optional ignored compact
+research SQLite store is absent; it is informational and does not block base
+platform readiness.

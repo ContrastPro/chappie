@@ -421,3 +421,202 @@ def test_model_pull_progress_is_a_single_writer_stage(capsys: pytest.CaptureFixt
     output = capsys.readouterr().out
     assert "Installing selected local model" in output
     assert "Still working" not in output
+
+
+def _write_balanced_ollama_config(paths: ChappiePaths) -> None:
+    paths.config_file.parent.mkdir(parents=True, exist_ok=True)
+    paths.config_file.write_text(
+        json.dumps(
+            ChappieLocalConfigV1(
+                provider="ollama", model="qwen3:8b", enabled_capabilities=("BALANCED",)
+            ).payload()
+        ),
+        encoding="utf-8",
+    )
+
+
+def _component(status, name: str) -> ComponentStatusV1:
+    return next(item for item in status.components if item.component == name)
+
+
+def test_windows_ready_ai_status_is_observational_and_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The real Windows setup result is reported without setup side effects."""
+    from app import bootstrap
+    from app.knowledge import KnowledgeManifestV1, RepositorySnapshotV1
+    from app.ollama_readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
+
+    paths = _paths(tmp_path)
+    _write_balanced_ollama_config(paths)
+    paths.knowledge_file.parent.mkdir(parents=True)
+    paths.knowledge_file.touch()
+    paths.research_dir.mkdir(parents=True)
+    snapshot = RepositorySnapshotV1("a" * 40, True)
+    manifest = KnowledgeManifestV1(snapshot, (), "fixture")
+    calls: list[str] = []
+
+    class Probe:
+        def __init__(self) -> None:
+            calls.append("probe-created")
+
+        def probe(self):
+            calls.append("probe")
+            return OllamaReadinessResultV1(OllamaReadinessStateV1.READY, "http://localhost:11434")
+
+        def close(self) -> None:
+            calls.append("probe-closed")
+
+    class Installer:
+        def __init__(self, **_kwargs: object) -> None:
+            calls.append("installer-created")
+
+        def executable(self) -> Path:
+            calls.append("executable")
+            return Path("C:/fixture/ollama.exe")
+
+        def model_available(self, model: str) -> bool:
+            calls.append(f"model:{model}")
+            return model == "qwen3:8b"
+
+    hardware = HardwareProfileV1(
+        "Windows",
+        "fixture",
+        "AMD64",
+        "AMD",
+        16,
+        32 * 1024**3,
+        ("NVIDIA GeForce RTX 4070 Ti",),
+        12 * 1024**3,
+        True,
+        100 * 1024**3,
+    )
+    monkeypatch.setattr(bootstrap, "detect_hardware", lambda _paths: hardware)
+    monkeypatch.setattr(
+        bootstrap,
+        "_repository_status",
+        lambda _paths: ComponentStatusV1(
+            "PROJECT_REPOSITORY", ComponentStateV1.READY, True, None, None, "clean"
+        ),
+    )
+    monkeypatch.setattr("app.knowledge.read_store", lambda _path: ((), manifest))
+    monkeypatch.setattr("app.knowledge.committed_snapshot", lambda _root: snapshot)
+    monkeypatch.setattr("app.ollama_readiness.OllamaReadinessProbe", Probe)
+    monkeypatch.setattr("app.windows_ollama.WindowsOllamaInstallerV1", Installer)
+
+    status = collect_status(paths)
+    assert _component(status, "KNOWLEDGE").state == ComponentStateV1.READY
+    assert _component(status, "AI_PROVIDER").state == ComponentStateV1.READY
+    assert _component(status, "AI_MODEL").state == ComponentStateV1.READY
+    assert status.overall_state == InstallationStateV1.READY
+    assert _component(status, "RESEARCH_STORAGE").state == ComponentStateV1.PARTIAL
+    assert calls == [
+        "installer-created",
+        "executable",
+        "probe-created",
+        "probe",
+        "probe-closed",
+        "installer-created",
+        "model:qwen3:8b",
+    ]
+
+    assert main(["ai", "status"], paths=paths) == 0
+    output = capsys.readouterr().out
+    assert "AI_PROVIDER: READY" in output
+    assert "AI_MODEL: READY" in output
+    assert "PROFILE: BALANCED" in output
+    assert "MODEL: qwen3:8b" in output
+    report = doctor(paths)
+    assert not any(
+        issue.remediation_code
+        in {
+            RemediationCodeV1.BUILD_KNOWLEDGE_STORE,
+            RemediationCodeV1.START_AI_PROVIDER,
+            RemediationCodeV1.INSTALL_AI_MODEL,
+        }
+        for issue in report.issues
+    )
+
+
+def test_status_provider_down_and_missing_model_get_current_remediation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.ollama_readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
+
+    paths = _paths(tmp_path)
+    _write_balanced_ollama_config(paths)
+
+    class Probe:
+        def probe(self):
+            return OllamaReadinessResultV1(
+                OllamaReadinessStateV1.NOT_READY,
+                "http://localhost:11434",
+                error_category="UNAVAILABLE",
+            )
+
+        def close(self) -> None:
+            pass
+
+    class Installer:
+        def __init__(self, **_kwargs: object) -> None:
+            pass
+
+        def executable(self) -> Path:
+            return Path("C:/fixture/ollama.exe")
+
+        def model_available(self, _model: str) -> bool:
+            raise AssertionError("model check while down")
+
+    monkeypatch.setattr("app.ollama_readiness.OllamaReadinessProbe", Probe)
+    monkeypatch.setattr("app.windows_ollama.WindowsOllamaInstallerV1", Installer)
+    status = collect_status(paths)
+    assert _component(status, "AI_PROVIDER").state == ComponentStateV1.DEGRADED
+    assert status.overall_state != InstallationStateV1.READY
+    assert RemediationCodeV1.START_AI_PROVIDER in {
+        issue.remediation_code for issue in doctor(paths).issues
+    }
+
+    monkeypatch.setattr(
+        "app.ollama_readiness.OllamaReadinessProbe",
+        lambda: type(
+            "Probe",
+            (),
+            {
+                "probe": lambda self: OllamaReadinessResultV1(
+                    OllamaReadinessStateV1.READY, "http://localhost:11434"
+                ),
+                "close": lambda self: None,
+            },
+        )(),
+    )
+    monkeypatch.setattr(Installer, "model_available", lambda _self, _model: False)
+    status = collect_status(paths)
+    assert _component(status, "AI_MODEL").state == ComponentStateV1.NOT_INSTALLED
+    assert RemediationCodeV1.INSTALL_AI_MODEL in {
+        issue.remediation_code for issue in doctor(paths).issues
+    }
+
+
+def test_knowledge_stale_keeps_rebuild_remediation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.knowledge import KnowledgeManifestV1, RepositorySnapshotV1
+
+    paths = _paths(tmp_path)
+    paths.knowledge_file.parent.mkdir(parents=True)
+    paths.knowledge_file.touch()
+    monkeypatch.setattr(
+        "app.knowledge.read_store",
+        lambda _path: (
+            (),
+            KnowledgeManifestV1(RepositorySnapshotV1("a" * 40, True), (), "fixture"),
+        ),
+    )
+    monkeypatch.setattr(
+        "app.knowledge.committed_snapshot", lambda _root: RepositorySnapshotV1("b" * 40, True)
+    )
+    status = collect_status(paths)
+    assert _component(status, "KNOWLEDGE").state == ComponentStateV1.STALE
+    assert RemediationCodeV1.BUILD_KNOWLEDGE_STORE in {
+        issue.remediation_code for issue in doctor(paths).issues
+    }

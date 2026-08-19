@@ -508,6 +508,7 @@ def collect_status(paths: ChappiePaths | None = None) -> ChappieStatusV1:
     paths = paths or ChappiePaths.resolve()
     hardware = detect_hardware(paths)
     config, config_status = _config_status(paths)
+    ai_provider = _ai_provider_status(config)
     components = (
         _operating_system_status(hardware),
         _python_status(),
@@ -517,8 +518,8 @@ def collect_status(paths: ChappiePaths | None = None) -> ChappieStatusV1:
         config_status,
         _knowledge_status(paths),
         _research_status(paths),
-        _ai_provider_status(config),
-        _ai_model_status(config),
+        ai_provider,
+        _ai_model_status(config, ai_provider),
         _disk_status(hardware),
     )
     state = aggregate_installation_state(components)
@@ -557,7 +558,14 @@ def aggregate_installation_state(components: tuple[ComponentStatusV1, ...]) -> I
     ):
         return InstallationStateV1.SETUP_REQUIRED
     if any(
-        item.required and item.state in {ComponentStateV1.DEGRADED, ComponentStateV1.PARTIAL}
+        item.required
+        and item.state
+        in {
+            ComponentStateV1.DEGRADED,
+            ComponentStateV1.PARTIAL,
+            ComponentStateV1.STALE,
+            ComponentStateV1.UNKNOWN,
+        }
         for item in components
     ):
         return InstallationStateV1.DEGRADED
@@ -783,7 +791,7 @@ def _knowledge_status(paths: ChappiePaths) -> ComponentStatusV1:
         return _status(
             "KNOWLEDGE",
             ComponentStateV1.NOT_CONFIGURED,
-            False,
+            True,
             "Knowledge store is not built",
             RemediationCodeV1.BUILD_KNOWLEDGE_STORE,
         )
@@ -795,11 +803,14 @@ def _knowledge_status(paths: ChappiePaths) -> ComponentStatusV1:
             current = committed_snapshot(paths.root)
         except (OSError, subprocess.SubprocessError):
             current = None
-        if current is not None and current.commit != stored_manifest.snapshot.commit:
+        # Both setup and status use the complete provenance snapshot.  Git ignores
+        # generated local state, so .venv/, data/, and local configuration do not
+        # affect this comparison; tracked source changes do.
+        if current is not None and current != stored_manifest.snapshot:
             return _status(
                 "KNOWLEDGE",
                 ComponentStateV1.STALE,
-                False,
+                True,
                 "Knowledge store snapshot is stale",
                 RemediationCodeV1.BUILD_KNOWLEDGE_STORE,
             )
@@ -811,7 +822,7 @@ def _knowledge_status(paths: ChappiePaths) -> ComponentStatusV1:
             "Knowledge store is invalid",
             RemediationCodeV1.BUILD_KNOWLEDGE_STORE,
         )
-    return _status("KNOWLEDGE", ComponentStateV1.READY, False, "Knowledge store verified")
+    return _status("KNOWLEDGE", ComponentStateV1.READY, True, "Knowledge store verified")
 
 
 def _research_status(paths: ChappiePaths) -> ComponentStatusV1:
@@ -848,30 +859,96 @@ def _ai_provider_status(config: ChappieLocalConfigV1 | None) -> ComponentStatusV
             "provider configured; readiness probe unavailable",
             detected=config.provider,
         )
-    found = shutil.which("ollama") is not None
+    from app.ollama_readiness import OllamaReadinessProbe, OllamaReadinessStateV1
+    from app.windows_ollama import WindowsOllamaInstallerV1
+
+    installer = WindowsOllamaInstallerV1(interactive_output=False)
+    executable = installer.executable()
+    if executable is None:
+        return _status(
+            "AI_PROVIDER",
+            ComponentStateV1.NOT_INSTALLED,
+            True,
+            "Ollama is not installed",
+            RemediationCodeV1.INSTALL_AI_PROVIDER,
+            config.provider,
+        )
+    probe = OllamaReadinessProbe()
+    try:
+        result = probe.probe()
+    finally:
+        probe.close()
+    if result.state == OllamaReadinessStateV1.READY:
+        return _status(
+            "AI_PROVIDER",
+            ComponentStateV1.READY,
+            True,
+            "Ollama runtime ready",
+            detected=config.provider,
+            endpoint=result.endpoint,
+            latency_ms=str(result.latency_ms or 0),
+        )
+    message = (
+        "Ollama runtime unavailable"
+        if result.state == OllamaReadinessStateV1.NOT_READY
+        else "Ollama runtime probe failed"
+    )
     return _status(
         "AI_PROVIDER",
-        ComponentStateV1.DEGRADED if found else ComponentStateV1.NOT_INSTALLED,
-        False,
-        "Ollama installed; runtime not probed" if found else "Ollama is not installed",
-        RemediationCodeV1.START_AI_PROVIDER if found else RemediationCodeV1.INSTALL_AI_PROVIDER,
+        ComponentStateV1.DEGRADED,
+        True,
+        message,
+        RemediationCodeV1.START_AI_PROVIDER,
         config.provider,
+        endpoint=result.endpoint,
+        error_category=result.error_category or "UNKNOWN",
     )
 
 
-def _ai_model_status(config: ChappieLocalConfigV1 | None) -> ComponentStatusV1:
+def _ai_model_status(
+    config: ChappieLocalConfigV1 | None, provider_status: ComponentStatusV1
+) -> ComponentStatusV1:
     if config is None or config.model is None:
         return _status(
             "AI_MODEL", ComponentStateV1.NOT_CONFIGURED, False, "AI model not configured"
         )
+    if config.provider != "ollama":
+        return _status(
+            "AI_MODEL",
+            ComponentStateV1.UNKNOWN,
+            True,
+            "configured provider does not support model inspection",
+            detected=config.model,
+        )
+    if provider_status.state != ComponentStateV1.READY:
+        return _status(
+            "AI_MODEL",
+            ComponentStateV1.UNKNOWN,
+            True,
+            "model availability cannot be verified while Ollama is unavailable",
+            RemediationCodeV1.START_AI_PROVIDER,
+            config.model,
+        )
+    from app.windows_ollama import WindowsOllamaInstallerV1
+
+    available = WindowsOllamaInstallerV1(interactive_output=False).model_available(config.model)
     return _status(
         "AI_MODEL",
-        ComponentStateV1.UNKNOWN,
-        False,
-        "model configured; availability is not probed",
-        RemediationCodeV1.INSTALL_AI_MODEL,
+        ComponentStateV1.READY if available else ComponentStateV1.NOT_INSTALLED,
+        True,
+        "configured Ollama model available"
+        if available
+        else "configured Ollama model is not installed",
+        None if available else RemediationCodeV1.INSTALL_AI_MODEL,
         config.model,
+        profile=_configured_ai_profile(config) or "UNKNOWN",
     )
+
+
+def _configured_ai_profile(config: ChappieLocalConfigV1 | None) -> str | None:
+    if config is None or not config.enabled_capabilities:
+        return None
+    return config.enabled_capabilities[0].upper()
 
 
 def _disk_status(hardware: HardwareProfileV1) -> ComponentStatusV1:
@@ -896,6 +973,10 @@ def _disk_status(hardware: HardwareProfileV1) -> ComponentStatusV1:
 
 
 def format_status(status: ChappieStatusV1) -> str:
+    components = {item.component: item for item in status.components}
+    provider = components.get("AI_PROVIDER")
+    model = components.get("AI_MODEL")
+    profile = dict(model.details).get("profile", "NOT_CONFIGURED") if model else "NOT_CONFIGURED"
     lines = [
         "CHAPPIE STATUS",
         "",
@@ -903,7 +984,15 @@ def format_status(status: ChappieStatusV1) -> str:
         "─" * 24,
         f"OS              {status.platform}",
         f"Architecture    {status.architecture}",
-        f"Hardware        {status.hardware.capability.value}",
+        f"Hardware class  {status.hardware.capability.value}",
+        f"AI profile      {profile}",
+        "",
+        "AI",
+        "в”Ђ" * 24,
+        f"Provider        {provider.detected_version if provider else 'UNKNOWN'}",
+        f"Runtime         {provider.state.value if provider else 'UNKNOWN'}",
+        f"Model           {model.detected_version if model else 'UNKNOWN'}",
+        f"Model status    {model.state.value if model else 'UNKNOWN'}",
         "",
         "Components",
         "─" * 24,
