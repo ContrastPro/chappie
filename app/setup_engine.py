@@ -410,7 +410,7 @@ class SetupEngineV1:
             elif not self._approval_permits(action, approval):
                 result = SetupStepResultV1(
                     action.code,
-                    SetupStepStateV1.SKIPPED,
+                    SetupStepStateV1.FAILED if not action.optional else SetupStepStateV1.SKIPPED,
                     f"APPROVAL_REQUIRED:{action.safety.value}",
                 )
             else:
@@ -456,7 +456,69 @@ class SetupEngineV1:
             )
             if result.state == SetupStepStateV1.FAILED and not action.optional:
                 break
+        if self._required_actions_satisfied(
+            actions, results
+        ) and not self._final_postconditions_hold(ai_profile):
+            results = self._replace_final_failure(results, "FINAL_SETUP_INVARIANT_FAILED")
+            self._persist(
+                SetupRunStateV1(SETUP_ENGINE_IDENTITY, SETUP_ENGINE_DIGEST, tuple(results))
+            )
         return SetupRunStateV1(SETUP_ENGINE_IDENTITY, SETUP_ENGINE_DIGEST, tuple(results))
+
+    @staticmethod
+    def _required_actions_satisfied(
+        actions: tuple[SetupActionV1, ...], results: list[SetupStepResultV1]
+    ) -> bool:
+        by_code = {result.code: result for result in results}
+        return all(
+            action.optional
+            or (
+                (result := by_code.get(action.code)) is not None
+                and (
+                    result.state == SetupStepStateV1.COMPLETED
+                    or (
+                        result.state == SetupStepStateV1.SKIPPED
+                        and result.message == "ALREADY_READY"
+                    )
+                )
+            )
+            for action in actions
+        )
+
+    def _final_postconditions_hold(self, ai_profile: AIModelProfileV1 | None) -> bool:
+        """Require current AI evidence, never historical checkpoint completion."""
+        if ai_profile is None:
+            return True
+        # Narrow fixture engines can intentionally exercise only one action.
+        # Production setup always wires both current-run smoke implementations.
+        if self._smoke is None or self._project_qa_smoke is None:
+            return True
+        model = self._model_for_profile(ai_profile)
+        installer = self._ollama_installer()
+        return bool(
+            model
+            and installer
+            and self._provider_runtime_ready
+            and installer.executable()
+            and installer.version()
+            and installer.model_available(model)
+            and self._config_is_bound(model)
+            and self._smoke_verified_this_run
+            and self._project_qa_verified_this_run
+        )
+
+    @staticmethod
+    def _replace_final_failure(
+        results: list[SetupStepResultV1], message: str
+    ) -> list[SetupStepResultV1]:
+        for index in range(len(results) - 1, -1, -1):
+            if results[index].code == SetupActionCodeV1.PROJECT_QA_SMOKE:
+                item = results[index]
+                results[index] = SetupStepResultV1(
+                    item.code, SetupStepStateV1.FAILED, message, item.duration_ms
+                )
+                break
+        return results
 
     def _dependencies_complete(
         self, action: SetupActionV1, completed: set[SetupActionCodeV1]

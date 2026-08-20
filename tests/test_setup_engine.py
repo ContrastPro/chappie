@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from app.ai.schemas import canonical_json
 from app.ai_setup_smoke import AISetupSmokeResultV1, AISetupSmokeStateV1
 from app.bootstrap import (
     AIModelProfileV1,
@@ -982,6 +983,37 @@ def test_missing_smoke_fails_closed_after_provider_and_model_are_valid(tmp_path:
 
     assert result.steps[-1].code == SetupActionCodeV1.VERIFY_AI
     assert result.steps[-1].state == SetupStepStateV1.FAILED
+
+
+def test_selected_ai_setup_cannot_complete_when_config_binding_does_not_persist(
+    tmp_path: Path,
+) -> None:
+    class UnboundEngine(_FullAiSetupEngine):
+        def _bind_config(self, model: str, profile: AIModelProfileV1 | None) -> None:
+            del model, profile
+
+    events: list[str] = []
+    paths = _paths(tmp_path)
+    paths.config_file.parent.mkdir(parents=True)
+    paths.config_file.write_text(canonical_json(ChappieLocalConfigV1().payload()) + "\n")
+    engine = UnboundEngine(
+        paths,
+        events=events,
+        windows_installer=_FakeWindowsInstaller(events, installed=True),
+        ollama_readiness_coordinator=_FakeReadinessCoordinator(
+            events, OllamaReadinessStateV1.READY
+        ),
+        smoke=lambda _: True,
+        project_qa_smoke=_FakeProjectQASmoke([ProjectQASetupSmokeStateV1.VALID], events),
+    )
+
+    result = engine.execute(
+        approval=SetupApprovalV1(allow_external=True), ai_profile=AIModelProfileV1.BALANCED
+    )
+
+    assert result.steps[-1].code == SetupActionCodeV1.INSTALL_AI_MODEL
+    assert result.steps[-1].state == SetupStepStateV1.FAILED
+    assert load_local_config(engine.paths).provider is None
 
 
 def test_project_qa_failure_resume_does_not_reinstall_or_redownload(tmp_path: Path) -> None:

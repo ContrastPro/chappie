@@ -396,6 +396,7 @@ def main(argv: Sequence[str] | None = None, *, paths: ChappiePaths | None = None
                     profile = _interactive_ai_profile(paths, parser)
         actions = engine.plan(developer=args.developer, ai_profile=profile)
         needs_external = engine.required_external_actions(ai_profile=profile)
+        allow_external = args.allow_external
         if args.plan:
             print(
                 json_output(
@@ -408,8 +409,8 @@ def main(argv: Sequence[str] | None = None, *, paths: ChappiePaths | None = None
             )
             return 0
         progress = None if args.json else _SetupProgress(len(actions))
-        if needs_external and not args.allow_external:
-            if args.non_interactive:
+        if needs_external and not allow_external:
+            if args.non_interactive or args.json or not args.interactive:
                 if args.json:
                     print(
                         json_output(
@@ -425,13 +426,10 @@ def main(argv: Sequence[str] | None = None, *, paths: ChappiePaths | None = None
                 else:
                     print("External authorization required for required AI work.")
                 return 1
-            if (
-                args.interactive
-                and not args.json
-                and not _ask_for_external_authorization(needs_external)
-            ):
+            if not _ask_for_external_authorization(needs_external):
                 print("External authorization required to continue setup.")
                 return 1
+            allow_external = True
         if args.json and args.non_interactive and not needs_external:
             # JSON mode intentionally stays silent; success is represented in result payload.
             pass
@@ -441,7 +439,7 @@ def main(argv: Sequence[str] | None = None, *, paths: ChappiePaths | None = None
             result = engine.execute(
                 approval=SetupApprovalV1(
                     allow_safe=args.yes,
-                    allow_external=args.allow_external,
+                    allow_external=allow_external,
                     non_interactive=args.non_interactive,
                 ),
                 developer=args.developer,

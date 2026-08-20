@@ -78,6 +78,7 @@ class _DummySetupEngine:
         self.profile_to_actions = profile_to_actions
         self.installed_profiles = installed_profiles
         self.executed: list[AIModelProfileV1 | None] = []
+        self.approvals: list[SetupApprovalV1] = []
 
     def plan(self, *, developer: bool = False, ai_profile: AIModelProfileV1 | None = None):
         return ()
@@ -97,7 +98,8 @@ class _DummySetupEngine:
         dry_run: bool = False,
         progress=None,
     ):
-        del approval, developer, dry_run, progress
+        del developer, dry_run, progress
+        self.approvals.append(approval)
         self.executed.append(ai_profile)
         return SetupRunStateV1(
             "chappie_setup_engine/1.0.0",
@@ -482,6 +484,27 @@ def test_cli_external_consent_required_for_fresh_windows_like_state(tmp_path: Pa
         == 1
     )
     assert engine.executed == []
+
+
+def test_cli_propagates_interactive_external_approval_to_the_executing_engine(
+    tmp_path: Path, monkeypatch
+):
+    from app import cli
+
+    engine = _DummySetupEngine(
+        {AIModelProfileV1.BALANCED: (SetupActionCodeV1.INSTALL_AI_PROVIDER,)}
+    )
+    monkeypatch.setattr(cli, "_setup_engine", lambda *_args, **_kwargs: engine)
+    monkeypatch.setattr("builtins.input", lambda _: "y")
+
+    assert (
+        main(
+            ["setup", "--interactive", "--yes", "--ai-profile", "balanced"],
+            paths=_paths(tmp_path),
+        )
+        == 0
+    )
+    assert engine.approvals[-1].allow_external is True
 
 
 def test_cli_freshly_prompts_for_provider_and_model_if_missing(tmp_path: Path, monkeypatch):
