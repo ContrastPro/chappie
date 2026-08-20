@@ -1,0 +1,34 @@
+export const CONTROL_PLANE_IDENTITY = "chappie_control_plane/1.2.0";
+export const CONTROL_PLANE_DIGEST = "de09b6c1eb917d95cdc53be3581a9500110fc856f0586e87bea88b95bccf3040";
+export const TRANSPORT_IDENTITY = "chappie_control_plane_transport/1.2.0";
+export const TRANSPORT_DIGEST = "e2328fc9618a4ad95a728b128cdfb0d003e60fcd2b5473c91dbffff053993a96";
+export const LOOPBACK_HOST = "127.0.0.1";
+
+export type ConnectionState = "DISCONNECTED" | "CONNECTING" | "CONNECTED" | "INCOMPATIBLE" | "ERROR";
+
+export interface TransportErrorV1 { code: string; message: string; }
+export interface TransportEnvelopeV1<T> {
+  transport_contract: string;
+  transport_contract_digest: string;
+  control_plane_contract: string;
+  control_plane_contract_digest: string;
+  request_id: string;
+  status: "OK" | "ERROR";
+  data: T | null;
+  error: TransportErrorV1 | null;
+}
+
+export interface HealthV1 { status: "OK"; }
+export interface ControlPlaneStatusV1 { identity: string; contract_digest: string; state: string; status: Record<string, unknown> | null; error: TransportErrorV1 | null; }
+export interface ControlPlaneAIStatusV1 { identity: string; contract_digest: string; state: string; provider: string | null; profile: string | null; model: string | null; provider_state: string | null; model_state: string | null; error: TransportErrorV1 | null; }
+export interface CapabilityV1 { capability_id: string; category: string; status: string; authority: string; read_only: boolean; requires_ai: boolean; requires_knowledge: boolean; description: string; }
+export interface ControlPlaneCapabilitiesV1 { identity: string; contract_digest: string; state: string; capabilities: CapabilityV1[]; error: TransportErrorV1 | null; }
+export interface ControlPlaneDiagnosticsV1 { identity: string; contract_digest: string; state: string; diagnostics: Record<string, unknown> | null; error: TransportErrorV1 | null; }
+export interface ProjectQASourceV1 { record_id: string; title: string; authority: string; status: string; }
+export interface ProjectQAResponseV1 {
+  identity: string; contract_digest: string; state: string; question: string; answer: string | null;
+  supporting_knowledge_fact_ids: string[]; supporting_records: ProjectQASourceV1[];
+  unknowns: string[]; context_digest: string | null; provider: string | null; model: string | null;
+  authority: "AI_WITH_KNOWLEDGE_READ_ONLY"; validation_status: string | null; error: TransportErrorV1 | null;
+  workspace_context_digest?: string | null; workspace_context_used?: string[];
+}

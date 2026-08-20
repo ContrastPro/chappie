@@ -8,6 +8,8 @@ data/
 .env
 
 .vscode/
+!tools/vscode-chappie/.vscode/
+!tools/vscode-chappie/.vscode/launch.json
 
 .pytest_cache/
 .pytest-tmp-*/

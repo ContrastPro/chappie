@@ -22,6 +22,9 @@ from app.control_plane import (
     ChappieControlPlaneV1,
     ControlPlaneAIStatusV1,
     ControlPlaneStateV1,
+    ProjectQAControlPlaneResponseV1,
+    ProjectQASourceV1,
+    ProjectQAStateV1,
 )
 
 
@@ -129,6 +132,39 @@ def test_control_plane_normalizes_implementation_failures(tmp_path: Path) -> Non
     assert response.state == ControlPlaneStateV1.INTERNAL_ERROR
     assert response.error is not None
     assert response.error.reason_code == "STATUS_UNAVAILABLE"
+
+
+def test_project_qa_is_injected_read_only_and_validates_questions(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    calls: list[str] = []
+
+    def runner(
+        _paths: object, question: str, _workspace_context: object | None
+    ) -> ProjectQAControlPlaneResponseV1:
+        calls.append(question)
+        return ProjectQAControlPlaneResponseV1(
+            ProjectQAStateV1.OK,
+            question,
+            "RDE owns verified evidence.",
+            ("knowledge.record.statement",),
+            (ProjectQASourceV1("record", "Evidence", "VERSIONED_CONTRACT", "FROZEN"),),
+            (),
+            "a" * 64,
+            "mock",
+            "mock-model",
+            "VALID",
+        )
+
+    plane = ChappieControlPlaneV1(
+        paths, status_collector=lambda _paths: _status(), project_qa_runner=runner
+    )
+    response = plane.ask_project(" What owns evidence? ")
+    assert response.state == ProjectQAStateV1.OK
+    assert calls == ["What owns evidence?"]
+    assert response.payload()["authority"] == "AI_WITH_KNOWLEDGE_READ_ONLY"
+    assert plane.ask_project(" ").state == ProjectQAStateV1.VALIDATION_ERROR
+    assert plane.ask_project("x" * 1001).state == ProjectQAStateV1.VALIDATION_ERROR
+    assert calls == ["What owns evidence?"]
 
 
 def test_cli_ai_status_uses_control_plane_adapter(tmp_path: Path, monkeypatch, capsys) -> None:

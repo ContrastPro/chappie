@@ -199,6 +199,7 @@ def retrieve(
         KnowledgeContextRecordV1(
             item.knowledge_id,
             item.knowledge_type,
+            item.title,
             item.statement,
             item.authority,
             item.status,

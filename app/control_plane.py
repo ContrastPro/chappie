@@ -23,7 +23,8 @@ from app.bootstrap import (
     load_local_config,
 )
 
-CONTROL_PLANE_IDENTITY = "chappie_control_plane/1.0.0"
+CONTROL_PLANE_IDENTITY = "chappie_control_plane/1.2.0"
+PROJECT_QA_MAX_QUESTION_CHARACTERS = 1000
 
 
 class ControlPlaneStateV1(StrEnum):
@@ -40,12 +41,29 @@ class CapabilityStatusV1(StrEnum):
     PLANNED = "PLANNED"
 
 
+class ProjectQAStateV1(StrEnum):
+    OK = "OK"
+    KNOWLEDGE_UNAVAILABLE = "KNOWLEDGE_UNAVAILABLE"
+    AI_UNAVAILABLE = "AI_UNAVAILABLE"
+    TIMEOUT = "TIMEOUT"
+    VALIDATION_ERROR = "VALIDATION_ERROR"
+    INTERNAL_ERROR = "INTERNAL_ERROR"
+
+
 CONTROL_PLANE_CONTRACT_DIGEST = digest(
     {
         "identity": CONTROL_PLANE_IDENTITY,
         "states": [item.value for item in ControlPlaneStateV1],
         "capability_states": [item.value for item in CapabilityStatusV1],
-        "methods": ["get_status", "get_diagnostics", "get_ai_status", "get_capabilities"],
+        "project_qa_states": [item.value for item in ProjectQAStateV1],
+        "project_qa_workspace_context": "workspace_context/1.0.0",
+        "methods": [
+            "get_status",
+            "get_diagnostics",
+            "get_ai_status",
+            "get_capabilities",
+            "ask_project",
+        ],
         "authority": "read_only_application_projection",
     }
 )
@@ -161,6 +179,59 @@ class ControlPlaneCapabilitiesV1:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class ProjectQASourceV1:
+    record_id: str
+    title: str
+    authority: str
+    status: str
+
+    def payload(self) -> dict[str, str]:
+        return {
+            "record_id": self.record_id,
+            "title": self.title,
+            "authority": self.authority,
+            "status": self.status,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectQAControlPlaneResponseV1:
+    state: ProjectQAStateV1
+    question: str
+    answer: str | None = None
+    supporting_knowledge_fact_ids: tuple[str, ...] = ()
+    supporting_records: tuple[ProjectQASourceV1, ...] = ()
+    unknowns: tuple[str, ...] = ()
+    context_digest: str | None = None
+    provider: str | None = None
+    model: str | None = None
+    validation_status: str | None = None
+    error: ControlPlaneErrorV1 | None = None
+    workspace_context_digest: str | None = None
+    workspace_context_used: tuple[str, ...] = ()
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "identity": CONTROL_PLANE_IDENTITY,
+            "contract_digest": CONTROL_PLANE_CONTRACT_DIGEST,
+            "state": self.state.value,
+            "question": self.question,
+            "answer": self.answer,
+            "supporting_knowledge_fact_ids": list(self.supporting_knowledge_fact_ids),
+            "supporting_records": [item.payload() for item in self.supporting_records],
+            "unknowns": list(self.unknowns),
+            "context_digest": self.context_digest,
+            "workspace_context_digest": self.workspace_context_digest,
+            "workspace_context_used": list(self.workspace_context_used),
+            "provider": self.provider,
+            "model": self.model,
+            "authority": "AI_WITH_KNOWLEDGE_READ_ONLY",
+            "validation_status": self.validation_status,
+            "error": self.error.payload() if self.error else None,
+        }
+
+
 def _state(status: ChappieStatusV1) -> ControlPlaneStateV1:
     if status.overall_state.value == "READY":
         return ControlPlaneStateV1.OK
@@ -189,11 +260,14 @@ class ChappieControlPlaneV1:
         status_collector: Callable[[object], ChappieStatusV1],
         diagnostics_collector: Callable[[object], ChappieDoctorReportV1] = doctor,
         config_loader: Callable[[object], ChappieLocalConfigV1 | None] = load_local_config,
+        project_qa_runner: Callable[[object, str, object | None], ProjectQAControlPlaneResponseV1]
+        | None = None,
     ) -> None:
         self._paths = paths
         self._status_collector = status_collector
         self._diagnostics_collector = diagnostics_collector
         self._config_loader = config_loader
+        self._project_qa_runner = project_qa_runner or _run_project_qa
 
     def get_status(self) -> ControlPlaneStatusV1:
         try:
@@ -326,3 +400,136 @@ class ChappieControlPlaneV1:
             ),
         )
         return ControlPlaneCapabilitiesV1(_state(status), capabilities)
+
+    def ask_project(
+        self, question: str, workspace_context: object | None = None
+    ) -> ProjectQAControlPlaneResponseV1:
+        if (
+            not isinstance(question, str)
+            or not question.strip()
+            or len(question) > PROJECT_QA_MAX_QUESTION_CHARACTERS
+        ):
+            return ProjectQAControlPlaneResponseV1(
+                ProjectQAStateV1.VALIDATION_ERROR,
+                question if isinstance(question, str) else "",
+                error=ControlPlaneErrorV1(
+                    ControlPlaneStateV1.UNAVAILABLE, "INVALID_PROJECT_QA_QUESTION"
+                ),
+            )
+        try:
+            from app.workspace_context import parse_workspace_context
+
+            context = (
+                parse_workspace_context(workspace_context)
+                if workspace_context is not None
+                else None
+            )
+            return self._project_qa_runner(self._paths, question.strip(), context)
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return _project_qa_error(
+                ProjectQAStateV1.INTERNAL_ERROR, question.strip(), "PROJECT_QA_UNAVAILABLE"
+            )
+
+
+def _run_project_qa(
+    paths: object, question: str, workspace_context: object | None = None
+) -> ProjectQAControlPlaneResponseV1:
+    """Execute one bounded Project QA request over an existing verified Knowledge store."""
+    from app.ai.errors import AIProviderError, AIProviderTimeoutError, AIValidationError
+    from app.ai_setup_smoke import build_configured_chappie_ai, valid_setup_ai_config
+    from app.knowledge import read_store
+    from app.knowledge_retrieval import KnowledgeRetrievalRequestV1, retrieve
+
+    config = load_local_config(paths)
+    if config is None or not valid_setup_ai_config(config):
+        return _project_qa_error(ProjectQAStateV1.AI_UNAVAILABLE, question, "AI_UNAVAILABLE")
+    try:
+        records, knowledge_manifest = read_store(paths.knowledge_file)
+        _result, context = retrieve(
+            records,
+            knowledge_manifest,
+            KnowledgeRetrievalRequestV1(topic_tokens=_question_tokens(question)),
+        )
+    except ValueError:
+        return _project_qa_error(
+            ProjectQAStateV1.KNOWLEDGE_UNAVAILABLE, question, "KNOWLEDGE_UNAVAILABLE"
+        )
+    if not context.records:
+        return _project_qa_error(
+            ProjectQAStateV1.KNOWLEDGE_UNAVAILABLE, question, "KNOWLEDGE_UNAVAILABLE"
+        )
+    ai = None
+    try:
+        ai = build_configured_chappie_ai(config)
+        answer = ai.answer_project_qa(
+            question=question, knowledge_context=context, workspace_context=workspace_context
+        )
+    except AIProviderTimeoutError:
+        return _project_qa_error(ProjectQAStateV1.TIMEOUT, question, "AI_TIMEOUT")
+    except AIProviderError:
+        return _project_qa_error(ProjectQAStateV1.AI_UNAVAILABLE, question, "AI_UNAVAILABLE")
+    except AIValidationError:
+        return _project_qa_error(
+            ProjectQAStateV1.VALIDATION_ERROR, question, "PROJECT_QA_VALIDATION_ERROR"
+        )
+    finally:
+        if ai is not None:
+            ai.close()
+    supported_ids = {
+        fields[1]
+        for fact_id in answer.supporting_knowledge_fact_ids
+        if len(fields := fact_id.split(".")) >= 3 and fields[0] == "knowledge"
+    }
+    sources = tuple(
+        ProjectQASourceV1(item.knowledge_id, item.title, item.authority.value, item.status.value)
+        for item in context.records
+        if item.knowledge_id in supported_ids
+    )
+    return ProjectQAControlPlaneResponseV1(
+        ProjectQAStateV1.OK,
+        question,
+        answer.answer,
+        answer.supporting_knowledge_fact_ids,
+        sources,
+        answer.unknowns,
+        answer.context_digest,
+        config.provider,
+        config.model,
+        "VALID",
+        None,
+        workspace_context.context_digest if workspace_context else None,
+        _workspace_provenance(workspace_context),
+    )
+
+
+def _question_tokens(question: str) -> tuple[str, ...]:
+    return tuple(sorted({token.casefold() for token in question.split() if token.isalnum()}))[:16]
+
+
+def _project_qa_error(
+    state: ProjectQAStateV1, question: str, reason_code: str
+) -> ProjectQAControlPlaneResponseV1:
+    return ProjectQAControlPlaneResponseV1(
+        state,
+        question,
+        error=ControlPlaneErrorV1(ControlPlaneStateV1.UNAVAILABLE, reason_code),
+    )
+
+
+def _workspace_provenance(workspace_context: object | None) -> tuple[str, ...]:
+    if workspace_context is None:
+        return ()
+    values = []
+    if workspace_context.active_file_relative_path:
+        values.append(workspace_context.active_file_relative_path)
+    if workspace_context.selected_text_range:
+        values.append(
+            f"selection lines {workspace_context.selected_text_range.start_line}-{workspace_context.selected_text_range.end_line}"
+        )
+    elif workspace_context.excerpt_range:
+        values.append(
+            f"excerpt lines {workspace_context.excerpt_range.start_line}-{workspace_context.excerpt_range.end_line}"
+        )
+    if workspace_context.git_branch:
+        values.append(f"git {workspace_context.git_branch}")
+    return tuple(values)

@@ -40,6 +40,11 @@ project-knowledge index. It is separate from AI prompts and runtime state.
 [Chappie Local Control Plane v1](control_plane/README.md) is the frontend-neutral,
 read-only application boundary for current CLI status and future local consumers.
 
+## VS Code
+
+[Chappie VS Code Extension v1](vscode/README.md) consumes the local Control Plane for
+read-only connection, status, diagnostics, and capability visibility.
+
 ## Historical evidence
 
 Completed milestone and Stage 4/M4.10 evidence is indexed in

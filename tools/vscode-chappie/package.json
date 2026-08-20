@@ -1,0 +1,114 @@
+{
+  "name": "vscode-chappie",
+  "displayName": "Chappie",
+  "description": "Local Chappie Control Plane companion.",
+  "version": "0.1.0",
+  "publisher": "chappie-local",
+  "engines": {
+    "vscode": "^1.95.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "workspaceContains:**/app/cli.py",
+    "onView:chappie.status",
+    "onCommand:chappie.refresh",
+    "onCommand:chappie.startLocalControlPlane",
+    "onCommand:chappie.stopLocalControlPlane",
+    "onCommand:chappie.showDoctor",
+    "onCommand:chappie.showCapabilities",
+    "onCommand:chappie.showSetupInstructions",
+    "onCommand:chappie.openView"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "chappie.refresh",
+        "title": "Chappie: Refresh"
+      },
+      {
+        "command": "chappie.startLocalControlPlane",
+        "title": "Chappie: Start Local Control Plane"
+      },
+      {
+        "command": "chappie.stopLocalControlPlane",
+        "title": "Chappie: Stop Local Control Plane"
+      },
+      {
+        "command": "chappie.showDoctor",
+        "title": "Chappie: Show Doctor"
+      },
+      {
+        "command": "chappie.showCapabilities",
+        "title": "Chappie: Show Capabilities"
+      },
+      {
+        "command": "chappie.showSetupInstructions",
+        "title": "Chappie: Show Setup Instructions"
+      },
+      {
+        "command": "chappie.openView",
+        "title": "Chappie: Open View"
+      }
+    ],
+    "configuration": {
+      "title": "Chappie",
+      "properties": {
+        "chappie.controlPlane.port": {
+          "type": "number",
+          "default": 8765,
+          "minimum": 1,
+          "maximum": 65535,
+          "description": "Local Chappie Control Plane port. The host is always 127.0.0.1."
+        },
+        "chappie.autoConnect": {
+          "type": "boolean",
+          "default": true,
+          "description": "Probe the local Chappie Control Plane when the extension activates."
+        },
+        "chappie.autoStartControlPlane": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start only a recognized Chappie workspace's local Control Plane when unavailable."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "chappie",
+          "title": "Chappie",
+          "icon": "resources/chappie.svg"
+        }
+      ]
+    },
+    "views": {
+      "chappie": [
+        {
+          "id": "chappie.status",
+          "name": "Chappie Status"
+        },
+        {
+          "id": "chappie.chat",
+          "name": "Chappie Chat",
+          "type": "webview"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -watch -p .",
+    "test": "npm run compile && node --test out/test/*.test.js",
+    "lint": "tsc --noEmit -p .",
+    "package": "vsce package --out chappie-local.vsix"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/vscode": "^1.95.0",
+    "@vscode/vsce": "^3.9.2",
+    "typescript": "^5.7.0"
+  }
+}

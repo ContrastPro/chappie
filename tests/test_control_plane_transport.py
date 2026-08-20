@@ -19,7 +19,13 @@ from app.bootstrap import (
     HardwareProfileV1,
     InstallationStateV1,
 )
-from app.control_plane import ChappieControlPlaneV1
+from app.control_plane import (
+    CONTROL_PLANE_IDENTITY,
+    ChappieControlPlaneV1,
+    ProjectQAControlPlaneResponseV1,
+    ProjectQASourceV1,
+    ProjectQAStateV1,
+)
 from app.control_plane_transport import (
     CONTROL_PLANE_TRANSPORT_DIGEST,
     CONTROL_PLANE_TRANSPORT_IDENTITY,
@@ -51,10 +57,26 @@ class _FakeControlPlane:
     def get_capabilities(self) -> _Response:
         return _Response("capabilities")
 
+    def ask_project(
+        self, question: str, _workspace_context: object | None = None
+    ) -> ProjectQAControlPlaneResponseV1:
+        return ProjectQAControlPlaneResponseV1(
+            ProjectQAStateV1.OK,
+            question,
+            "RDE owns evidence authority.",
+            ("knowledge.record.statement",),
+            (ProjectQASourceV1("record", "Evidence authority", "VERSIONED_CONTRACT", "FROZEN"),),
+            ("No execution authority is granted.",),
+            "a" * 64,
+            "mock",
+            "mock-model",
+            "VALID",
+        )
 
-def _request(server: ChappieControlPlaneServerV1, method: str, path: str):
+
+def _request(server: ChappieControlPlaneServerV1, method: str, path: str, body: str | None = None):
     connection = http.client.HTTPConnection(LOOPBACK_HOST, server.port, timeout=2)
-    connection.request(method, path)
+    connection.request(method, path, body=body, headers={"Content-Type": "application/json"})
     response = connection.getresponse()
     body = json.loads(response.read())
     headers = dict(response.getheaders())
@@ -99,7 +121,7 @@ def test_health_is_minimal_version_handshake_without_control_plane_call(server) 
     status, _headers, body = _request(server, "GET", "/v1/health")
     assert status == 200
     assert body["data"] == {"status": "OK"}
-    assert body["control_plane_contract"] == "chappie_control_plane/1.0.0"
+    assert body["control_plane_contract"] == CONTROL_PLANE_IDENTITY
     assert len(body["control_plane_contract_digest"]) == 64
 
 
@@ -110,7 +132,37 @@ def test_unknown_and_mutating_routes_return_safe_json_errors(server) -> None:
     assert body["error"] == {"code": "NOT_FOUND", "message": "Control Plane route not found"}
     status, _headers, body = _request(server, "POST", "/v1/status")
     assert status == 405
-    assert body["error"] == {"code": "METHOD_NOT_ALLOWED", "message": "Only GET is supported"}
+    assert body["error"] == {
+        "code": "METHOD_NOT_ALLOWED",
+        "message": "Control Plane method is not supported",
+    }
+
+
+def test_project_qa_post_is_strict_and_serializes_grounded_response(server) -> None:
+    status, _headers, body = _request(
+        server, "POST", "/v1/project/qa", json.dumps({"question": "Who owns evidence?"})
+    )
+    assert status == 200
+    assert body["data"]["answer"] == "RDE owns evidence authority."
+    assert body["data"]["supporting_records"] == [
+        {
+            "record_id": "record",
+            "title": "Evidence authority",
+            "authority": "VERSIONED_CONTRACT",
+            "status": "FROZEN",
+        }
+    ]
+    status, _headers, body = _request(server, "POST", "/v1/project/qa", "{")
+    assert status == 400
+    assert body["error"]["code"] == "INVALID_REQUEST"
+    status, _headers, body = _request(
+        server,
+        "POST",
+        "/v1/project/qa",
+        json.dumps({"question": "valid", "unexpected": True}),
+    )
+    assert status == 400
+    assert body["error"]["code"] == "INVALID_REQUEST"
 
 
 def test_safe_control_plane_failure_never_leaks_exception(server) -> None:

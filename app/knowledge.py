@@ -212,6 +212,7 @@ class KnowledgeManifestV1:
 class KnowledgeContextRecordV1:
     knowledge_id: str
     knowledge_type: KnowledgeTypeV1
+    title: str
     statement: str
     authority: KnowledgeAuthorityV1
     status: KnowledgeStatusV1
@@ -518,6 +519,7 @@ def context(records: tuple[KnowledgeRecordV1, ...]) -> KnowledgeContextV1:
         KnowledgeContextRecordV1(
             item.knowledge_id,
             item.knowledge_type,
+            item.title,
             item.statement,
             item.authority,
             item.status,

@@ -161,17 +161,28 @@ class ChappieAI:
         self.router.close()
 
     def answer_project_qa(
-        self, *, question: str, knowledge_context, request_id: str | None = None
+        self,
+        *,
+        question: str,
+        knowledge_context,
+        workspace_context=None,
+        request_id: str | None = None,
     ) -> ProjectQAAnswerV1:
         if not question.strip():
             raise AIValidationError("project QA question is required")
         task = AITask.PROJECT_QA_V1
         contract = task_contract(task)
-        facts = knowledge_facts(knowledge_context, datetime.now(tz=UTC))
+        now = datetime.now(tz=UTC)
+        facts = knowledge_facts(knowledge_context, now) + (
+            workspace_context.facts(now) if workspace_context is not None else ()
+        )
         payload = {
             "task": task.value,
             "question": question,
             "context_digest": knowledge_context.context_digest,
+            "workspace_context_digest": workspace_context.context_digest
+            if workspace_context
+            else None,
             "facts": [x.payload() for x in facts],
             "prompt": contract.prompt_identity,
         }
@@ -182,7 +193,11 @@ class ChappieAI:
             system_instruction(contract),
             contract.prompt_identity,
             facts,
-            {"question": question, "knowledge_context_digest": knowledge_context.context_digest},
+            {
+                "question": question,
+                "knowledge_context_digest": knowledge_context.context_digest,
+                "workspace_context": workspace_context.payload() if workspace_context else None,
+            },
             PROJECT_QA_JSON_SCHEMA,
             self.config.temperature,
             self.config.timeout_seconds,

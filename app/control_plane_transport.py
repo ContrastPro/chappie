@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import errno
+import json
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -10,7 +11,7 @@ from typing import Any
 from app.ai.schemas import canonical_json, digest
 from app.control_plane import CONTROL_PLANE_CONTRACT_DIGEST, CONTROL_PLANE_IDENTITY
 
-CONTROL_PLANE_TRANSPORT_IDENTITY = "chappie_control_plane_transport/1.0.0"
+CONTROL_PLANE_TRANSPORT_IDENTITY = "chappie_control_plane_transport/1.2.0"
 LOOPBACK_HOST = "127.0.0.1"
 DEFAULT_CONTROL_PLANE_PORT = 8765
 CONTROL_PLANE_TRANSPORT_DIGEST = digest(
@@ -25,7 +26,8 @@ CONTROL_PLANE_TRANSPORT_DIGEST = digest(
                 "/v1/diagnostics",
                 "/v1/ai/status",
                 "/v1/capabilities",
-            ]
+            ],
+            "POST": ["/v1/project/qa"],
         },
         "cors": "omitted",
         "authority": "read_only_transport_adapter",
@@ -91,7 +93,7 @@ class ChappieControlPlaneServerV1:
                 transport._handle_get(self)
 
             def do_POST(self) -> None:
-                transport._method_not_allowed(self)
+                transport._handle_post(self)
 
             def do_PUT(self) -> None:
                 transport._method_not_allowed(self)
@@ -194,9 +196,71 @@ class ChappieControlPlaneServerV1:
             405,
             _envelope(
                 request_id=uuid.uuid4().hex,
-                error=ControlPlaneTransportErrorV1("METHOD_NOT_ALLOWED", "Only GET is supported"),
+                error=ControlPlaneTransportErrorV1(
+                    "METHOD_NOT_ALLOWED", "Control Plane method is not supported"
+                ),
             ),
         )
+
+    def _handle_post(self, handler: BaseHTTPRequestHandler) -> None:
+        request_id = uuid.uuid4().hex
+        if handler.path != "/v1/project/qa":
+            self._method_not_allowed(handler)
+            return
+        try:
+            content_length = int(handler.headers.get("Content-Length", ""))
+            if content_length < 1 or content_length > 2048:
+                raise ValueError
+            value = json.loads(handler.rfile.read(content_length))
+            if (
+                not isinstance(value, dict)
+                or set(value).difference({"question", "workspace_context"})
+                or "question" not in value
+            ):
+                raise ValueError
+            question = value["question"]
+            if not isinstance(question, str):
+                raise TypeError
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            self._write(
+                handler,
+                400,
+                _envelope(
+                    request_id=request_id,
+                    error=ControlPlaneTransportErrorV1(
+                        "INVALID_REQUEST", "Project QA request must contain one bounded question"
+                    ),
+                ),
+            )
+            return
+        try:
+            response = self._control_plane.ask_project(question, value.get("workspace_context"))
+            payload = response.payload()
+            if response.error is not None:
+                status = 400 if response.state.value == "VALIDATION_ERROR" else 503
+                self._write(
+                    handler,
+                    status,
+                    _envelope(
+                        request_id=request_id,
+                        error=ControlPlaneTransportErrorV1(
+                            response.error.reason_code, "Project QA is unavailable"
+                        ),
+                    ),
+                )
+                return
+            self._write(handler, 200, _envelope(request_id=request_id, data=payload))
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            self._write(
+                handler,
+                500,
+                _envelope(
+                    request_id=request_id,
+                    error=ControlPlaneTransportErrorV1(
+                        "INTERNAL_ERROR", "Project QA request could not be completed"
+                    ),
+                ),
+            )
 
     @staticmethod
     def _write(handler: BaseHTTPRequestHandler, status: int, payload: dict[str, object]) -> None:
