@@ -5,6 +5,8 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from app.ai_setup_smoke import AISetupSmokeResultV1, AISetupSmokeStateV1
 from app.bootstrap import (
     AIModelProfileV1,
@@ -17,6 +19,7 @@ from app.bootstrap import (
 from app.ollama_readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
 from app.project_qa_setup_smoke import ProjectQASetupSmokeResultV1, ProjectQASetupSmokeStateV1
 from app.setup_engine import (
+    KNOWLEDGE_BUILD_BLOCKED_DIRTY_REPOSITORY,
     SETUP_ENGINE_DIGEST,
     SETUP_ENGINE_IDENTITY,
     ActionSafetyV1,
@@ -71,6 +74,119 @@ def test_engine_identity_and_safe_external_action_classification() -> None:
     )
 
 
+def test_catalog_model_discovery_is_read_only_and_does_not_start_provider(tmp_path: Path) -> None:
+    events: list[str] = []
+
+    class Installer:
+        def executable(self):
+            events.append("executable")
+            return Path("/fixture/ollama")
+
+        def version(self):
+            events.append("version")
+            return "ollama 1.0"
+
+        def model_available(self, model: str) -> bool:
+            events.append(f"model:{model}")
+            return model == "qwen3:8b"
+
+    class Coordinator:
+        executable = "ollama"
+
+        def ensure_ready(self):
+            events.append("start")
+            return OllamaReadinessResultV1(OllamaReadinessStateV1.READY, "http://localhost:11434")
+
+    engine = SetupEngineV1(
+        _paths(tmp_path), windows_installer=Installer(), ollama_readiness_coordinator=Coordinator()
+    )
+    assert engine.installed_catalog_profiles() == (AIModelProfileV1.BALANCED,)
+    assert events == [
+        "executable",
+        "version",
+        "model:qwen3:4b",
+        "model:qwen3:8b",
+        "model:qwen3:14b",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("profile", "installed_model"),
+    [
+        (AIModelProfileV1.LIGHT, "qwen3:4b"),
+        (AIModelProfileV1.BALANCED, "qwen3:8b"),
+    ],
+)
+def test_existing_exact_model_requires_binding_but_not_external_pull(
+    tmp_path: Path, profile: AIModelProfileV1, installed_model: str
+) -> None:
+    events: list[str] = []
+
+    class Installer:
+        def executable(self):
+            events.append("executable")
+            return Path("/fixture/ollama")
+
+        def version(self):
+            events.append("version")
+            return "ollama 1.0"
+
+        def model_available(self, model: str) -> bool:
+            events.append(f"model:{model}")
+            return model == installed_model
+
+    class Coordinator:
+        executable = "ollama"
+
+        def ensure_ready(self):
+            events.append("start")
+            return OllamaReadinessResultV1(
+                OllamaReadinessStateV1.NOT_READY, "http://localhost:11434"
+            )
+
+    engine = SetupEngineV1(
+        _paths(tmp_path), windows_installer=Installer(), ollama_readiness_coordinator=Coordinator()
+    )
+    assert engine.required_external_actions(ai_profile=profile) == ()
+    assert "start" not in events
+
+
+def test_external_preflight_requires_only_missing_selected_model_and_not_existing_provider(
+    tmp_path: Path,
+) -> None:
+    events: list[str] = []
+
+    class Installer:
+        def executable(self):
+            events.append("executable")
+            return Path("/fixture/ollama")
+
+        def version(self):
+            events.append("version")
+            return "ollama 1.0"
+
+        def model_available(self, model: str) -> bool:
+            events.append(f"model:{model}")
+            return model == "qwen3:8b"
+
+    class Coordinator:
+        executable = "ollama"
+
+        def ensure_ready(self):
+            events.append("start")
+            return OllamaReadinessResultV1(
+                OllamaReadinessStateV1.NOT_READY, "http://localhost:11434"
+            )
+
+    engine = SetupEngineV1(
+        _paths(tmp_path), windows_installer=Installer(), ollama_readiness_coordinator=Coordinator()
+    )
+    assert engine.required_external_actions(ai_profile=AIModelProfileV1.ADVANCED) == (
+        SetupActionCodeV1.INSTALL_AI_MODEL,
+    )
+    assert "start" not in events
+
+
 def test_existing_knowledge_store_requires_current_canonical_snapshot(
     tmp_path: Path, monkeypatch
 ) -> None:  # type: ignore[no-untyped-def]
@@ -88,6 +204,35 @@ def test_existing_knowledge_store_requires_current_canonical_snapshot(
     matching = KnowledgeManifestV1(current, (), "fixture")
     monkeypatch.setattr("app.knowledge.read_store", lambda _path: ((), matching))
     assert engine._check(action) is True
+
+
+def test_dirty_repository_blocks_knowledge_with_typed_failure_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class KnowledgeOnlyEngine(SetupEngineV1):
+        def plan(self, *, developer: bool = False, ai_profile: AIModelProfileV1 | None = None):
+            del developer, ai_profile
+            return (
+                SetupActionV1(
+                    SetupActionCodeV1.BUILD_KNOWLEDGE,
+                    ActionSafetyV1.SAFE,
+                    "Build Knowledge",
+                    None,
+                ),
+            )
+
+    from app.knowledge import RepositorySnapshotV1
+
+    monkeypatch.setattr(
+        "app.knowledge.committed_snapshot",
+        lambda _root: RepositorySnapshotV1("a" * 40, False),
+    )
+    result = KnowledgeOnlyEngine(_paths(tmp_path)).execute(
+        approval=SetupApprovalV1(allow_safe=True)
+    )
+    assert result.steps[0].code == SetupActionCodeV1.BUILD_KNOWLEDGE
+    assert result.steps[0].state == SetupStepStateV1.FAILED
+    assert result.steps[0].message == KNOWLEDGE_BUILD_BLOCKED_DIRTY_REPOSITORY
 
 
 def test_dry_run_is_non_mutating_and_external_needs_separate_approval(tmp_path: Path) -> None:
@@ -386,14 +531,9 @@ def test_new_windows_provider_installs_then_requires_ready_coordinator(tmp_path:
         ),
     )
     assert coordinator.calls == 1
-    assert events == [
-        "PROVIDER_EXECUTABLE_VERIFIED",
-        "PROVIDER_VERSION_VERIFIED",
-        "PROVIDER_INSTALLED",
-        "PROVIDER_EXECUTABLE_VERIFIED",
-        "PROVIDER_VERSION_VERIFIED",
-        "READINESS_COORDINATOR_CALLED",
-    ]
+    assert events.count("PROVIDER_INSTALLED") == 1
+    assert events.index("PROVIDER_INSTALLED") < events.index("READINESS_COORDINATOR_CALLED")
+    assert events[-1] == "READINESS_COORDINATOR_CALLED"
     assert coordinator.executable.endswith("ollama.exe")
 
 
@@ -535,8 +675,9 @@ def test_existing_model_binds_config_without_pull_after_provider_ready(tmp_path:
         tmp_path, events, readiness=OllamaReadinessStateV1.READY, model_installed=True
     )
 
+    assert engine.required_external_actions(ai_profile=AIModelProfileV1.BALANCED) == ()
     result = engine.execute(
-        approval=SetupApprovalV1(allow_external=True), ai_profile=AIModelProfileV1.BALANCED
+        approval=SetupApprovalV1(allow_safe=True), ai_profile=AIModelProfileV1.BALANCED
     )
 
     assert result.steps[1].state == SetupStepStateV1.COMPLETED

@@ -508,7 +508,7 @@ def collect_status(paths: ChappiePaths | None = None) -> ChappieStatusV1:
     paths = paths or ChappiePaths.resolve()
     hardware = detect_hardware(paths)
     config, config_status = _config_status(paths)
-    ai_provider = _ai_provider_status(config)
+    ai_provider = _ai_provider_status(config, platform_name=hardware.operating_system)
     components = (
         _operating_system_status(hardware),
         _python_status(),
@@ -519,7 +519,7 @@ def collect_status(paths: ChappiePaths | None = None) -> ChappieStatusV1:
         _knowledge_status(paths),
         _research_status(paths),
         ai_provider,
-        _ai_model_status(config, ai_provider),
+        _ai_model_status(config, ai_provider, platform_name=hardware.operating_system),
         _disk_status(hardware),
     )
     state = aggregate_installation_state(components)
@@ -846,7 +846,9 @@ def _research_status(paths: ChappiePaths) -> ComponentStatusV1:
     )
 
 
-def _ai_provider_status(config: ChappieLocalConfigV1 | None) -> ComponentStatusV1:
+def _ai_provider_status(
+    config: ChappieLocalConfigV1 | None, *, platform_name: str | None = None
+) -> ComponentStatusV1:
     if config is None or config.provider is None:
         return _status(
             "AI_PROVIDER", ComponentStateV1.NOT_CONFIGURED, False, "AI provider not configured"
@@ -860,9 +862,16 @@ def _ai_provider_status(config: ChappieLocalConfigV1 | None) -> ComponentStatusV
             detected=config.provider,
         )
     from app.ollama_readiness import OllamaReadinessProbe, OllamaReadinessStateV1
-    from app.windows_ollama import WindowsOllamaInstallerV1
 
-    installer = WindowsOllamaInstallerV1(interactive_output=False)
+    installer = _ollama_installer(platform_name)
+    if installer is None:
+        return _status(
+            "AI_PROVIDER",
+            ComponentStateV1.UNKNOWN,
+            True,
+            "Ollama inspection is unsupported on this platform",
+            config.provider,
+        )
     executable = installer.executable()
     if executable is None:
         return _status(
@@ -905,8 +914,24 @@ def _ai_provider_status(config: ChappieLocalConfigV1 | None) -> ComponentStatusV
     )
 
 
+def _ollama_installer(platform_name: str | None = None):
+    """Return the current platform's local Ollama inspector, never an installer action."""
+    if (platform_name or platform.system()) == "Windows":
+        from app.windows_ollama import WindowsOllamaInstallerV1
+
+        return WindowsOllamaInstallerV1(interactive_output=False)
+    if (platform_name or platform.system()) == "Darwin":
+        from app.macos_ollama import MacOllamaInstallerV1
+
+        return MacOllamaInstallerV1(interactive_output=False)
+    return None
+
+
 def _ai_model_status(
-    config: ChappieLocalConfigV1 | None, provider_status: ComponentStatusV1
+    config: ChappieLocalConfigV1 | None,
+    provider_status: ComponentStatusV1,
+    *,
+    platform_name: str | None = None,
 ) -> ComponentStatusV1:
     if config is None or config.model is None:
         return _status(
@@ -929,9 +954,8 @@ def _ai_model_status(
             RemediationCodeV1.START_AI_PROVIDER,
             config.model,
         )
-    from app.windows_ollama import WindowsOllamaInstallerV1
-
-    available = WindowsOllamaInstallerV1(interactive_output=False).model_available(config.model)
+    installer = _ollama_installer(platform_name)
+    available = installer.model_available(config.model) if installer is not None else False
     return _status(
         "AI_MODEL",
         ComponentStateV1.READY if available else ComponentStateV1.NOT_INSTALLED,

@@ -28,11 +28,13 @@ from app.bootstrap import (
     SetupStepStateV1,
     load_local_config,
 )
+from app.macos_ollama import MacOllamaInstallerV1
 from app.ollama_readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
 from app.project_qa_setup_smoke import ProjectQASetupSmokeStateV1, ProjectQASetupSmokeV1
 from app.windows_ollama import WindowsOllamaInstallerV1
 
 SETUP_ENGINE_IDENTITY = "chappie_setup_engine/1.0.0"
+KNOWLEDGE_BUILD_BLOCKED_DIRTY_REPOSITORY = "KNOWLEDGE_BUILD_BLOCKED_DIRTY_REPOSITORY"
 
 
 class ActionSafetyV1(StrEnum):
@@ -264,6 +266,7 @@ class SetupEngineV1:
         *,
         runner=subprocess.run,
         windows_installer: WindowsOllamaInstallerV1 | None = None,
+        macos_installer: MacOllamaInstallerV1 | None = None,
         ollama_readiness_coordinator: OllamaReadinessCoordinator | None = None,
         smoke: ChappieAISetupSmokeV1 | object | None = None,
         project_qa_smoke: ProjectQASetupSmokeV1 | object | None = None,
@@ -271,6 +274,7 @@ class SetupEngineV1:
         self.paths = paths
         self._runner = runner
         self._windows_installer = windows_installer
+        self._macos_installer = macos_installer
         self._ollama_readiness_coordinator = ollama_readiness_coordinator
         self._smoke = smoke
         self._project_qa_smoke = project_qa_smoke
@@ -283,9 +287,11 @@ class SetupEngineV1:
     def required_external_actions(
         self, *, ai_profile: AIModelProfileV1 | None = None
     ) -> tuple[SetupActionCodeV1, ...]:
-        """Return external action codes that are not already satisfied for this plan.
+        """Return only download/install actions still required by the current plan.
 
-        This is a pure planning helper used by CLI consent gating.
+        This read-only preflight intentionally differs from execution readiness:
+        an installed model without a bound Chappie config still needs binding and
+        smoke verification, but it must never be classified as a model pull.
         """
 
         previous_profile = getattr(self, "_profile", None)
@@ -295,9 +301,15 @@ class SetupEngineV1:
             required: list[SetupActionCodeV1] = []
             for action in self.plan(ai_profile=profile):
                 if action.code == SetupActionCodeV1.INSTALL_AI_PROVIDER:
-                    if action.safety == ActionSafetyV1.EXTERNAL and not self._check(action):
+                    if (
+                        action.safety == ActionSafetyV1.EXTERNAL
+                        and self._provider_install_required()
+                    ):
                         required.append(action.code)
-                elif action.code == SetupActionCodeV1.INSTALL_AI_MODEL and not self._check(action):
+                elif (
+                    action.code == SetupActionCodeV1.INSTALL_AI_MODEL
+                    and self._model_pull_required()
+                ):
                     required.append(action.code)
             return tuple(dict.fromkeys(required))
         finally:
@@ -306,6 +318,26 @@ class SetupEngineV1:
                     delattr(self, "_profile")
             else:
                 self._profile = previous_profile
+
+    def installed_catalog_profiles(self) -> tuple[AIModelProfileV1, ...]:
+        """Read-only discovery of exact locally installed catalog model identities.
+
+        This deliberately does not call the readiness coordinator or pull a model;
+        it is safe to use before an interactive profile decision on every platform.
+        """
+        installer = self._ollama_installer()
+        if installer is None or installer.executable() is None or installer.version() is None:
+            return ()
+        profiles: list[AIModelProfileV1] = []
+        for profile in (
+            AIModelProfileV1.LIGHT,
+            AIModelProfileV1.BALANCED,
+            AIModelProfileV1.ADVANCED,
+        ):
+            model = self._model_for_profile(profile)
+            if model is not None and installer.model_available(model):
+                profiles.append(profile)
+        return tuple(profiles)
 
     def execute(
         self,
@@ -348,7 +380,7 @@ class SetupEngineV1:
             ready = self._check(action)
             if ready:
                 result = SetupStepResultV1(action.code, SetupStepStateV1.SKIPPED, "ALREADY_READY")
-            elif not approval.permits(action.safety):
+            elif not self._approval_permits(action, approval):
                 result = SetupStepResultV1(
                     action.code,
                     SetupStepStateV1.SKIPPED,
@@ -371,7 +403,7 @@ class SetupEngineV1:
                     result = SetupStepResultV1(
                         action.code,
                         SetupStepStateV1.FAILED,
-                        f"FAILED:{type(error).__name__}",
+                        self._failure_reason(action, error),
                         round((time.monotonic() - started) * 1000),
                     )
             results.append(result)
@@ -430,9 +462,9 @@ class SetupEngineV1:
             except (OSError, ValueError, subprocess.SubprocessError):
                 return False
         if action.code == SetupActionCodeV1.INSTALL_AI_PROVIDER:
-            if self._windows_installer is not None:
-                executable = self._windows_installer.executable()
-                if executable is None or self._windows_installer.version() is None:
+            if installer := self._ollama_installer():
+                executable = installer.executable()
+                if executable is None or installer.version() is None:
                     return False
                 if self._ollama_readiness_coordinator is None:
                     return False
@@ -445,9 +477,9 @@ class SetupEngineV1:
         if action.code == SetupActionCodeV1.INSTALL_AI_MODEL:
             model = self._selected_model()
             return bool(
-                self._windows_installer
+                (installer := self._ollama_installer())
                 and model
-                and self._windows_installer.model_available(model)
+                and installer.model_available(model)
                 and self._config_is_bound(model)
             )
         if action.code == SetupActionCodeV1.VERIFY_AI:
@@ -467,28 +499,28 @@ class SetupEngineV1:
     ) -> None:
         if (
             action.code == SetupActionCodeV1.INSTALL_AI_PROVIDER
-            and self._windows_installer is not None
+            and (installer := self._ollama_installer()) is not None
         ):
-            if self._windows_installer.version() is not None:
+            if installer.version() is not None:
                 raise RuntimeError("installed Ollama provider is not runtime ready")
-            result = self._windows_installer.install(allow_external=True)
+            result = installer.install(allow_external=True)
             if result.status.value != "COMPLETED":
                 raise RuntimeError(result.error_code or "provider install failed")
             return
         if (
             action.code == SetupActionCodeV1.INSTALL_AI_MODEL
-            and self._windows_installer is not None
+            and (installer := self._ollama_installer()) is not None
         ):
             if not getattr(self, "_provider_runtime_ready", False):
                 raise RuntimeError("Ollama provider runtime is not ready")
             model = self._selected_model()
             if not model:
                 raise RuntimeError("no selected model")
-            if not self._windows_installer.model_available(model):
-                result = self._windows_installer.pull_model(model, allow_external=True)
+            if not installer.model_available(model):
+                result = installer.pull_model(model, allow_external=True)
                 if result.status.value != "COMPLETED":
                     raise RuntimeError("model pull failed")
-            if not self._windows_installer.model_available(model):
+            if not installer.model_available(model):
                 raise RuntimeError("model verification failed")
             self._bind_config(model, ai_profile)
             return
@@ -548,12 +580,68 @@ class SetupEngineV1:
         else:
             raise RuntimeError("unsupported safe setup action")
 
+    def _ollama_installer(self) -> WindowsOllamaInstallerV1 | MacOllamaInstallerV1 | None:
+        return self._windows_installer or self._macos_installer
+
+    def _provider_install_required(self) -> bool:
+        """Read-only distinction between a missing provider and a non-ready runtime."""
+        installer = self._ollama_installer()
+        if installer is not None:
+            return installer.executable() is None or installer.version() is None
+        return OllamaInstallerV1().detect() != ComponentStateV1.DEGRADED
+
+    def _model_pull_required(self) -> bool:
+        """Read-only exact-model check; configuration binding is a later local step."""
+        model = self._selected_model()
+        installer = self._ollama_installer()
+        return not bool(installer and model and installer.model_available(model))
+
+    def _approval_safety(self, action: SetupActionV1) -> ActionSafetyV1:
+        """Keep consent scoped to genuine provider installation or model download."""
+        if action.code == SetupActionCodeV1.INSTALL_AI_PROVIDER:
+            if self._ollama_installer() is None:
+                return action.safety
+            return (
+                ActionSafetyV1.EXTERNAL
+                if self._provider_install_required()
+                else ActionSafetyV1.SAFE
+            )
+        if action.code == SetupActionCodeV1.INSTALL_AI_MODEL:
+            if self._ollama_installer() is None:
+                return action.safety
+            return ActionSafetyV1.EXTERNAL if self._model_pull_required() else ActionSafetyV1.SAFE
+        if action.code in {SetupActionCodeV1.VERIFY_AI, SetupActionCodeV1.PROJECT_QA_SMOKE}:
+            return ActionSafetyV1.SAFE
+        return action.safety
+
+    def _approval_permits(self, action: SetupActionV1, approval: SetupApprovalV1) -> bool:
+        safety = self._approval_safety(action)
+        # Explicit external authorization is stronger than safe local approval,
+        # but --yes never authorizes an external install or pull.
+        return approval.permits(safety) or (
+            safety == ActionSafetyV1.SAFE and approval.allow_external
+        )
+
+    @staticmethod
+    def _failure_reason(action: SetupActionV1, error: Exception) -> str:
+        if (
+            action.code == SetupActionCodeV1.BUILD_KNOWLEDGE
+            and isinstance(error, ValueError)
+            and str(error) == "REFUSE_CANONICAL_INGESTION: repository working tree is dirty"
+        ):
+            return KNOWLEDGE_BUILD_BLOCKED_DIRTY_REPOSITORY
+        return f"FAILED:{type(error).__name__}"
+
     def _selected_model(self) -> str | None:
+        return self._model_for_profile(getattr(self, "_profile", AIModelProfileV1.BALANCED))
+
+    @staticmethod
+    def _model_for_profile(profile: AIModelProfileV1) -> str | None:
         return {
             AIModelProfileV1.LIGHT: "qwen3:4b",
             AIModelProfileV1.BALANCED: "qwen3:8b",
             AIModelProfileV1.ADVANCED: "qwen3:14b",
-        }.get(getattr(self, "_profile", AIModelProfileV1.BALANCED), "qwen3:8b")
+        }.get(profile)
 
     def _config_is_bound(self, model: str) -> bool:
         try:

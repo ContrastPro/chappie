@@ -32,6 +32,7 @@ from app.bootstrap import (
 )
 from app.cli import main
 from app.setup_engine import (
+    KNOWLEDGE_BUILD_BLOCKED_DIRTY_REPOSITORY,
     ActionSafetyV1,
     SetupActionCodeV1,
     SetupActionV1,
@@ -70,9 +71,12 @@ def test_windows_bootstrap_hands_off_to_authorized_venv_cli_without_ai_duplicati
 
 class _DummySetupEngine:
     def __init__(
-        self, profile_to_actions: dict[AIModelProfileV1 | None, tuple[SetupActionCodeV1, ...]]
+        self,
+        profile_to_actions: dict[AIModelProfileV1 | None, tuple[SetupActionCodeV1, ...]],
+        installed_profiles: tuple[AIModelProfileV1, ...] = (),
     ) -> None:
         self.profile_to_actions = profile_to_actions
+        self.installed_profiles = installed_profiles
         self.executed: list[AIModelProfileV1 | None] = []
 
     def plan(self, *, developer: bool = False, ai_profile: AIModelProfileV1 | None = None):
@@ -80,6 +84,9 @@ class _DummySetupEngine:
 
     def required_external_actions(self, *, ai_profile: AIModelProfileV1 | None = None):
         return self.profile_to_actions.get(ai_profile or AIModelProfileV1.BALANCED, ())
+
+    def installed_catalog_profiles(self):
+        return self.installed_profiles
 
     def execute(
         self,
@@ -237,6 +244,32 @@ def test_cli_setup_missing_complete_is_not_printed_on_final_stage_failure(
     assert "final stage failed." in output
 
 
+def test_cli_setup_prints_dirty_knowledge_remediation_without_traceback(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    from app import cli
+
+    engine = _ResultSetupEngine(
+        (
+            SetupStepResultV1(
+                SetupActionCodeV1.BUILD_KNOWLEDGE,
+                SetupStepStateV1.FAILED,
+                KNOWLEDGE_BUILD_BLOCKED_DIRTY_REPOSITORY,
+            ),
+        )
+    )
+    monkeypatch.setattr(cli, "_setup_engine", lambda *_args, **_kwargs: engine)
+    assert main(["setup", "--yes", "--non-interactive"], paths=_paths(tmp_path)) == 1
+    output = capsys.readouterr().out
+    assert (
+        "Knowledge build blocked: canonical Knowledge requires a clean committed source snapshot."
+        in output
+    )
+    assert "Uncommitted source changes detected." in output
+    assert "Remediation: commit or stash the intended source changes, then rerun setup." in output
+    assert "FAILED:ValueError" not in output
+
+
 def test_cli_setup_prints_single_complete_per_successful_step(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
@@ -304,6 +337,84 @@ def test_cli_reuses_verified_existing_ai_config_without_profile_prompt(
     assert "External work   NOT REQUIRED" in output
     assert "CHAPPIE SETUP COMPLETE" in output
     assert engine.executed == [AIModelProfileV1.BALANCED]
+
+
+@pytest.mark.parametrize(
+    ("installed", "expected"),
+    [
+        ((AIModelProfileV1.BALANCED,), AIModelProfileV1.BALANCED),
+        ((AIModelProfileV1.LIGHT,), AIModelProfileV1.LIGHT),
+    ],
+)
+def test_cli_adopts_one_exact_installed_catalog_model_without_prompt_or_external_consent(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+    installed: tuple[AIModelProfileV1, ...],
+    expected: AIModelProfileV1,
+):
+    from app import cli
+
+    engine = _DummySetupEngine({expected: ()}, installed_profiles=installed)
+    monkeypatch.setattr(cli, "_setup_engine", lambda *_args, **_kwargs: engine)
+    monkeypatch.setattr(
+        "builtins.input", lambda _: (_ for _ in ()).throw(AssertionError("prompted unexpectedly"))
+    )
+    assert main(["setup", "--interactive", "--yes"], paths=_paths(tmp_path)) == 0
+    output = capsys.readouterr().out
+    assert "Existing local AI detected:" in output
+    assert f"Profile: {expected.name}" in output
+    assert "External work   NOT REQUIRED" in output
+    assert engine.executed == [expected]
+
+
+def test_cli_does_not_adopt_multiple_local_models_and_requires_selection(
+    tmp_path: Path, monkeypatch
+):
+    from app import cli
+
+    engine = _DummySetupEngine(
+        {AIModelProfileV1.BALANCED: ()},
+        installed_profiles=(AIModelProfileV1.LIGHT, AIModelProfileV1.BALANCED),
+    )
+    monkeypatch.setattr(cli, "_setup_engine", lambda *_args, **_kwargs: engine)
+    monkeypatch.setattr("builtins.input", lambda _: "BALANCED")
+    assert main(["setup", "--interactive", "--yes"], paths=_paths(tmp_path)) == 0
+    assert engine.executed == [AIModelProfileV1.BALANCED]
+
+
+def test_cli_no_supported_local_model_uses_selection_then_requires_external_consent(
+    tmp_path: Path, monkeypatch
+):
+    from app import cli
+
+    engine = _DummySetupEngine(
+        {AIModelProfileV1.BALANCED: (SetupActionCodeV1.INSTALL_AI_MODEL,)},
+        installed_profiles=(),
+    )
+    monkeypatch.setattr(cli, "_setup_engine", lambda *_args, **_kwargs: engine)
+    answers = iter(("BALANCED", "n"))
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+    assert main(["setup", "--interactive", "--yes"], paths=_paths(tmp_path)) == 1
+    assert engine.executed == []
+
+
+def test_cli_explicit_profile_overrides_unique_local_adoption(tmp_path: Path, monkeypatch):
+    from app import cli
+
+    engine = _DummySetupEngine(
+        {AIModelProfileV1.ADVANCED: (SetupActionCodeV1.INSTALL_AI_MODEL,)},
+        installed_profiles=(AIModelProfileV1.BALANCED,),
+    )
+    monkeypatch.setattr(cli, "_setup_engine", lambda *_args, **_kwargs: engine)
+    monkeypatch.setattr("builtins.input", lambda _: "n")
+    assert (
+        main(
+            ["setup", "--interactive", "--yes", "--ai-profile", "advanced"], paths=_paths(tmp_path)
+        )
+        == 1
+    )
+    assert engine.executed == []
 
 
 def test_cli_reuses_balanced_config_even_when_hardware_prefers_light(tmp_path: Path, monkeypatch):
@@ -529,6 +640,26 @@ def test_phase_two_acceptance_hardware_recommendations_are_platform_neutral() ->
     assert "qwen3:8b" in recommend_model_profiles(server, TEST_MODEL_CATALOG)["recommended"]
 
 
+def test_apple_silicon_uses_system_memory_without_inventing_vram(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app import bootstrap
+
+    monkeypatch.setattr(bootstrap, "_memory_bytes", lambda _system: 18 * 1024**3)
+    hardware = detect_hardware(_paths(tmp_path), system="Darwin", machine="arm64", cpu_count=11)
+    recommendation = recommend_model_profiles(hardware, bootstrap.TEST_MODEL_CATALOG)
+    assert hardware.apple_unified_memory is True
+    assert hardware.gpu_memory_bytes is None
+    assert "qwen3:8b" in recommendation["recommended"]
+
+
+def test_macos_shell_bootstrap_remains_a_thin_interactive_handoff() -> None:
+    source = Path("setup.sh").read_text(encoding="utf-8")
+    assert '"$ROOT/.venv/bin/chappie" setup --yes --interactive "$@"' in source
+    assert "ollama" not in source.lower()
+    assert "brew" not in source.lower()
+
+
 def test_windows_rtx_4070_ti_is_recommended_when_windows_memory_is_available(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -704,13 +835,68 @@ def test_windows_ready_ai_status_is_observational_and_fail_closed(
     )
 
 
-def test_status_provider_down_and_missing_model_get_current_remediation(
+def test_macos_ready_ai_status_uses_the_darwin_executor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    from app import bootstrap
+    from app.knowledge import KnowledgeManifestV1, RepositorySnapshotV1
     from app.ollama_readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
 
     paths = _paths(tmp_path)
     _write_balanced_ollama_config(paths)
+    paths.knowledge_file.parent.mkdir(parents=True)
+    paths.knowledge_file.touch()
+    snapshot = RepositorySnapshotV1("a" * 40, True)
+    manifest = KnowledgeManifestV1(snapshot, (), "fixture")
+    calls: list[str] = []
+
+    class Probe:
+        def probe(self):
+            return OllamaReadinessResultV1(OllamaReadinessStateV1.READY, "http://localhost:11434")
+
+        def close(self) -> None:
+            pass
+
+    class Installer:
+        def __init__(self, **_kwargs: object) -> None:
+            calls.append("darwin-installer")
+
+        def executable(self) -> Path:
+            return Path("/fixture/Ollama.app/Contents/Resources/ollama")
+
+        def model_available(self, model: str) -> bool:
+            calls.append(f"model:{model}")
+            return model == "qwen3:8b"
+
+    monkeypatch.setattr(
+        bootstrap,
+        "detect_hardware",
+        lambda _paths: HardwareProfileV1("Darwin", "fixture", "arm64", None, 8, 18 * 1024**3),
+    )
+    monkeypatch.setattr("app.knowledge.read_store", lambda _path: ((), manifest))
+    monkeypatch.setattr("app.knowledge.committed_snapshot", lambda _root: snapshot)
+    monkeypatch.setattr("app.ollama_readiness.OllamaReadinessProbe", Probe)
+    monkeypatch.setattr("app.macos_ollama.MacOllamaInstallerV1", Installer)
+    status = collect_status(paths)
+    assert _component(status, "AI_PROVIDER").state == ComponentStateV1.READY
+    assert _component(status, "AI_MODEL").state == ComponentStateV1.READY
+    assert "darwin-installer" in calls
+    assert "model:qwen3:8b" in calls
+
+
+def test_status_provider_down_and_missing_model_get_current_remediation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app import bootstrap
+    from app.ollama_readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
+
+    paths = _paths(tmp_path)
+    _write_balanced_ollama_config(paths)
+    monkeypatch.setattr(
+        bootstrap,
+        "detect_hardware",
+        lambda _paths: HardwareProfileV1("Windows", "fixture", "AMD64", None, 8, 16 * 1024**3),
+    )
 
     class Probe:
         def probe(self):

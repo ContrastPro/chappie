@@ -9,4 +9,4 @@ PYTHON=${PYTHON:-python3}
 }
 if [ ! -f "$ROOT/.venv/pyvenv.cfg" ]; then "$PYTHON" -m venv "$ROOT/.venv"; fi
 "$ROOT/.venv/bin/python" -m pip install -e "$ROOT"
-"$ROOT/.venv/bin/chappie" setup "$@"
+"$ROOT/.venv/bin/chappie" setup --yes --interactive "$@"

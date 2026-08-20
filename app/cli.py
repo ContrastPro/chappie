@@ -30,16 +30,34 @@ from app.control_plane_transport import (
     ChappieControlPlaneServerV1,
     ControlPlaneTransportErrorV1,
 )
+from app.macos_ollama import MacOllamaInstallerV1
 from app.ollama_readiness import OllamaReadinessProbe
 from app.ollama_start import OllamaReadinessCoordinatorV1
 from app.project_qa_setup_smoke import ProjectQASetupSmokeV1
-from app.setup_engine import AIModelProfileV1, SetupActionCodeV1, SetupApprovalV1, SetupEngineV1
+from app.setup_engine import (
+    KNOWLEDGE_BUILD_BLOCKED_DIRTY_REPOSITORY,
+    AIModelProfileV1,
+    SetupActionCodeV1,
+    SetupApprovalV1,
+    SetupEngineV1,
+)
 from app.windows_ollama import WindowsOllamaInstallerV1
 
 
 def _launch_current_user_ollama(argv: list[str]) -> None:
     """Start Ollama without waiting for its long-running server process."""
     subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def _launch_macos_ollama(_argv: list[str]) -> None:
+    """Open the locally installed Ollama application; never invoke a shell or sudo."""
+    installer = MacOllamaInstallerV1()
+    bundle = installer.app_bundle()
+    if bundle is None:
+        raise RuntimeError("Ollama.app is not installed")
+    subprocess.Popen(
+        ["/usr/bin/open", "-a", str(bundle)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
 
 
 def _setup_engine(paths: ChappiePaths, *, interactive_output: bool = True) -> SetupEngineV1:
@@ -50,6 +68,19 @@ def _setup_engine(paths: ChappiePaths, *, interactive_output: bool = True) -> Se
             windows_installer=WindowsOllamaInstallerV1(interactive_output=interactive_output),
             ollama_readiness_coordinator=OllamaReadinessCoordinatorV1(
                 OllamaReadinessProbe(), "ollama", _launch_current_user_ollama
+            ),
+            smoke=ChappieAISetupSmokeV1(),
+            project_qa_smoke=ProjectQASetupSmokeV1(),
+        )
+    if platform.system() == "Darwin":
+        installer = MacOllamaInstallerV1(interactive_output=interactive_output)
+        return SetupEngineV1(
+            paths,
+            macos_installer=installer,
+            ollama_readiness_coordinator=OllamaReadinessCoordinatorV1(
+                OllamaReadinessProbe(),
+                str(installer.executable() or "ollama"),
+                _launch_macos_ollama,
             ),
             smoke=ChappieAISetupSmokeV1(),
             project_qa_smoke=ProjectQASetupSmokeV1(),
@@ -113,6 +144,15 @@ class _SetupProgress:
             return
         self.close()
         if result.state.value == "FAILED":
+            if result.message == KNOWLEDGE_BUILD_BLOCKED_DIRTY_REPOSITORY:
+                print(
+                    "      Knowledge build blocked: canonical Knowledge requires a clean committed source snapshot."
+                )
+                print("      Uncommitted source changes detected.")
+                print(
+                    "      Remediation: commit or stash the intended source changes, then rerun setup."
+                )
+                return
             print(f"      {result.message}.")
             return
         self._last_step_complete_emitted = self._number == self._total
@@ -232,6 +272,12 @@ def _can_reuse_existing_ai_profile(
     return config_profile
 
 
+def _adopt_unique_local_ai_profile(engine: SetupEngineV1) -> AIModelProfileV1 | None:
+    """Adopt one unambiguous installed catalog model without starting or changing Ollama."""
+    profiles = engine.installed_catalog_profiles()
+    return profiles[0] if len(profiles) == 1 else None
+
+
 def _ask_for_external_authorization(needed: tuple[SetupActionCodeV1, ...]) -> bool:
     if not needed:
         print("External work   NOT REQUIRED")
@@ -306,7 +352,7 @@ def main(argv: Sequence[str] | None = None, *, paths: ChappiePaths | None = None
         profile = None
         if args.ai_profile:
             profile = AIModelProfileV1(args.ai_profile.upper())
-        elif not (args.non_interactive or args.plan or args.dry_run or not args.interactive):
+        elif not (args.non_interactive or args.plan or args.dry_run):
             profile = _can_reuse_existing_ai_profile(engine, paths)
             if profile is not None:
                 config = load_local_config(paths)
@@ -316,7 +362,17 @@ def main(argv: Sequence[str] | None = None, *, paths: ChappiePaths | None = None
                 print(f"  Model: {config.model if config is not None else 'unknown'}")
                 print("Using existing verified AI configuration.")
             else:
-                profile = _interactive_ai_profile(paths, parser)
+                profile = _adopt_unique_local_ai_profile(engine)
+                if profile is not None:
+                    model = SetupEngineV1._model_for_profile(profile)
+                    if args.interactive and not args.json:
+                        print("Existing local AI detected:")
+                        print("  Provider: ollama")
+                        print(f"  Profile: {profile.name}")
+                        print(f"  Model: {model}")
+                        print("Using existing local AI configuration.")
+                elif args.interactive and not args.non_interactive:
+                    profile = _interactive_ai_profile(paths, parser)
         actions = engine.plan(developer=args.developer, ai_profile=profile)
         needs_external = engine.required_external_actions(ai_profile=profile)
         if args.plan:

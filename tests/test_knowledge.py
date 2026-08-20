@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from dataclasses import replace
 
 import pytest
@@ -12,6 +13,7 @@ from app.knowledge import (
     KnowledgeStatusV1,
     KnowledgeTypeV1,
     RepositorySnapshotV1,
+    committed_snapshot,
     context,
     initial_records,
     manifest,
@@ -66,6 +68,31 @@ def test_dirty_snapshot_and_secret_paths_fail_closed() -> None:
         KnowledgeSourceReferenceV1(
             KnowledgeAuthorityV1.SOURCE_CODE, ".env", "a" * 64, "a" * 40, "x"
         )
+
+
+def test_committed_snapshot_ignores_generated_gitignored_state(tmp_path) -> None:
+    subprocess.run(["git", "init", "--quiet"], cwd=tmp_path, check=True)
+    (tmp_path / ".gitignore").write_text("generated/\n", encoding="utf-8")
+    (tmp_path / "tracked.txt").write_text("source\n", encoding="utf-8")
+    subprocess.run(["git", "add", ".gitignore", "tracked.txt"], cwd=tmp_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "--quiet",
+            "-m",
+            "fixture",
+        ],
+        cwd=tmp_path,
+        check=True,
+    )
+    (tmp_path / "generated").mkdir()
+    (tmp_path / "generated" / "local.sqlite3").write_text("ignored", encoding="utf-8")
+    assert committed_snapshot(tmp_path).clean is True
 
 
 def test_ai_has_no_canonical_write_authority() -> None:
