@@ -22,7 +22,7 @@ from app.capital_rotation import (
 from app.market.intervals import fixed_binance_spot_interval_ms
 from app.market_intelligence import load_context_payload
 from app.research.paths import results_dir
-from app.strategy_history import load_dataset
+from app.research.strategy.history import load_dataset
 from app.tools.strategy_evaluate import write_report_atomic
 
 

@@ -8,7 +8,7 @@ import httpx
 import pytest
 
 from app.market.models import Candle
-from app.strategy_history import (
+from app.research.strategy.history import (
     MAX_PAGE_SIZE,
     HistoricalDataset,
     HistoricalDatasetMetadata,
@@ -19,7 +19,7 @@ from app.strategy_history import (
     validate_candles,
     write_dataset_atomic,
 )
-from app.strategy_lab import StrategyComparisonConfig
+from app.research.strategy.lab import StrategyComparisonConfig
 from app.tools import strategy_evaluate
 from app.tools.strategy_evaluate import (
     aggregate,

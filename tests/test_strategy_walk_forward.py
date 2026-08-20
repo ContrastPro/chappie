@@ -5,23 +5,24 @@ from decimal import Decimal
 import pytest
 
 from app.market.models import Candle
-from app.strategies.factory import StrategySettings
-from app.strategy_history import (
+from app.research.strategy.history import (
     HistoricalDataset,
     HistoricalDatasetMetadata,
     candles_sha256,
     write_dataset_atomic,
 )
-from app.strategy_lab import StrategyComparisonConfig
-from app.strategy_walk_forward import (
+from app.research.strategy.lab import StrategyComparisonConfig
+from app.research.strategy.walk_forward import (
     MAX_CANDIDATES_PER_STRATEGY,
     Candidate,
     default_candidates,
     load_split_manifest,
     metrics_for,
+    report_payload,
     research_candidates,
     run_walk_forward,
 )
+from app.strategies.factory import StrategySettings
 
 
 def _dataset(seed: int) -> HistoricalDataset:
@@ -69,6 +70,7 @@ def test_manifest_splits_are_disjoint_and_test_is_not_selection_input(tmp_path) 
     )
     splits = load_split_manifest(manifest)
     report = run_walk_forward(splits, candidates=default_candidates())
+    assert report_payload(report)["format"] == "chappie-strategy-walk-forward/v1"
     assert all(item.candidate.identifier not in {"test"} for item in report.train)
     assert all(item in report.train_selected for item in report.frozen)
     altered_test_splits = {**splits, "test": (_dataset(999),)}

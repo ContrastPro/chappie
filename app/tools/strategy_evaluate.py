@@ -12,8 +12,12 @@ from decimal import Decimal
 from pathlib import Path
 from statistics import median
 
-from app.strategy_history import HistoricalDataset, load_dataset
-from app.strategy_lab import StrategyComparisonConfig, StrategyComparisonResult, compare_all
+from app.research.strategy.history import HistoricalDataset, load_dataset
+from app.research.strategy.lab import (
+    StrategyComparisonConfig,
+    StrategyComparisonResult,
+    compare_all,
+)
 
 
 @dataclass(frozen=True, slots=True)

@@ -12,7 +12,7 @@ from pathlib import Path
 import httpx
 
 from app.market_intelligence import ContextDataset, ContextObservation, context_to_payload
-from app.strategy_history import utc_date_to_ms
+from app.research.strategy.history import utc_date_to_ms
 
 USD_M_FUTURES_URL = "https://fapi.binance.com"
 MAX_REQUESTS = 100

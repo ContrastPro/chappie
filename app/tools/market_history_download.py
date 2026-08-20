@@ -7,7 +7,7 @@ from pathlib import Path
 
 import httpx
 
-from app.strategy_history import (
+from app.research.strategy.history import (
     PUBLIC_MARKET_DATA_URL,
     PublicKlineDownloader,
     utc_date_to_ms,

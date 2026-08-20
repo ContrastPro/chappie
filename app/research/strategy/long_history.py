@@ -14,8 +14,8 @@ from pathlib import Path
 
 from app.market.intervals import fixed_binance_spot_interval_ms
 from app.market.models import Candle
+from app.research.strategy.history import HistoricalDataset, validate_candles
 from app.strategies.indicators import simple_regime
-from app.strategy_history import HistoricalDataset, validate_candles
 
 PAPER_ROUND_TRIP_COST_BPS = Decimal(20)  # 2 x the current 10 bps Paper fee.
 RETURN_HORIZONS: dict[str, tuple[int, ...]] = {

@@ -9,8 +9,8 @@ from decimal import Decimal
 from pathlib import Path
 
 from app.market.models import Candle
-from app.strategy_history import load_dataset
-from app.strategy_lab import StrategyComparisonConfig, compare_all
+from app.research.strategy.history import load_dataset
+from app.research.strategy.lab import StrategyComparisonConfig, compare_all
 
 
 def _candles(path: Path) -> tuple[Candle, ...]:

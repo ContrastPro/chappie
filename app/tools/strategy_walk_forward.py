@@ -6,8 +6,8 @@ import argparse
 from decimal import Decimal
 from pathlib import Path
 
-from app.strategy_lab import StrategyComparisonConfig
-from app.strategy_walk_forward import load_split_manifest, report_payload, run_walk_forward
+from app.research.strategy.lab import StrategyComparisonConfig
+from app.research.strategy.walk_forward import load_split_manifest, report_payload, run_walk_forward
 from app.tools.strategy_evaluate import write_report_atomic
 
 

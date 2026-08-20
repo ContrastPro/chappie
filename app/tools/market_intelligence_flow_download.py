@@ -42,7 +42,7 @@ from app.market_intelligence_flow import (
     metrics_to_payload,
     parse_spot_minute_rows_excluding_invalid,
 )
-from app.strategy_history import utc_date_to_ms
+from app.research.strategy.history import utc_date_to_ms
 from app.tools.strategy_evaluate import write_report_atomic
 
 ARCHIVE_BASE_URL = "https://data.binance.vision"

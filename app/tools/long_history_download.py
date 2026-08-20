@@ -25,7 +25,7 @@ from app.research.data.anomalies import (
     split_historical_rows,
 )
 from app.research.paths import spot_source_dir
-from app.strategy_history import (
+from app.research.strategy.history import (
     HistoricalDataset,
     HistoricalDatasetMetadata,
     candles_sha256,

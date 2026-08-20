@@ -1,7 +1,7 @@
 """Small, deterministic walk-forward research over immutable candle datasets.
 
 This module is deliberately offline-only.  It constructs only pure strategies
-and uses the Paper-style replay economics in :mod:`app.strategy_lab`; it never
+and uses the Paper-style replay economics in :mod:`app.research.strategy.lab`; it never
 constructs an exchange client or changes runtime strategy configuration.
 """
 
@@ -12,9 +12,13 @@ from decimal import Decimal
 from pathlib import Path
 from statistics import median
 
+from app.research.strategy.history import HistoricalDataset, load_dataset
+from app.research.strategy.lab import (
+    StrategyComparisonConfig,
+    StrategyComparisonResult,
+    compare_strategy,
+)
 from app.strategies.factory import StrategySettings
-from app.strategy_history import HistoricalDataset, load_dataset
-from app.strategy_lab import StrategyComparisonConfig, StrategyComparisonResult, compare_strategy
 
 MAX_CANDIDATES_PER_STRATEGY = 24
 BASELINE_NAMES = ("ema_crossover", "trend_filtered", "breakout", "mean_reversion")

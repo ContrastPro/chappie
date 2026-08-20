@@ -9,7 +9,7 @@ from decimal import Decimal, InvalidOperation
 
 from app.market.intervals import fixed_binance_spot_interval_ms
 from app.market.models import Candle
-from app.strategy_history import validate_candles
+from app.research.strategy.history import validate_candles
 
 QUALITY_MAX_EXCLUDED_PERCENT = Decimal("0.10")
 QUALITY_MAX_DISCONTINUITIES_PER_10K = Decimal(5)

@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from app.market.models import Candle, MarketStreamKey
+from app.research.strategy.lab import StrategyComparisonConfig, compare_all, compare_strategy
 from app.strategies import (
     BreakoutConfig,
     BreakoutStrategy,
@@ -10,7 +11,6 @@ from app.strategies import (
     TrendFilteredConfig,
     TrendFilteredStrategy,
 )
-from app.strategy_lab import StrategyComparisonConfig, compare_all, compare_strategy
 from app.trading.models import SignalDirection
 from app.trading.snapshot import MarketSnapshotFactory
 

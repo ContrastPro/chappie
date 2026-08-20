@@ -59,10 +59,6 @@ ROOT_MODULE_ALLOWLIST = frozenset(
         "research_methodology.py",
         "server_status.py",
         "setup_engine.py",
-        "strategy_history.py",
-        "strategy_lab.py",
-        "strategy_long_history.py",
-        "strategy_walk_forward.py",
         "vscode_integration.py",
         "windows_ollama.py",
         "workspace_context.py",
@@ -81,10 +77,7 @@ OFFLINE_RESEARCH_PREFIXES = (
     "app.news_event_intelligence",
     "app.news_event_macro",
     "app.research_",
-    "app.strategy_history",
-    "app.strategy_lab",
-    "app.strategy_long_history",
-    "app.strategy_walk_forward",
+    "app.research.strategy",
 )
 RUNTIME_TRADING_PREFIXES = (
     "app.application",
@@ -131,6 +124,10 @@ COMPLETED_DIRECT_MIGRATIONS = {
     "app.research.data.outcomes": "COMPLETED_DIRECT_MIGRATION",
     "app.research.paths": "COMPLETED_DIRECT_MIGRATION",
     "app.research.data.store": "COMPLETED_DIRECT_MIGRATION",
+    "app.research.strategy.history": "COMPLETED_DIRECT_MIGRATION",
+    "app.research.strategy.lab": "COMPLETED_DIRECT_MIGRATION",
+    "app.research.strategy.long_history": "COMPLETED_DIRECT_MIGRATION",
+    "app.research.strategy.walk_forward": "COMPLETED_DIRECT_MIGRATION",
 }
 
 # Dynamic resolution sites are a bounded compatibility surface during moves.
@@ -246,6 +243,10 @@ def test_completed_direct_migrations_have_only_canonical_paths() -> None:
     assert not (APP / "research_json.py").exists()
     assert not (APP / "research_outcomes.py").exists()
     assert not (APP / "research_paths.py").exists()
+    assert not (APP / "strategy_history.py").exists()
+    assert not (APP / "strategy_lab.py").exists()
+    assert not (APP / "strategy_long_history.py").exists()
+    assert not (APP / "strategy_walk_forward.py").exists()
     for module in COMPLETED_DIRECT_MIGRATIONS:
         assert importlib.util.find_spec(module) is not None
 

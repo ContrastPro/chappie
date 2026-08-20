@@ -1,10 +1,19 @@
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
 from app.market.models import Candle
-from app.strategy_history import HistoricalDataset, HistoricalDatasetMetadata, candles_sha256
-from app.strategy_long_history import merge_verified_chunks, summarize_timeframe
+from app.research.strategy.history import (
+    HistoricalDataset,
+    HistoricalDatasetMetadata,
+    candles_sha256,
+)
+from app.research.strategy.long_history import (
+    manifest_payload,
+    merge_verified_chunks,
+    summarize_timeframe,
+)
 
 
 def _candles(start: int, count: int) -> tuple[Candle, ...]:
@@ -53,3 +62,14 @@ def test_long_history_summary_is_causal_and_forward_labels_are_separate() -> Non
 def test_long_history_chunk_boundary_gap_fails_closed() -> None:
     with pytest.raises(ValueError, match="gap"):
         merge_verified_chunks((_dataset(_candles(0, 20)), _dataset(_candles(21, 20))), "1h")
+
+
+def test_long_history_manifest_contract_is_stable() -> None:
+    dataset = _dataset(_candles(0, 20))
+
+    payload = manifest_payload(
+        Path("data/research/source/spot/BTCUSDT/long_history"), {"1h": (dataset,)}
+    )
+
+    assert payload["format"] == "chappie-long-history-manifest/v1"
+    assert payload["integrity_status"] == "VERIFIED"
