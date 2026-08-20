@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-from app.research_alignment import build_aligned_intelligence, iter_intelligence_batches
+from app.research.data.alignment import build_aligned_intelligence, iter_intelligence_batches
 from app.research_data import ResearchStore
 from app.research_event_bridge import _causal_snapshots, extract_events
 from app.research_methodology import (

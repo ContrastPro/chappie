@@ -56,12 +56,9 @@ ROOT_MODULE_ALLOWLIST = frozenset(
         "ollama_readiness.py",
         "ollama_start.py",
         "project_qa_setup_smoke.py",
-        "research_alignment.py",
-        "research_anomalies.py",
         "research_cache_identity.py",
         "research_data.py",
         "research_event_bridge.py",
-        "research_json.py",
         "research_methodology.py",
         "research_outcomes.py",
         "research_paths.py",
@@ -129,9 +126,11 @@ COMPATIBILITY_MAP = {
     "app.knowledge": "TEMPORARY_COMPATIBILITY_WRAPPER",
     "app.control_plane": "TEMPORARY_COMPATIBILITY_WRAPPER",
     "app.tools.*": "TEMPORARY_COMPATIBILITY_WRAPPER",
-    "app.research_json": "DIRECT_MIGRATION",
-    "app.research_alignment": "DIRECT_MIGRATION",
-    "app.research_anomalies": "DIRECT_MIGRATION",
+}
+COMPLETED_DIRECT_MIGRATIONS = {
+    "app.research.data.alignment": "COMPLETED_DIRECT_MIGRATION",
+    "app.research.data.anomalies": "COMPLETED_DIRECT_MIGRATION",
+    "app.research.data.legacy_json": "COMPLETED_DIRECT_MIGRATION",
 }
 
 # Dynamic resolution sites are a bounded compatibility surface during moves.
@@ -236,6 +235,14 @@ def test_root_module_allowlist_can_only_shrink() -> None:
     direct_modules = {path.name for path in APP.glob("*.py")}
     approved = ROOT_MODULE_ALLOWLIST | STABLE_ROOT_ADAPTERS | {"__init__.py"}
     assert direct_modules <= approved, sorted(direct_modules - approved)
+
+
+def test_completed_direct_migrations_have_only_canonical_paths() -> None:
+    assert not (APP / "research_alignment.py").exists()
+    assert not (APP / "research_anomalies.py").exists()
+    assert not (APP / "research_json.py").exists()
+    for module in COMPLETED_DIRECT_MIGRATIONS:
+        assert importlib.util.find_spec(module) is not None
 
 
 def test_production_code_does_not_import_tools() -> None:
@@ -360,12 +367,11 @@ def test_dynamic_import_sites_are_bounded_by_the_inventory() -> None:
 
 
 def test_compatibility_map_classifies_required_future_surfaces() -> None:
-    assert {"FROZEN_PATH", "TEMPORARY_COMPATIBILITY_WRAPPER", "DIRECT_MIGRATION"} == set(
-        COMPATIBILITY_MAP.values()
-    )
+    assert {"FROZEN_PATH", "TEMPORARY_COMPATIBILITY_WRAPPER"} == set(COMPATIBILITY_MAP.values())
     assert COMPATIBILITY_MAP["app.cli"] == "FROZEN_PATH"
     assert COMPATIBILITY_MAP["app.main"] == "FROZEN_PATH"
     assert COMPATIBILITY_MAP["app.persistence.migrations"] == "FROZEN_PATH"
+    assert set(COMPLETED_DIRECT_MIGRATIONS.values()) == {"COMPLETED_DIRECT_MIGRATION"}
 
 
 def test_tracked_generated_artifacts_are_limited_to_explicit_contracts() -> None:

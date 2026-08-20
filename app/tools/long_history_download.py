@@ -18,7 +18,7 @@ import httpx
 
 from app.market.intervals import fixed_binance_spot_interval_ms
 from app.market.models import Candle
-from app.research_anomalies import (
+from app.research.data.anomalies import (
     SegmentationResult,
     anomaly_ledger_payload,
     quality_status,

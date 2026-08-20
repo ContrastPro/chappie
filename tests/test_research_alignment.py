@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from app.research_alignment import build_aligned_intelligence, iter_intelligence_batches
+from app.research.data.alignment import build_aligned_intelligence, iter_intelligence_batches
 from app.research_data import ResearchStore
 
 

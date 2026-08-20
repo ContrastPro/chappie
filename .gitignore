@@ -3,7 +3,7 @@ __pycache__/
 *.pyc
 
 logs/
-data/
+/data/
 
 .env
 

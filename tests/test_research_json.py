@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from app.research_json import iter_legacy_rows
+from app.research.data.legacy_json import iter_legacy_rows
 
 
 def _write(path: Path, payload: str) -> None:
