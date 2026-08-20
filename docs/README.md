@@ -24,6 +24,12 @@ These are the current authoritative design references:
 
 Operator-facing runbooks live in [operations/](operations/README.md).
 
+## Platform setup
+
+[Cross-platform setup behavior contract](platform/SETUP_CONTRACT.md) defines the
+shared, idempotent setup lifecycle and the adapter boundary for Windows, macOS,
+and future platforms.
+
 ## Research
 
 - [CLI and bootstrap](cli/README.md) — product control plane and offline setup diagnostics.

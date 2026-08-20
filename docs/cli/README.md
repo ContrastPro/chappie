@@ -10,6 +10,12 @@ on Windows. The scripts only locate compatible Python 3.13+, create/reuse
 `.venv`, install the checkout, and delegate to the Python setup engine. They do
 not use `sudo`, change shell profiles, or install system packages.
 
+The platform-neutral [setup behavior contract](../platform/SETUP_CONTRACT.md)
+defines state-before-prompt, action-scoped external consent, valid-config reuse,
+and deterministic adoption of one uniquely installed catalog model. Platform
+scripts are bootstrap/handoff layers; provider and model state is decided by the
+shared setup engine.
+
 ### Windows clean-install procedure
 
 Prerequisites are Git and Python 3.13 or newer. Clone the repository, change to
