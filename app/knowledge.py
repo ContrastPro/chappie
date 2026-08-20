@@ -51,6 +51,7 @@ SOURCE_ALLOWLIST = frozenset(
         "docs/knowledge/README.md",
         "docs/platform/SETUP_CONTRACT.md",
         "VISION.md",
+        "ARCHITECTURE.md",
     }
 )
 
@@ -444,6 +445,17 @@ def initial_records(
             "Lifecycle",
             "chappie_platform_setup/1.0.0",
             ("apply", "authorize", "bind", "engine", "setup", "smoke", "verify"),
+        ),
+        (
+            KnowledgeTypeV1.ARCHITECTURE,
+            "Chappie Architecture",
+            "Chappie is a modular in-process application whose active MVP composes market, trading-decision, runtime, risk, Paper trading, persistence, exchange-execution, operations, and offline research boundaries.",
+            KnowledgeAuthorityV1.DOCUMENTATION,
+            KnowledgeStatusV1.ACTIVE,
+            "ARCHITECTURE.md",
+            "Active MVP",
+            None,
+            ("application", "architecture", "boundaries", "modules", "mvp", "system"),
         ),
     )
     records = []

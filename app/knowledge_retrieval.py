@@ -323,7 +323,9 @@ def _rank(items: list[_CandidateV1], request: KnowledgeRetrievalRequestV1) -> li
 
 def tokenize_topic(value: str) -> tuple[str, ...]:
     """Return bounded normalized lexical tokens without query punctuation or filler words."""
-    stop_words = frozenset({"a", "an", "is", "of", "the", "what", "who", "owns"})
+    stop_words = frozenset(
+        {"a", "an", "describe", "explain", "is", "of", "the", "understand", "what", "who", "owns"}
+    )
     return tuple(
         sorted(
             {

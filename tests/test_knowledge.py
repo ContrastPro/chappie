@@ -32,7 +32,7 @@ def test_contract_and_initial_records_are_deterministic() -> None:
     assert KNOWLEDGE_IDENTITY == "chappie_knowledge/1.0.0"
     assert len(KNOWLEDGE_CONTRACT_DIGEST) == 64
     assert first == second
-    assert len(first) == 13
+    assert len(first) == 14
 
 
 def test_records_cover_authority_result_decision_and_exact_filters() -> None:
