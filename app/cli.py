@@ -7,6 +7,7 @@ import platform
 import subprocess
 import threading
 from collections.abc import Sequence
+from pathlib import Path
 from typing import ClassVar
 
 from app.ai_setup_smoke import ChappieAISetupSmokeV1
@@ -239,6 +240,7 @@ def _parser() -> argparse.ArgumentParser:
     setup.add_argument("--non-interactive", action="store_true")
     setup.add_argument("--interactive", action="store_true")
     setup.add_argument("--json", action="store_true")
+    setup.add_argument("--result-file", type=Path)
     setup.add_argument("--ai-profile", choices=[item.value.lower() for item in AIModelProfileV1])
     ai = sub.add_parser("ai")
     ai_sub = ai.add_subparsers(dest="ai_command")
@@ -473,6 +475,9 @@ def main(argv: Sequence[str] | None = None, *, paths: ChappiePaths | None = None
         finally:
             if progress is not None:
                 progress.close()
+        if args.result_file is not None:
+            args.result_file.parent.mkdir(parents=True, exist_ok=True)
+            args.result_file.write_text(json_output(result.payload()), encoding="utf-8")
         if args.json:
             print(json_output(result.payload()), end="")
         else:

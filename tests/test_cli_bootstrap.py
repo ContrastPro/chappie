@@ -295,6 +295,36 @@ def test_cli_setup_prints_dirty_knowledge_remediation_without_traceback(
     assert "FAILED:ValueError" not in output
 
 
+def test_cli_setup_writes_typed_dirty_knowledge_result_for_terminal_integrations(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from app import cli
+
+    engine = _ResultSetupEngine(
+        (
+            SetupStepResultV1(
+                SetupActionCodeV1.BUILD_KNOWLEDGE,
+                SetupStepStateV1.FAILED,
+                KNOWLEDGE_BUILD_BLOCKED_DIRTY_REPOSITORY,
+            ),
+        )
+    )
+    result_file = tmp_path / "extension" / "setup-result.json"
+    monkeypatch.setattr(cli, "_setup_engine", lambda *_args, **_kwargs: engine)
+
+    assert (
+        main(
+            ["setup", "--yes", "--non-interactive", "--result-file", str(result_file)],
+            paths=_paths(tmp_path),
+        )
+        == 1
+    )
+
+    payload = json.loads(result_file.read_text(encoding="utf-8"))
+    assert payload["identity"] == "chappie_setup_engine/1.0.0"
+    assert payload["steps"][0]["message"] == KNOWLEDGE_BUILD_BLOCKED_DIRTY_REPOSITORY
+
+
 def test_cli_setup_prints_typed_project_qa_grounding_failure(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

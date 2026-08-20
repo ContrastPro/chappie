@@ -22,8 +22,9 @@ export class ControlPlaneDependencyError extends ControlPlaneClientError {
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
-/** Status calls stay responsive; bounded local inference is allowed its backend budget. */
+/** Health stays fast; the first local status refresh may load a ready runtime snapshot. */
 export const CONTROL_PLANE_HEALTH_TIMEOUT_MS = 1_500;
+export const CONTROL_PLANE_REFRESH_TIMEOUT_MS = 5_000;
 export const PROJECT_QA_HTTP_TIMEOUT_MS = 60_000;
 
 export class ChappieControlPlaneClient {
@@ -57,10 +58,10 @@ export class ChappieControlPlaneClient {
     return response.data;
   }
 
-  public status(): Promise<ControlPlaneStatusV1> { return this.data("/v1/status"); }
-  public diagnostics(): Promise<ControlPlaneDiagnosticsV1> { return this.data("/v1/diagnostics"); }
-  public aiStatus(): Promise<ControlPlaneAIStatusV1> { return this.data("/v1/ai/status"); }
-  public capabilities(): Promise<ControlPlaneCapabilitiesV1> { return this.data("/v1/capabilities"); }
+  public status(): Promise<ControlPlaneStatusV1> { return this.data("/v1/status", { method: "GET" }, CONTROL_PLANE_REFRESH_TIMEOUT_MS); }
+  public diagnostics(): Promise<ControlPlaneDiagnosticsV1> { return this.data("/v1/diagnostics", { method: "GET" }, CONTROL_PLANE_REFRESH_TIMEOUT_MS); }
+  public aiStatus(): Promise<ControlPlaneAIStatusV1> { return this.data("/v1/ai/status", { method: "GET" }, CONTROL_PLANE_REFRESH_TIMEOUT_MS); }
+  public capabilities(): Promise<ControlPlaneCapabilitiesV1> { return this.data("/v1/capabilities", { method: "GET" }, CONTROL_PLANE_REFRESH_TIMEOUT_MS); }
   public async askProject(question: string, workspaceContext?: WorkspaceContextV1): Promise<ProjectQAResponseV1> {
     if (!question.trim() || question.length > 1000) {
       throw new ControlPlaneClientError("Project question must be between 1 and 1000 characters");

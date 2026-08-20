@@ -1,5 +1,6 @@
 import * as childProcess from "node:child_process";
 import * as fs from "node:fs";
+import * as path from "node:path";
 import * as vscode from "vscode";
 import {
   ConnectionState,
@@ -12,7 +13,10 @@ import { appendTurn, ChatTurnV1, renderTurns } from "./chat";
 import { capabilitySummary, contextPreview, humanState, projectChatAvailability, projectQaFailureMessage, setupActionLabel } from "./presentation";
 import { WorkspaceContextCollector } from "./workspace_context";
 import { collectGitMetadata } from "./git_metadata";
-import { ChappieSetupTerminalV1, isChappieWorkspace, OwnedControlPlaneProcess, resolveChappieExecutable, resolveChappieSetupCommand, setupBootstrapRemediation, shouldAutoStartControlPlane } from "./workspace";
+import { ChappieSetupTerminalV1, isChappieWorkspace, localWorkspaceState, OwnedControlPlaneProcess, readSetupFailureSummary, resolveChappieExecutable, resolveChappieSetupCommand, setupBootstrapRemediation, shouldAutoStartControlPlane } from "./workspace";
+
+const CONTROL_PLANE_STARTUP_TIMEOUT_MS = 15_000;
+const CONTROL_PLANE_STARTUP_POLL_MS = 250;
 
 interface Snapshot {
   status?: ControlPlaneStatusV1;
@@ -62,7 +66,7 @@ class ChappieChatView implements vscode.WebviewViewProvider {
   private history: ChatTurnV1[] = [];
   private state: ConnectionState = "DISCONNECTED";
   private model: string | null = null;
-  private availability = "Chappie Control Plane is not connected.";
+  private availability = "Chappie setup is required before the local service can connect.";
   private setupAction = "Set up";
   private preview = "";
 
@@ -74,7 +78,9 @@ class ChappieChatView implements vscode.WebviewViewProvider {
     view.webview.html = chatHtml();
     view.webview.onDidReceiveMessage(async (message: unknown) => {
       if (isSetupMessage(message)) {
-        await vscode.commands.executeCommand("chappie.runSetup");
+        await vscode.commands.executeCommand(
+          this.setupAction === "Reconnect" ? "chappie.startLocalControlPlane" : "chappie.runSetup",
+        );
         return;
       }
       if (isContextPreviewMessage(message)) {
@@ -85,7 +91,7 @@ class ChappieChatView implements vscode.WebviewViewProvider {
       if (!isQuestionMessage(message)) { return; }
       const question = message.question.trim();
       if (this.availability) {
-        this.add({ question, error: `${this.availability} Run Chappie setup to finish configuration.` });
+        this.add({ question, error: `${this.availability} Use ${this.setupAction}.` });
         return;
       }
       try {
@@ -124,7 +130,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const tree = new ChappieTree();
   const ownedProcess = new OwnedControlPlaneProcess();
   const setupTerminal = new ChappieSetupTerminalV1();
+  const setupResultPath = path.join(context.globalStorageUri.fsPath, "setup-result.json");
   const configuredPort = (): number => vscode.workspace.getConfiguration("chappie").get<number>("controlPlane.port", 8765);
+  const platform = globalThis.process.platform as "win32" | "darwin" | "linux";
+  const localState = (): "UNCONFIGURED" | "DEGRADED" | "READY" => {
+    const root = workspaceRoot();
+    return root ? localWorkspaceState(root, platform, fs.existsSync) : "UNCONFIGURED";
+  };
   const chat = new ChappieChatView(() => new ChappieControlPlaneClient(configuredPort()));
   context.subscriptions.push(output, bar, vscode.window.registerTreeDataProvider("chappie.status", tree), vscode.window.registerWebviewViewProvider("chappie.chat", chat), { dispose: () => { ownedProcess.stop(); } });
   bar.command = "chappie.openView";
@@ -142,8 +154,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       chat.update(
         "CONNECTED",
         ai.model,
-        projectChatAvailability("CONNECTED", projectQa?.status, ai.provider_state, knowledge),
-        setupActionLabel("CONNECTED", projectQa?.status, ai.provider_state, knowledge),
+        projectChatAvailability("CONNECTED", projectQa?.status, ai.provider_state, knowledge, localState()),
+        setupActionLabel("CONNECTED", projectQa?.status, ai.provider_state, knowledge, localState()),
       );
       renderStatus(bar, "CONNECTED");
       output.appendLine("Control Plane connected.");
@@ -151,7 +163,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     } catch (error) {
       const state: ConnectionState = error instanceof ControlPlaneIncompatibleError ? "INCOMPATIBLE" : "DISCONNECTED";
       tree.update(state);
-      chat.update(state, null, projectChatAvailability(state, undefined, undefined, "UNKNOWN"));
+      chat.update(
+        state,
+        null,
+        projectChatAvailability(state, undefined, undefined, "UNKNOWN", localState()),
+        setupActionLabel(state, undefined, undefined, "UNKNOWN", localState()),
+      );
       renderStatus(bar, state);
       const message = error instanceof Error ? error.message : "Control Plane request failed";
       output.appendLine(`${state}: ${message}`);
@@ -174,20 +191,57 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       output.appendLine("Chappie development environment is not set up.");
       return false;
     }
-    const command = resolveChappieExecutable(root, globalThis.process.platform as "win32" | "darwin" | "linux", fs.existsSync);
+    const command = resolveChappieExecutable(root, platform, fs.existsSync);
     if (command.command === "chappie") {
       output.appendLine("Chappie development environment is not set up. Run the project setup first.");
       return false;
     }
-    ownedProcess.start(
-      { ...command, args: [...command.args, "--port", String(configuredPort())] },
-      (file, args, options) => childProcess.spawn(file, args, { cwd: options.cwd, shell: options.shell }),
-    );
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      try { await new ChappieControlPlaneClient(configuredPort()).health(); await connect(); return true; } catch (_error) { /* bounded wait */ }
+    const args = [...command.args, "--port", String(configuredPort())];
+    output.appendLine(`Auto-starting Control Plane: ${command.command} ${args.join(" ")}`);
+    let exited = false;
+    let child: childProcess.ChildProcess | undefined;
+    try {
+      child = ownedProcess.start(
+        { ...command, args },
+        (file, childArgs, options) => childProcess.spawn(
+          file,
+          childArgs,
+          { cwd: options.cwd, shell: options.shell, stdio: "pipe" },
+        ),
+      ) as childProcess.ChildProcess | undefined;
+    } catch (error) {
+      output.appendLine(`Control Plane spawn failed: ${safeDiagnostic(error)}`);
+      return false;
     }
-    output.appendLine("Chappie Control Plane did not become ready. Check the Chappie output.");
+    if (!child) {
+      output.appendLine("Control Plane auto-start skipped: extension-owned process is already running.");
+      return false;
+    }
+    output.appendLine(`Control Plane child spawned (pid ${child.pid ?? "unknown"}).`);
+    child.once("error", (error) => output.appendLine(`Control Plane spawn error: ${safeDiagnostic(error)}`));
+    child.once("exit", (code, signal) => {
+      exited = true;
+      ownedProcess.release(child!);
+      output.appendLine(`Control Plane child exited (code ${code ?? "none"}, signal ${signal ?? "none"}).`);
+    });
+    child.stderr?.on("data", (chunk: Buffer) => {
+      output.appendLine(`Control Plane stderr: ${safeDiagnostic(chunk.toString())}`);
+    });
+    const deadline = Date.now() + CONTROL_PLANE_STARTUP_TIMEOUT_MS;
+    while (Date.now() < deadline && !exited) {
+      await new Promise((resolve) => setTimeout(resolve, CONTROL_PLANE_STARTUP_POLL_MS));
+      try {
+        await new ChappieControlPlaneClient(configuredPort()).health();
+        output.appendLine("Control Plane readiness handshake succeeded.");
+        await connect();
+        return true;
+      } catch (_error) { /* bounded wait; final result is logged below */ }
+    }
+    output.appendLine(
+      exited
+        ? "Control Plane exited before the readiness handshake."
+        : `Control Plane readiness timed out after ${CONTROL_PLANE_STARTUP_TIMEOUT_MS}ms.`,
+    );
     return false;
   };
 
@@ -198,7 +252,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       void vscode.window.showWarningMessage("Open a recognized Chappie workspace before running setup.");
       return;
     }
-    const command = resolveChappieSetupCommand(root, platform, fs.existsSync);
+    const command = resolveChappieSetupCommand(root, platform, fs.existsSync, setupResultPath);
     if (!command) {
       void vscode.window.showWarningMessage(setupBootstrapRemediation(platform));
       return;
@@ -209,6 +263,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       output.appendLine("Revealed existing Chappie Setup terminal.");
       return;
     }
+    fs.rmSync(setupResultPath, { force: true });
     setupTerminal.launch(command, (options) => vscode.window.createTerminal(options));
     output.appendLine(`Started canonical interactive setup in ${command.command}.`);
   };
@@ -217,11 +272,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     setupTerminal.closed(
       terminal,
       () => {
+        fs.rmSync(setupResultPath, { force: true });
         void refreshAfterSetup();
       },
       () => {
-        output.appendLine("Chappie setup did not complete; keeping the current status.");
-        void vscode.window.showWarningMessage("Chappie setup did not complete. Review the Chappie Setup terminal.");
+        const failure = readSetupFailureSummary(setupResultPath, fs.readFileSync);
+        fs.rmSync(setupResultPath, { force: true });
+        const message = failure?.message ?? "Chappie setup did not complete. Review the Chappie Setup terminal.";
+        output.appendLine(`${message} Keeping the current status.`);
+        void vscode.window.showWarningMessage(message);
       },
     );
   }));
@@ -261,14 +320,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   output.appendLine("Chappie extension activated.");
   const root = workspaceRoot();
   if (!root) {
-    tree.update("DISCONNECTED"); chat.update("DISCONNECTED", null, projectChatAvailability("DISCONNECTED", undefined, undefined, "UNKNOWN")); renderStatus(bar, "DISCONNECTED");
+    tree.update("DISCONNECTED"); chat.update("DISCONNECTED", null, projectChatAvailability("DISCONNECTED", undefined, undefined, "UNKNOWN", "UNCONFIGURED"), "Set up"); renderStatus(bar, "DISCONNECTED");
     output.appendLine("No recognized Chappie workspace is open.");
   } else if (vscode.workspace.getConfiguration("chappie").get<boolean>("autoConnect", true)) {
+    output.appendLine(`Recognized Chappie workspace: ${root}`);
     const connection = await connect();
     if (shouldAutoStartControlPlane(true, vscode.workspace.getConfiguration("chappie").get<boolean>("autoStartControlPlane", true), connection) && !ownedProcess.running) {
       await startOwned();
     }
-  } else { tree.update("DISCONNECTED"); chat.update("DISCONNECTED", null, projectChatAvailability("DISCONNECTED", undefined, undefined, "UNKNOWN")); renderStatus(bar, "DISCONNECTED"); }
+  } else { tree.update("DISCONNECTED"); chat.update("DISCONNECTED", null, projectChatAvailability("DISCONNECTED", undefined, undefined, "UNKNOWN", localState()), setupActionLabel("DISCONNECTED", undefined, undefined, "UNKNOWN", localState())); renderStatus(bar, "DISCONNECTED"); }
 }
 
 function workspaceRoot(): string | undefined {
@@ -284,6 +344,10 @@ function workspaceRoot(): string | undefined {
 function renderStatus(item: vscode.StatusBarItem, state: ConnectionState): void {
   item.text = `Chappie: ${state.charAt(0)}${state.slice(1).toLowerCase()}`;
   item.show();
+}
+
+function safeDiagnostic(value: unknown): string {
+  return String(value).replace(/[\r\n\t]+/g, " ").slice(0, 300);
 }
 
 export function deactivate(): void {}
@@ -366,6 +430,7 @@ const submit=()=>{if(!question.value.trim()||send.disabled)return;send.disabled=
 form.addEventListener('submit',event=>{event.preventDefault();submit();});question.addEventListener('keydown',event=>{if(event.key==='Enter'&&(event.metaKey||event.ctrlKey)){event.preventDefault();submit();}});
 document.getElementById('setup').addEventListener('click',()=>vscode.postMessage({type:'setup'}));
 window.addEventListener('message',event=>{const data=event.data;if(data.type!=='render')return;const unavailable=Boolean(data.availability);readiness.textContent=data.model?'Ready · '+data.model:(unavailable?'Chat unavailable · Setup required':'Ready');availabilityText.textContent=data.availability&&data.availability.includes('AI and Knowledge')?'Chat requires AI and Knowledge.':data.availability||'';availability.style.display=unavailable?'flex':'none';document.getElementById('setup').textContent=data.setupAction||'Set up';history.innerHTML=data.html||'<section class="empty"><div class="suggestions"><button class="suggestion" type="button">Understand architecture</button><button class="suggestion" type="button">Explain selected code</button><button class="suggestion" type="button">Ask about project decisions</button></div></section>';document.getElementById('preview').textContent=data.preview;send.disabled=unavailable;send.textContent='→';});
+window.addEventListener('message',event=>{const data=event.data;if(data.type!=='render')return;const unavailable=Boolean(data.availability),action=data.setupAction||'Set up';if(data.model){readiness.textContent='Ready - '+data.model;}else if(unavailable){readiness.textContent=action==='Reconnect'?'Chat unavailable - service disconnected':action==='Repair'?'Chat unavailable - repair required':'Chat unavailable - setup required';}else{readiness.textContent='Ready';}send.textContent='->';});
 history.addEventListener('click',event=>{const target=event.target;if(target.classList&&target.classList.contains('suggestion')){question.value=target.textContent;question.focus();}});
 </script></body></html>`;
 }

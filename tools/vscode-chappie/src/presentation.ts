@@ -41,8 +41,13 @@ export function projectChatAvailability(
   capability: string | undefined,
   aiProvider: string | null | undefined,
   knowledge: string,
+  localState: "UNCONFIGURED" | "DEGRADED" | "READY" = "UNCONFIGURED",
 ): string | null {
-  if (connection !== "CONNECTED") return "Chappie Control Plane is not connected.";
+  if (connection !== "CONNECTED") {
+    if (localState === "READY") return "Chappie is ready, but the local service is disconnected.";
+    if (localState === "DEGRADED") return "Chappie is configured but needs repair before the local service can connect.";
+    return "Chappie setup is required before the local service can connect.";
+  }
   if (capability === "AVAILABLE") return null;
   if (aiProvider === "NOT_CONFIGURED" && knowledge === "NOT_CONFIGURED") {
     return "Project chat unavailable. AI and Knowledge setup required.";
@@ -62,8 +67,12 @@ export function setupActionLabel(
   capability: string | undefined,
   aiProvider: string | null | undefined,
   knowledge: string,
-): "Set up" | "Repair" {
-  if (connection !== "CONNECTED" || capability === "AVAILABLE") return "Set up";
+  localState: "UNCONFIGURED" | "DEGRADED" | "READY" = "UNCONFIGURED",
+): "Set up" | "Repair" | "Reconnect" {
+  if (connection !== "CONNECTED") {
+    return localState === "READY" ? "Reconnect" : localState === "DEGRADED" ? "Repair" : "Set up";
+  }
+  if (capability === "AVAILABLE") return "Set up";
   return aiProvider === "NOT_CONFIGURED" && knowledge === "NOT_CONFIGURED" ? "Set up" : "Repair";
 }
 

@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import * as path from "node:path";
 import test from "node:test";
-import { ChappieControlPlaneClient, CONTROL_PLANE_HEALTH_TIMEOUT_MS, ControlPlaneClientError, ControlPlaneDependencyError, ControlPlaneIncompatibleError, PROJECT_QA_HTTP_TIMEOUT_MS } from "../client";
+import { ChappieControlPlaneClient, CONTROL_PLANE_HEALTH_TIMEOUT_MS, CONTROL_PLANE_REFRESH_TIMEOUT_MS, ControlPlaneClientError, ControlPlaneDependencyError, ControlPlaneIncompatibleError, PROJECT_QA_HTTP_TIMEOUT_MS } from "../client";
 import { capabilitySummary, contextPreview, humanState, projectChatAvailability, projectQaFailureMessage, setupActionLabel } from "../presentation";
 import { CONTROL_PLANE_DIGEST, CONTROL_PLANE_IDENTITY, TRANSPORT_DIGEST, TRANSPORT_IDENTITY } from "../contracts";
-import { ChappieSetupTerminalV1, isChappieWorkspace, OwnedControlPlaneProcess, resolveChappieExecutable, resolveChappieSetupCommand, setupBootstrapRemediation, shouldAutoStartControlPlane } from "../workspace";
+import { ChappieSetupTerminalV1, isChappieWorkspace, localWorkspaceState, OwnedControlPlaneProcess, readSetupFailureSummary, resolveChappieExecutable, resolveChappieSetupCommand, setupBootstrapRemediation, shouldAutoStartControlPlane } from "../workspace";
 import { appendTurn, ChatTurnV1, escapeHtml, MAX_CHAT_TURNS, renderTurns } from "../chat";
 import { WorkspaceContextCollector } from "../workspace_context";
 import { collectGitMetadata } from "../git_metadata";
@@ -85,7 +86,7 @@ test("typed Project QA dependency errors map without exposing expected HTTP stat
 
 test("platform executable resolution and owned process stop are argv-safe", () => {
   assert.equal(resolveChappieExecutable("/repo", "darwin", () => true).command, "/repo/.venv/bin/chappie");
-  assert.equal(resolveChappieExecutable("C:/repo", "win32", () => true).command, "C:/repo/.venv/Scripts/chappie.exe");
+  assert.equal(resolveChappieExecutable("C:/repo", "win32", () => true).command, path.win32.join("C:/repo", ".venv", "Scripts", "chappie.exe"));
   assert.equal(resolveChappieExecutable("/repo", "linux", () => false).command, "chappie");
   let killed = 0;
   const owned = new OwnedControlPlaneProcess();
@@ -101,7 +102,7 @@ test("interactive setup resolves only a workspace-local CLI with argv-safe canon
   const mac = resolveChappieSetupCommand("/repo", "darwin", () => true);
   const windows = resolveChappieSetupCommand("C:/repo", "win32", () => true);
   assert.deepEqual(mac, { command: "/repo/.venv/bin/chappie", args: ["setup", "--yes", "--interactive"], cwd: "/repo" });
-  assert.deepEqual(windows, { command: "C:/repo/.venv/Scripts/chappie.exe", args: ["setup", "--yes", "--interactive"], cwd: "C:/repo" });
+  assert.deepEqual(windows, { command: path.win32.join("C:/repo", ".venv", "Scripts", "chappie.exe"), args: ["setup", "--yes", "--interactive"], cwd: "C:/repo" });
   assert.equal(resolveChappieSetupCommand("/repo", "linux", () => false), undefined);
   assert.match(setupBootstrapRemediation("darwin"), /\.\/setup\.sh/);
   assert.match(setupBootstrapRemediation("win32"), /setup\.ps1/);
@@ -132,8 +133,9 @@ test("one setup terminal is reused and only a successful exit refreshes state", 
 });
 
 test("Chappie workspace detection requires all bounded repository markers", () => {
-  const files = new Set(["/repo/pyproject.toml", "/repo/app", "/repo/app/cli.py"]);
-  assert.equal(isChappieWorkspace("/repo", (candidate) => files.has(candidate), (candidate) => candidate === "/repo/app"), true);
+  const root = path.join(path.parse(process.cwd()).root, "repo");
+  const files = new Set([path.join(root, "pyproject.toml"), path.join(root, "app"), path.join(root, "app", "cli.py")]);
+  assert.equal(isChappieWorkspace(root, (candidate) => files.has(candidate), (candidate) => candidate === path.join(root, "app")), true);
   assert.equal(isChappieWorkspace("/python-project", () => true, () => false), false);
 });
 
@@ -143,6 +145,40 @@ test("auto-start is limited to a recognized unavailable local Control Plane", ()
   assert.equal(shouldAutoStartControlPlane(true, true, "INCOMPATIBLE"), false);
   assert.equal(shouldAutoStartControlPlane(false, true, "DISCONNECTED"), false);
   assert.equal(shouldAutoStartControlPlane(true, false, "DISCONNECTED"), false);
+});
+
+test("typed dirty-Knowledge setup failure is rendered as bounded Repair remediation", () => {
+  const command = resolveChappieSetupCommand("C:/repo", "win32", () => true, "C:/state/setup-result.json");
+  assert.deepEqual(command?.args, ["setup", "--yes", "--interactive", "--result-file", "C:/state/setup-result.json"]);
+  const summary = readSetupFailureSummary("result.json", () => JSON.stringify({
+    identity: "chappie_setup_engine/1.0.0",
+    steps: [{ code: "BUILD_KNOWLEDGE", state: "FAILED", message: "KNOWLEDGE_BUILD_BLOCKED_DIRTY_REPOSITORY" }],
+  }));
+  assert.equal(summary?.message, "Repair blocked: Knowledge requires a clean committed source snapshot. Commit or stash your changes, then retry Repair.");
+  assert.equal(readSetupFailureSummary("result.json", () => "not json"), undefined);
+});
+
+test("initial Control Plane refresh has a bounded startup-safe timeout", () => {
+  assert.ok(CONTROL_PLANE_REFRESH_TIMEOUT_MS > CONTROL_PLANE_HEALTH_TIMEOUT_MS);
+  assert.ok(CONTROL_PLANE_REFRESH_TIMEOUT_MS <= 15_000);
+});
+
+test("disconnected workspace UX distinguishes setup, repair, and reconnect", () => {
+  assert.equal(projectChatAvailability("DISCONNECTED", undefined, undefined, "UNKNOWN", "READY"), "Chappie is ready, but the local service is disconnected.");
+  assert.equal(setupActionLabel("DISCONNECTED", undefined, undefined, "UNKNOWN", "READY"), "Reconnect");
+  assert.equal(setupActionLabel("DISCONNECTED", undefined, undefined, "UNKNOWN", "DEGRADED"), "Repair");
+  assert.equal(setupActionLabel("DISCONNECTED", undefined, undefined, "UNKNOWN", "UNCONFIGURED"), "Set up");
+});
+
+test("local workspace state is a read-only disconnected UX hint", () => {
+  const windowsFiles = new Set([
+    path.win32.join("C:/repo", ".venv", "Scripts", "chappie.exe"),
+    path.win32.join("C:/repo", "data", "config", "chappie.json"),
+    path.win32.join("C:/repo", "data", "knowledge", "chappie_knowledge_v1.json"),
+  ]);
+  assert.equal(localWorkspaceState("C:/repo", "win32", (item) => windowsFiles.has(item)), "READY");
+  assert.equal(localWorkspaceState("C:/missing", "win32", () => false), "UNCONFIGURED");
+  assert.equal(localWorkspaceState("/repo", "darwin", (item) => item === "/repo/.venv/bin/chappie"), "DEGRADED");
 });
 
 test("connected degraded Project QA remains connected and presents bounded remediation", () => {
@@ -253,5 +289,11 @@ test("setup action launches canonical CLI only and detailed capabilities remain 
   assert.doesNotMatch(source, /Project Chat Unavailable/);
   assert.doesNotMatch(source, /No workspace context selected\./);
   assert.match(source, /send\.disabled=unavailable/);
+  assert.match(source, /CONTROL_PLANE_STARTUP_TIMEOUT_MS = 15_000/);
+  assert.match(source, /shell: options\.shell, stdio: "pipe"/);
+  assert.match(source, /Control Plane readiness handshake succeeded/);
+  assert.match(source, /Control Plane spawn error/);
+  assert.match(source, /Control Plane child exited/);
+  assert.match(source, /safeDiagnostic/);
   assert.match(source, /send\.textContent='→'/);
 });
