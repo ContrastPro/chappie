@@ -20,7 +20,7 @@ from app.news_event_macro import (
     official_macro_registry_digest,
     parse_official_macro_html,
 )
-from app.research_paths import compact_db_path, news_macro_download_cache_dir, results_dir
+from app.research.paths import compact_db_path, news_macro_download_cache_dir, results_dir
 
 
 def _fetch(url: str) -> bytes:

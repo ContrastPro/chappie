@@ -7,7 +7,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
-from app.research_paths import results_dir
+from app.research.paths import results_dir
 from app.strategy_history import load_dataset
 from app.strategy_long_history import summarize_timeframe
 from app.tools.strategy_evaluate import write_report_atomic

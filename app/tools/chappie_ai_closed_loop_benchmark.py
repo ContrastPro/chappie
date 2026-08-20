@@ -29,7 +29,7 @@ from app.ai.providers import OllamaProvider
 from app.ai.router import ModelRouter
 from app.ai.runtime import AIConfig, ChappieAI
 from app.ai.tasks import ModelProfile
-from app.research_paths import results_dir
+from app.research.paths import results_dir
 
 
 def _parser() -> argparse.ArgumentParser:

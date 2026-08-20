@@ -535,7 +535,7 @@ def _cached_funding(
 
 def _load_spot_source(symbol: str) -> tuple[SpotFlowObservation, ...]:
     """Use only the separately verified canonical spot timeline."""
-    from app.research_paths import spot_source_dir
+    from app.research.paths import spot_source_dir
 
     payload = _read_gzip_payload(spot_source_dir(symbol) / "flow_5m.json.gz")
     rows = load_flow_payload(payload)
@@ -613,7 +613,7 @@ def _build_derivatives_only(
     This is deliberately separate from the old V3B study builder: it neither
     downloads spot data nor recreates study-local source copies.
     """
-    from app.research_paths import futures_source_dir
+    from app.research.paths import futures_source_dir
 
     days = _days(start, end)
     start_ms, end_ms = utc_date_to_ms(start), utc_date_to_ms(end)
@@ -713,7 +713,7 @@ def _build_spot_only(
     cache_root: Path,
 ) -> dict[str, object]:
     """Build canonical spot-only flow artifacts without any derivatives request."""
-    from app.research_paths import spot_source_dir
+    from app.research.paths import spot_source_dir
 
     months = _months(start, end)
     start_ms, end_ms = utc_date_to_ms(start), utc_date_to_ms(end)
@@ -782,7 +782,7 @@ def _build_spot_only(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Build public flow/positioning research inputs")
-    from app.research_paths import download_cache_dir, results_dir, study_dir
+    from app.research.paths import download_cache_dir, results_dir, study_dir
 
     parser.add_argument("--root", type=Path, default=study_dir("market_intelligence") / "v3b")
     parser.add_argument("--cache-root", type=Path, default=download_cache_dir() / "usdm_metrics")

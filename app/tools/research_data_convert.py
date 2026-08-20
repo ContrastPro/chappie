@@ -11,7 +11,7 @@ from pathlib import Path
 
 from app.research.data.legacy_json import iter_legacy_rows
 from app.research.data.store import ResearchStore
-from app.research_paths import compact_db_path
+from app.research.paths import compact_db_path
 
 BATCH_SIZE = 1_000
 CONVERSION_SCHEMA = "research-conversion/v2d"

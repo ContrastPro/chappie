@@ -218,7 +218,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Analyze local V3B flow-positioning research datasets"
     )
-    from app.research_paths import flow_read_root, results_dir
+    from app.research.paths import flow_read_root, results_dir
 
     parser.add_argument("--root", type=Path, default=flow_read_root())
     parser.add_argument("--output-dir", type=Path, default=results_dir())

@@ -17,7 +17,7 @@ from app.market_intelligence import (
     load_context_payload,
     price_oi_state,
 )
-from app.research_paths import results_dir
+from app.research.paths import results_dir
 from app.strategy_history import load_dataset
 from app.tools.strategy_evaluate import write_report_atomic
 

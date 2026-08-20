@@ -24,7 +24,7 @@ from app.research.data.anomalies import (
     quality_status,
     split_historical_rows,
 )
-from app.research_paths import spot_source_dir
+from app.research.paths import spot_source_dir
 from app.strategy_history import (
     HistoricalDataset,
     HistoricalDatasetMetadata,

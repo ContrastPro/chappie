@@ -17,7 +17,7 @@ from app.ai.rde_canonical_storage import CanonicalExistingCacheStorageV1
 from app.ai.rde_capabilities import CapabilityStatusV1, ExistingEventResearchQueryV1
 from app.ai.rde_execution_cache import RDEResearchExecutionService, execution_cache_identity
 from app.ai.rde_query_executor import assess_existing_cache_query
-from app.research_paths import compact_db_path, rde_execution_cache_dir, rde_execution_results_dir
+from app.research.paths import compact_db_path, rde_execution_cache_dir, rde_execution_results_dir
 
 
 def load_query_artifact(path: Path) -> ExistingEventResearchQueryV1:

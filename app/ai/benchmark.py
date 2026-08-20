@@ -32,7 +32,7 @@ from app.ai.research_reasoning import (
 from app.ai.schemas import FactV1, ReasoningOutputV1, canonical_json, digest
 from app.ai.tasks import AITask
 from app.ai.trace import AITraceEvent, AITraceEventType, display_case_state, trace_event
-from app.research_paths import results_dir
+from app.research.paths import results_dir
 
 if TYPE_CHECKING:
     from app.ai.runtime import ChappieAI

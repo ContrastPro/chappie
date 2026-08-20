@@ -185,7 +185,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Download public mark/index basis research archives"
     )
-    from app.research_paths import basis_archive_root, study_dir
+    from app.research.paths import basis_archive_root, study_dir
 
     parser.add_argument("--root", type=Path, default=study_dir("leverage_stress") / "v4c")
     parser.add_argument("--cache-root", type=Path, default=basis_archive_root())

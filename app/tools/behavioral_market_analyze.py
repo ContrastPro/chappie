@@ -9,7 +9,7 @@ from pathlib import Path
 
 from app.behavioral_market import analyze_behavioral_market
 from app.market_intelligence_flow import FlowObservation, load_flow_payload
-from app.research_paths import flow_read_root, results_dir
+from app.research.paths import flow_read_root, results_dir
 from app.tools.strategy_evaluate import write_report_atomic
 
 

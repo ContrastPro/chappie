@@ -10,7 +10,7 @@ from pathlib import Path
 
 from app.leverage_stress import leverage_state, load_basis_payload
 from app.market_intelligence_flow import conditional_lift, future_return_bps, load_flow_payload
-from app.research_paths import flow_read_root, leverage_read_root, results_dir
+from app.research.paths import flow_read_root, leverage_read_root, results_dir
 from app.tools.strategy_evaluate import write_report_atomic
 
 HORIZONS = {"1h": 12, "3h": 36, "6h": 72, "12h": 144, "24h": 288}

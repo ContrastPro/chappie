@@ -57,7 +57,6 @@ ROOT_MODULE_ALLOWLIST = frozenset(
         "ollama_start.py",
         "project_qa_setup_smoke.py",
         "research_methodology.py",
-        "research_paths.py",
         "server_status.py",
         "setup_engine.py",
         "strategy_history.py",
@@ -130,6 +129,7 @@ COMPLETED_DIRECT_MIGRATIONS = {
     "app.research.data.event_bridge": "COMPLETED_DIRECT_MIGRATION",
     "app.research.data.legacy_json": "COMPLETED_DIRECT_MIGRATION",
     "app.research.data.outcomes": "COMPLETED_DIRECT_MIGRATION",
+    "app.research.paths": "COMPLETED_DIRECT_MIGRATION",
     "app.research.data.store": "COMPLETED_DIRECT_MIGRATION",
 }
 
@@ -245,6 +245,7 @@ def test_completed_direct_migrations_have_only_canonical_paths() -> None:
     assert not (APP / "research_event_bridge.py").exists()
     assert not (APP / "research_json.py").exists()
     assert not (APP / "research_outcomes.py").exists()
+    assert not (APP / "research_paths.py").exists()
     for module in COMPLETED_DIRECT_MIGRATIONS:
         assert importlib.util.find_spec(module) is not None
 
