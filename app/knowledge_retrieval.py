@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -35,9 +36,11 @@ RETRIEVAL_CONTRACT_DIGEST = digest(
         "authority_priority": [x.value for x in AUTHORITY_PRIORITY],
         "ranking": [
             "EXACT_ID",
+            "CANONICAL_ENTITY_TITLE",
+            "TITLE_TOKEN_OVERLAP",
+            "TAG_TOKEN_OVERLAP",
             "TYPE_MATCH",
             "AUTHORITY",
-            "TAG_TOKEN_OVERLAP",
             "STATUS",
             "KNOWLEDGE_ID",
         ],
@@ -49,6 +52,7 @@ RETRIEVAL_CONTRACT_DIGEST = digest(
 
 class SelectionReasonV1(StrEnum):
     EXACT_ID = "EXACT_ID"
+    CANONICAL_ENTITY_TITLE = "CANONICAL_ENTITY_TITLE"
     TYPE_MATCH = "TYPE_MATCH"
     TAG_MATCH = "TAG_MATCH"
     TOKEN_MATCH = "TOKEN_MATCH"
@@ -120,7 +124,7 @@ def retrieve(
     if request.include_planned:
         allowed.add(KnowledgeStatusV1.PLANNED)
     by_id = {item.knowledge_id: item for item in records}
-    candidates: list[tuple[KnowledgeRecordV1, tuple[SelectionReasonV1, ...], int]] = []
+    candidates: list[_CandidateV1] = []
     excluded: dict[str, int] = {}
     for item in records:
         if item.status not in allowed:
@@ -133,7 +137,9 @@ def retrieve(
             excluded["AUTHORITY_FILTER"] = excluded.get("AUTHORITY_FILTER", 0) + 1
             continue
         reasons: list[SelectionReasonV1] = []
-        text = _tokens(item.title, item.tags)
+        title_tokens = _tokens(item.title)
+        tag_tokens = _tokens(*item.tags)
+        topic_tokens = set(request.topic_tokens)
         if item.knowledge_id in request.record_ids:
             reasons.append(SelectionReasonV1.EXACT_ID)
         if (
@@ -145,38 +151,56 @@ def retrieve(
             reasons.append(SelectionReasonV1.TYPE_MATCH)
         if set(request.tags).intersection(item.tags):
             reasons.append(SelectionReasonV1.TAG_MATCH)
-        if set(request.topic_tokens).intersection(text):
+        title_overlap = len(topic_tokens.intersection(title_tokens))
+        # Do not let a title token duplicated as metadata inflate a weak match.
+        tag_overlap = len(topic_tokens.intersection(tag_tokens.difference(title_tokens)))
+        entity_match = len(title_tokens) >= 2 and title_tokens.issubset(topic_tokens)
+        if entity_match:
+            reasons.append(SelectionReasonV1.CANONICAL_ENTITY_TITLE)
+        if title_overlap or tag_overlap:
             reasons.append(SelectionReasonV1.TOKEN_MATCH)
         if request.authorities:
             reasons.append(SelectionReasonV1.REQUIRED_AUTHORITY)
         if not reasons and (request.record_ids or request.tags or request.topic_tokens):
             excluded["NO_EXACT_MATCH"] = excluded.get("NO_EXACT_MATCH", 0) + 1
             continue
-        overlap = len(set(request.tags).intersection(item.tags)) + len(
-            set(request.topic_tokens).intersection(text)
+        if (
+            len(topic_tokens) >= 2
+            and not entity_match
+            and title_overlap + tag_overlap < 2
+            and SelectionReasonV1.EXACT_ID not in reasons
+            and SelectionReasonV1.RELATION_EXPANSION not in reasons
+        ):
+            excluded["WEAK_TOPIC_MATCH"] = excluded.get("WEAK_TOPIC_MATCH", 0) + 1
+            continue
+        candidates.append(
+            _CandidateV1(item, tuple(reasons), title_overlap, tag_overlap, entity_match)
         )
-        candidates.append((item, tuple(reasons), overlap))
     selected = _rank(candidates, request)
     if request.relation_depth:
-        for item, _, _ in tuple(selected):
-            for related in item.related_record_ids:
+        for candidate in tuple(selected):
+            for related in candidate.record.related_record_ids:
                 if related in by_id and all(
-                    existing[0].knowledge_id != related for existing in selected
+                    existing.record.knowledge_id != related for existing in selected
                 ):
-                    selected.append((by_id[related], (SelectionReasonV1.RELATION_EXPANSION,), 0))
+                    selected.append(
+                        _CandidateV1(
+                            by_id[related], (SelectionReasonV1.RELATION_EXPANSION,), 0, 0, False
+                        )
+                    )
     selected = selected[: request.maximum_records]
-    bounded: list[tuple[KnowledgeRecordV1, tuple[SelectionReasonV1, ...], int]] = []
+    bounded: list[_CandidateV1] = []
     size = 0
     for item in selected:
-        length = len(item[0].statement) + sum(
-            len(source.path) + len(source.locator) for source in item[0].sources
+        length = len(item.record.statement) + sum(
+            len(source.path) + len(source.locator) for source in item.record.sources
         )
         if size + length > request.maximum_context_characters:
             excluded["CONTEXT_BUDGET"] = excluded.get("CONTEXT_BUDGET", 0) + 1
             continue
         bounded.append(item)
         size += length
-    chosen = tuple(item[0] for item in bounded)
+    chosen = tuple(item.record for item in bounded)
     conflicts = detect_conflicts(chosen)
     result_payload = {
         "identity": RETRIEVAL_IDENTITY,
@@ -191,7 +215,7 @@ def retrieve(
         manifest.manifest_digest,
         tuple(item.knowledge_id for item in chosen),
         tuple(item.record_digest for item in chosen),
-        tuple((item.knowledge_id, reasons) for item, reasons, _ in bounded),
+        tuple((item.record.knowledge_id, item.reasons) for item in bounded),
         tuple(sorted(excluded.items())),
         digest(result_payload),
     )
@@ -263,7 +287,16 @@ def build_knowledge_request_for_task(
     )
 
 
-def _rank(items, request):
+@dataclass(frozen=True, slots=True)
+class _CandidateV1:
+    record: KnowledgeRecordV1
+    reasons: tuple[SelectionReasonV1, ...]
+    title_overlap: int
+    tag_overlap: int
+    entity_match: bool
+
+
+def _rank(items: list[_CandidateV1], request: KnowledgeRetrievalRequestV1) -> list[_CandidateV1]:
     priority = {authority: index for index, authority in enumerate(AUTHORITY_PRIORITY)}
     status = {
         KnowledgeStatusV1.ACTIVE: 0,
@@ -276,17 +309,34 @@ def _rank(items, request):
     return sorted(
         items,
         key=lambda item: (
-            0 if SelectionReasonV1.EXACT_ID in item[1] else 1,
-            priority[item[0].authority],
-            -item[2],
-            status[item[0].status],
-            item[0].knowledge_id,
+            0 if SelectionReasonV1.EXACT_ID in item.reasons else 1,
+            0 if item.entity_match else 1,
+            -item.title_overlap,
+            -item.tag_overlap,
+            0 if SelectionReasonV1.TYPE_MATCH in item.reasons else 1,
+            priority[item.record.authority],
+            status[item.record.status],
+            item.record.knowledge_id,
         ),
     )
 
 
-def _tokens(title: str, tags: tuple[str, ...]) -> set[str]:
-    return set(title.casefold().replace("/", " ").replace("-", " ").split()).union(tags)
+def tokenize_topic(value: str) -> tuple[str, ...]:
+    """Return bounded normalized lexical tokens without query punctuation or filler words."""
+    stop_words = frozenset({"a", "an", "is", "of", "the", "what", "who", "owns"})
+    return tuple(
+        sorted(
+            {
+                token
+                for token in re.findall(r"[a-z0-9]+", value.casefold())
+                if token not in stop_words
+            }
+        )
+    )[:16]
+
+
+def _tokens(*values: str) -> set[str]:
+    return {token for value in values for token in re.findall(r"[a-z0-9]+", value.casefold())}
 
 
 def _verify_store(records, manifest) -> None:

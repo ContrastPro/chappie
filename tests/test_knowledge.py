@@ -32,7 +32,7 @@ def test_contract_and_initial_records_are_deterministic() -> None:
     assert KNOWLEDGE_IDENTITY == "chappie_knowledge/1.0.0"
     assert len(KNOWLEDGE_CONTRACT_DIGEST) == 64
     assert first == second
-    assert len(first) == 8
+    assert len(first) == 13
 
 
 def test_records_cover_authority_result_decision_and_exact_filters() -> None:
@@ -102,12 +102,9 @@ def test_ai_has_no_canonical_write_authority() -> None:
 
 def test_source_change_changes_only_affected_record_and_store_is_separate(tmp_path) -> None:
     # A tiny committed-like repository source snapshot, not a runtime or research DB.
-    for path in (
-        "docs/research/CHAPPIE_AI.md",
-        "app/ai/research_evidence_review.py",
-        "app/research_methodology.py",
-        "app/multi_asset_flow_intelligence.py",
-    ):
+    from app.knowledge import SOURCE_ALLOWLIST
+
+    for path in SOURCE_ALLOWLIST:
         target = tmp_path / path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(path, encoding="utf-8")

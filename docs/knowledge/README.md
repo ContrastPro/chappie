@@ -33,10 +33,13 @@ build bounded retrieval context from these records.
 `chappie_knowledge_retrieval/1.0.0` adds bounded exact retrieval without semantic
 similarity. Default selection includes only `ACTIVE` and `FROZEN` records; historical,
 planned, superseded, and rejected records require explicit inclusion. Ranking is exact
-ID, type, authority priority, tag/token overlap, status, then stable knowledge ID.
-Context is character-budgeted, preserves selected record provenance and conflicts, and
-has a digest bound to the retrieval contract and knowledge manifest. Task profiles are
-deterministic; no knowledge is automatically injected into an AI prompt yet.
+ID, canonical multiword entity-title match, title-token overlap, tag-token overlap, type,
+authority priority, status, then stable knowledge ID. Query tokenization discards punctuation
+and common question filler. A multi-token query with only a weak one-token collision is
+excluded rather than supplying an unrelated fact. Context is character-budgeted, preserves
+selected record provenance and conflicts, and has a digest bound to the retrieval contract and
+knowledge manifest. Task profiles are deterministic; no knowledge is automatically injected
+into an AI prompt yet.
 
 ## Project QA
 

@@ -438,7 +438,7 @@ def _run_project_qa(
     from app.ai.errors import AIProviderError, AIProviderTimeoutError, AIValidationError
     from app.ai_setup_smoke import build_configured_chappie_ai, valid_setup_ai_config
     from app.knowledge import read_store
-    from app.knowledge_retrieval import KnowledgeRetrievalRequestV1, retrieve
+    from app.knowledge_retrieval import KnowledgeRetrievalRequestV1, retrieve, tokenize_topic
 
     config = load_local_config(paths)
     if config is None or not valid_setup_ai_config(config):
@@ -448,7 +448,7 @@ def _run_project_qa(
         _result, context = retrieve(
             records,
             knowledge_manifest,
-            KnowledgeRetrievalRequestV1(topic_tokens=_question_tokens(question)),
+            KnowledgeRetrievalRequestV1(topic_tokens=tokenize_topic(question)),
         )
     except ValueError:
         return _project_qa_error(
@@ -500,10 +500,6 @@ def _run_project_qa(
         workspace_context.context_digest if workspace_context else None,
         _workspace_provenance(workspace_context),
     )
-
-
-def _question_tokens(question: str) -> tuple[str, ...]:
-    return tuple(sorted({token.casefold() for token in question.split() if token.isalnum()}))[:16]
 
 
 def _project_qa_error(
