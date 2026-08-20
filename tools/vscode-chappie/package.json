@@ -4,6 +4,11 @@
   "description": "Local Chappie Control Plane companion.",
   "version": "0.1.0",
   "publisher": "chappie-local",
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ContrastPro/chappie.git"
+  },
   "engines": {
     "vscode": "^1.95.0"
   },
@@ -22,6 +27,13 @@
     "onCommand:chappie.openView"
   ],
   "main": "./out/extension.js",
+  "files": [
+    "out/*.js",
+    "resources",
+    "README.md",
+    "LICENSE",
+    "package.json"
+  ],
   "contributes": {
     "commands": [
       {

@@ -1,0 +1,5 @@
+Chappie VS Code extension — private/internal distribution only.
+
+This repository does not grant an open-source license for the extension or its
+bundled VSIX. The artifact is provided only for authorized Chappie dogfood and
+workstation bootstrap use. Marketplace publication is not authorized.

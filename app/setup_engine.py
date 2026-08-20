@@ -31,6 +31,7 @@ from app.bootstrap import (
 from app.macos_ollama import MacOllamaInstallerV1
 from app.ollama_readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
 from app.project_qa_setup_smoke import ProjectQASetupSmokeStateV1, ProjectQASetupSmokeV1
+from app.vscode_integration import VscodeExtensionInstallerV1, VscodeExtensionStateV1
 from app.windows_ollama import WindowsOllamaInstallerV1
 
 SETUP_ENGINE_IDENTITY = "chappie_setup_engine/1.0.0"
@@ -62,6 +63,7 @@ class SetupActionCodeV1(StrEnum):
     INSTALL_AI_MODEL = "INSTALL_AI_MODEL"
     VERIFY_AI = "VERIFY_AI"
     PROJECT_QA_SMOKE = "PROJECT_QA_SMOKE"
+    INSTALL_VSCODE_EXTENSION = "INSTALL_VSCODE_EXTENSION"
     DEV_TOOLS = "DEV_TOOLS"
 
 
@@ -103,6 +105,7 @@ class SetupActionV1:
     estimated_storage_bytes: int | None = None
     requires_admin: bool = False
     depends_on: tuple[SetupActionCodeV1, ...] = ()
+    optional: bool = False
 
     def payload(self) -> dict[str, object]:
         return {
@@ -113,6 +116,7 @@ class SetupActionV1:
             "estimated_storage_bytes": self.estimated_storage_bytes,
             "requires_admin": self.requires_admin,
             "depends_on": [item.value for item in self.depends_on],
+            "optional": self.optional,
         }
 
 
@@ -279,6 +283,7 @@ class SetupEngineV1:
         ollama_readiness_coordinator: OllamaReadinessCoordinator | None = None,
         smoke: ChappieAISetupSmokeV1 | object | None = None,
         project_qa_smoke: ProjectQASetupSmokeV1 | object | None = None,
+        vscode_extension: VscodeExtensionInstallerV1 | None = None,
     ) -> None:
         self.paths = paths
         self._runner = runner
@@ -287,11 +292,24 @@ class SetupEngineV1:
         self._ollama_readiness_coordinator = ollama_readiness_coordinator
         self._smoke = smoke
         self._project_qa_smoke = project_qa_smoke
+        self._vscode_extension = vscode_extension
 
     def plan(
         self, *, developer: bool = False, ai_profile: AIModelProfileV1 | None = None
     ) -> tuple[SetupActionV1, ...]:
-        return default_actions(developer=developer, ai_profile=ai_profile)
+        actions = default_actions(developer=developer, ai_profile=ai_profile)
+        if self._vscode_extension is None or ai_profile is None:
+            return actions
+        return actions + (
+            SetupActionV1(
+                SetupActionCodeV1.INSTALL_VSCODE_EXTENSION,
+                ActionSafetyV1.SAFE,
+                "Install or update the verified local Chappie VS Code extension when VS Code is available.",
+                None,
+                depends_on=(SetupActionCodeV1.PROJECT_QA_SMOKE,),
+                optional=True,
+            ),
+        )
 
     def required_external_actions(
         self, *, ai_profile: AIModelProfileV1 | None = None
@@ -411,8 +429,12 @@ class SetupEngineV1:
                 except Exception as error:  # noqa: BLE001 - persist any setup operation failure safely
                     result = SetupStepResultV1(
                         action.code,
-                        SetupStepStateV1.FAILED,
-                        self._failure_reason(action, error),
+                        SetupStepStateV1.SKIPPED if action.optional else SetupStepStateV1.FAILED,
+                        (
+                            f"OPTIONAL_WORKSTATION:{self._failure_reason(action, error)}"
+                            if action.optional
+                            else self._failure_reason(action, error)
+                        ),
                         round((time.monotonic() - started) * 1000),
                     )
             results.append(result)
@@ -432,7 +454,7 @@ class SetupEngineV1:
             self._persist(
                 SetupRunStateV1(SETUP_ENGINE_IDENTITY, SETUP_ENGINE_DIGEST, tuple(results))
             )
-            if result.state == SetupStepStateV1.FAILED:
+            if result.state == SetupStepStateV1.FAILED and not action.optional:
                 break
         return SetupRunStateV1(SETUP_ENGINE_IDENTITY, SETUP_ENGINE_DIGEST, tuple(results))
 
@@ -501,6 +523,11 @@ class SetupEngineV1:
             )
         if action.code == SetupActionCodeV1.PROJECT_QA_SMOKE:
             return bool(getattr(self, "_project_qa_verified_this_run", False))
+        if action.code == SetupActionCodeV1.INSTALL_VSCODE_EXTENSION:
+            return self._vscode_extension is None or self._vscode_extension.inspect().state in {
+                VscodeExtensionStateV1.READY,
+                VscodeExtensionStateV1.NOT_APPLICABLE,
+            }
         return False
 
     def _apply(
@@ -549,6 +576,16 @@ class SetupEngineV1:
             if result.state != ProjectQASetupSmokeStateV1.VALID:
                 raise ProjectQASmokeFailure(result.state)
             self._project_qa_verified_this_run = True
+            return
+        if action.code == SetupActionCodeV1.INSTALL_VSCODE_EXTENSION:
+            if self._vscode_extension is None:
+                return
+            result = self._vscode_extension.ensure_installed()
+            if result.state not in {
+                VscodeExtensionStateV1.READY,
+                VscodeExtensionStateV1.NOT_APPLICABLE,
+            }:
+                raise RuntimeError(result.message)
             return
         if action.safety != ActionSafetyV1.SAFE:
             raise PermissionError(

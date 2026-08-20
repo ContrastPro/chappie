@@ -1,6 +1,7 @@
 # Native bootstrap only; the Python setup engine owns Chappie setup semantics.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
+Push-Location $root
 try {
   $python = Get-Command python -ErrorAction SilentlyContinue
   if ($null -eq $python) { throw 'Chappie requires Python 3.13 or newer. Install it, then re-run setup.ps1.' }
@@ -23,4 +24,7 @@ try {
 catch {
   Write-Error $_
   exit 1
+}
+finally {
+  Pop-Location
 }

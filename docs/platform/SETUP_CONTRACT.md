@@ -166,3 +166,27 @@ Before Linux is supported, implement and prove:
 
 Linux support is complete only when it has behavioral parity, not merely an
 installer.
+
+## Optional workstation integration
+
+Core Chappie setup is complete without VS Code.  After the core Knowledge, AI,
+and Project QA postconditions are verified, a supported workstation may perform
+one optional local integration: install the bundled Chappie VS Code extension.
+Its absence, a missing VS Code CLI, or a local extension-install failure must
+never turn a verified core setup into a non-READY result.
+
+The distributable is a versioned repository artifact at
+`tools/vscode-chappie/dist/chappie-vscode-<version>.vsix`.  Before any VS Code
+call, setup verifies its SHA-256 against the adjacent `SHA256SUMS` manifest.
+The extension is installed only through argv-safe local CLI execution:
+
+```text
+code --install-extension <verified-local-vsix> --force
+```
+
+No marketplace lookup, Node/npm execution, shell command, model action, or
+external authorization is involved in normal workstation installation. Node is
+developer-only tooling used to rebuild the checked-in VSIX. Setup does not
+reinstall an equal or newer compatible local extension and never silently
+downgrades a newer one. Windows resolves `code.cmd`/`code.exe` before `code`;
+other supported platforms resolve `code`.

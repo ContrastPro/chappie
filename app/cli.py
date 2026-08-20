@@ -42,6 +42,7 @@ from app.setup_engine import (
     SetupApprovalV1,
     SetupEngineV1,
 )
+from app.vscode_integration import VscodeExtensionInstallerV1
 from app.windows_ollama import WindowsOllamaInstallerV1
 
 
@@ -72,6 +73,7 @@ def _setup_engine(paths: ChappiePaths, *, interactive_output: bool = True) -> Se
             ),
             smoke=ChappieAISetupSmokeV1(),
             project_qa_smoke=ProjectQASetupSmokeV1(),
+            vscode_extension=VscodeExtensionInstallerV1(paths.root),
         )
     if platform.system() == "Darwin":
         installer = MacOllamaInstallerV1(interactive_output=interactive_output)
@@ -85,6 +87,7 @@ def _setup_engine(paths: ChappiePaths, *, interactive_output: bool = True) -> Se
             ),
             smoke=ChappieAISetupSmokeV1(),
             project_qa_smoke=ProjectQASetupSmokeV1(),
+            vscode_extension=VscodeExtensionInstallerV1(paths.root),
         )
     return SetupEngineV1(paths)
 
@@ -118,6 +121,7 @@ class _SetupProgress:
         SetupActionCodeV1.INSTALL_AI_PROVIDER,
         SetupActionCodeV1.VERIFY_AI,
         SetupActionCodeV1.PROJECT_QA_SMOKE,
+        SetupActionCodeV1.INSTALL_VSCODE_EXTENSION,
     }
     _LABELS: ClassVar[dict[SetupActionCodeV1, str]] = {
         SetupActionCodeV1.BUILD_KNOWLEDGE: "Building Chappie Knowledge",
@@ -125,6 +129,7 @@ class _SetupProgress:
         SetupActionCodeV1.INSTALL_AI_MODEL: "Installing selected local model",
         SetupActionCodeV1.VERIFY_AI: "Verifying Chappie AI structured response",
         SetupActionCodeV1.PROJECT_QA_SMOKE: "Verifying Chappie Project Knowledge",
+        SetupActionCodeV1.INSTALL_VSCODE_EXTENSION: "Installing Chappie VS Code extension",
     }
 
     def __init__(self, total: int) -> None:

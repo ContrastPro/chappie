@@ -75,6 +75,24 @@ def test_engine_identity_and_safe_external_action_classification() -> None:
     )
 
 
+def test_vscode_workstation_stage_is_optional_and_only_added_with_local_integration(
+    tmp_path: Path,
+) -> None:
+    class Extension:
+        pass
+
+    engine = SetupEngineV1(_paths(tmp_path), vscode_extension=Extension())
+    actions = engine.plan(ai_profile=AIModelProfileV1.BALANCED)
+    assert actions[-1].code == SetupActionCodeV1.INSTALL_VSCODE_EXTENSION
+    assert actions[-1].optional is True
+    assert SetupActionCodeV1.INSTALL_VSCODE_EXTENSION not in {
+        action.code
+        for action in SetupEngineV1(_paths(tmp_path / "without")).plan(
+            ai_profile=AIModelProfileV1.BALANCED
+        )
+    }
+
+
 def test_catalog_model_discovery_is_read_only_and_does_not_start_provider(tmp_path: Path) -> None:
     events: list[str] = []
 
@@ -304,6 +322,8 @@ def test_bootstrap_scripts_hand_control_to_chappie_engine() -> None:
     powershell = Path("setup.ps1").read_text(encoding="utf-8")
     assert "Python 3.13" in shell and '"$ROOT/.venv/bin/chappie" setup' in shell
     assert "Python 3.13" in powershell and "chappie.exe') @setupArgs" in powershell
+    assert 'cd "$ROOT"' in shell
+    assert "Push-Location $root" in powershell and "Pop-Location" in powershell
     assert "sudo" not in shell.casefold() + powershell.casefold()
 
 
