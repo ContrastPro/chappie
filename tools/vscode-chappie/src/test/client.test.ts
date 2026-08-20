@@ -4,7 +4,7 @@ import test from "node:test";
 import { ChappieControlPlaneClient, ControlPlaneClientError, ControlPlaneDependencyError, ControlPlaneIncompatibleError } from "../client";
 import { capabilitySummary, contextPreview, humanState, projectChatAvailability, projectQaFailureMessage } from "../presentation";
 import { CONTROL_PLANE_DIGEST, CONTROL_PLANE_IDENTITY, TRANSPORT_DIGEST, TRANSPORT_IDENTITY } from "../contracts";
-import { isChappieWorkspace, OwnedControlPlaneProcess, resolveChappieExecutable, shouldAutoStartControlPlane } from "../workspace";
+import { ChappieSetupTerminalV1, isChappieWorkspace, OwnedControlPlaneProcess, resolveChappieExecutable, resolveChappieSetupCommand, setupBootstrapRemediation, shouldAutoStartControlPlane } from "../workspace";
 import { appendTurn, ChatTurnV1, escapeHtml, MAX_CHAT_TURNS, renderTurns } from "../chat";
 import { WorkspaceContextCollector } from "../workspace_context";
 import { collectGitMetadata } from "../git_metadata";
@@ -82,6 +82,40 @@ test("platform executable resolution and owned process stop are argv-safe", () =
   assert.equal(killed, 1);
 });
 
+test("interactive setup resolves only a workspace-local CLI with argv-safe canonical arguments", () => {
+  const mac = resolveChappieSetupCommand("/repo", "darwin", () => true);
+  const windows = resolveChappieSetupCommand("C:/repo", "win32", () => true);
+  assert.deepEqual(mac, { command: "/repo/.venv/bin/chappie", args: ["setup", "--yes", "--interactive"], cwd: "/repo" });
+  assert.deepEqual(windows, { command: "C:/repo/.venv/Scripts/chappie.exe", args: ["setup", "--yes", "--interactive"], cwd: "C:/repo" });
+  assert.equal(resolveChappieSetupCommand("/repo", "linux", () => false), undefined);
+  assert.match(setupBootstrapRemediation("darwin"), /\.\/setup\.sh/);
+  assert.match(setupBootstrapRemediation("win32"), /setup\.ps1/);
+});
+
+test("one setup terminal is reused and only a successful exit refreshes state", () => {
+  const session = new ChappieSetupTerminalV1();
+  const calls: Array<{ options: unknown; shown: number }> = [];
+  const terminal = {
+    name: "Chappie Setup",
+    exitStatus: { code: 0 },
+    show: () => { calls[0].shown += 1; },
+  };
+  const command = { command: "/repo/.venv/bin/chappie", args: ["setup", "--yes", "--interactive"], cwd: "/repo" };
+  assert.equal(session.launch(command, (options) => { calls.push({ options, shown: 0 }); return terminal; }), "STARTED");
+  assert.equal(session.launch(command, () => { throw new Error("duplicate setup terminal"); }), "REUSED");
+  assert.deepEqual(calls[0].options, { name: "Chappie Setup", cwd: "/repo", shellPath: "/repo/.venv/bin/chappie", shellArgs: ["setup", "--yes", "--interactive"] });
+  let success = 0;
+  let failure = 0;
+  session.closed(terminal, () => { success += 1; }, () => { failure += 1; });
+  assert.equal(success, 1);
+  assert.equal(failure, 0);
+  const failed = { ...terminal, exitStatus: { code: 1 } };
+  session.adopt(failed);
+  session.closed(failed, () => { success += 1; }, () => { failure += 1; });
+  assert.equal(success, 1);
+  assert.equal(failure, 1);
+});
+
 test("Chappie workspace detection requires all bounded repository markers", () => {
   const files = new Set(["/repo/pyproject.toml", "/repo/app", "/repo/app/cli.py"]);
   assert.equal(isChappieWorkspace("/repo", (candidate) => files.has(candidate), (candidate) => candidate === "/repo/app"), true);
@@ -104,12 +138,12 @@ test("connected degraded Project QA remains connected and presents bounded remed
   assert.equal(capabilitySummary([{ status: "AVAILABLE" }, { status: "DEGRADED" }, { status: "UNAVAILABLE" }]), "1/3");
 });
 
-test("compact presentation translates states and provides explicit safe context previews", () => {
+test("compact presentation translates states and only renders selected safe context previews", () => {
   assert.equal(humanState("SETUP_REQUIRED"), "Setup required");
   assert.equal(humanState("NOT_CONFIGURED"), "Not configured");
   assert.equal(humanState("READY"), "Ready");
   assert.equal(contextPreview({ active_file_relative_path: "app/control_plane.py", selected_text_range: { start_line: 119, end_line: 137 }, excerpt_range: null, git_branch: "main", git_dirty: true }), "app/control_plane.py · Lines 120–138\nGit · main · dirty");
-  assert.equal(contextPreview(undefined), "No workspace context selected.");
+  assert.equal(contextPreview(undefined), "");
 });
 
 test("project QA response, history, and renderer remain bounded and escaped", async () => {
@@ -179,14 +213,27 @@ test("activation remains bounded to the Chappie CLI marker", () => {
   assert.equal(manifest.activationEvents.includes("workspaceContains:pyproject.toml"), false);
 });
 
-test("setup remediation and detailed capabilities remain explicit commands", () => {
+test("setup action launches canonical CLI only and detailed capabilities remain explicit", () => {
   const manifest = JSON.parse(readFileSync("package.json", "utf8")) as { contributes: { commands: Array<{ command: string }> } };
-  assert.deepEqual(manifest.contributes.commands.map((item) => item.command).filter((item) => item.startsWith("chappie.show")), ["chappie.showDoctor", "chappie.showCapabilities", "chappie.showSetupInstructions"]);
+  assert.ok(manifest.contributes.commands.some((item) => item.command === "chappie.runSetup"));
   const source = readFileSync("src/extension.ts", "utf8");
-  assert.match(source, /macOS local AI setup is not implemented/);
+  assert.match(source, /resolveChappieSetupCommand/);
+  assert.match(source, /createTerminal\(options\)/);
+  assert.match(source, /onDidCloseTerminal/);
+  assert.match(source, /Chappie setup completed; refreshing local status/);
+  assert.doesNotMatch(source, /macOS local AI setup is not implemented/);
+  assert.doesNotMatch(source, /ollama pull|ollama serve|OllamaSetup/);
   assert.match(source, /Capabilities: \$\{capabilitySummary/);
   assert.match(source, /aria-pressed/);
   assert.match(source, /Sensitive file blocked\. Context was not sent/);
   assert.match(source, /--vscode-sideBar-background/);
-  assert.match(source, /Project Chat Unavailable/);
+  assert.match(source, /Chat requires AI and Knowledge\./);
+  assert.match(source, /Chat unavailable · Setup required/);
+  assert.match(source, /Ready · '\+data\.model/);
+  assert.match(source, /id="setup"/);
+  assert.match(source, /type:'setup'/);
+  assert.doesNotMatch(source, /Project Chat Unavailable/);
+  assert.doesNotMatch(source, /No workspace context selected\./);
+  assert.match(source, /send\.disabled=unavailable/);
+  assert.match(source, /send\.textContent='→'/);
 });

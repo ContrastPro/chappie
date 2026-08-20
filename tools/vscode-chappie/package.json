@@ -18,7 +18,7 @@
     "onCommand:chappie.stopLocalControlPlane",
     "onCommand:chappie.showDoctor",
     "onCommand:chappie.showCapabilities",
-    "onCommand:chappie.showSetupInstructions",
+    "onCommand:chappie.runSetup",
     "onCommand:chappie.openView"
   ],
   "main": "./out/extension.js",
@@ -45,8 +45,8 @@
         "title": "Chappie: Show Capabilities"
       },
       {
-        "command": "chappie.showSetupInstructions",
-        "title": "Chappie: Show Setup Instructions"
+        "command": "chappie.runSetup",
+        "title": "Chappie: Set Up"
       },
       {
         "command": "chappie.openView",

@@ -26,14 +26,14 @@ export function contextPreview(context: {
   git_branch: string | null;
   git_dirty: boolean | null;
 } | undefined): string {
-  if (!context) return "No workspace context selected.";
+  if (!context) return "";
   const rows: string[] = [];
   if (context.active_file_relative_path) {
     const range = context.selected_text_range ?? context.excerpt_range;
     rows.push(range ? `${context.active_file_relative_path} · Lines ${range.start_line + 1}–${range.end_line + 1}` : context.active_file_relative_path);
   }
   if (context.git_branch) rows.push(`Git · ${context.git_branch}${context.git_dirty ? " · dirty" : ""}`);
-  return rows.join("\n") || "No workspace context selected.";
+  return rows.join("\n");
 }
 
 export function projectChatAvailability(

@@ -12,7 +12,7 @@ import { appendTurn, ChatTurnV1, renderTurns } from "./chat";
 import { capabilitySummary, contextPreview, humanState, projectChatAvailability, projectQaFailureMessage } from "./presentation";
 import { WorkspaceContextCollector } from "./workspace_context";
 import { collectGitMetadata } from "./git_metadata";
-import { isChappieWorkspace, OwnedControlPlaneProcess, resolveChappieExecutable, shouldAutoStartControlPlane } from "./workspace";
+import { ChappieSetupTerminalV1, isChappieWorkspace, OwnedControlPlaneProcess, resolveChappieExecutable, resolveChappieSetupCommand, setupBootstrapRemediation, shouldAutoStartControlPlane } from "./workspace";
 
 interface Snapshot {
   status?: ControlPlaneStatusV1;
@@ -37,7 +37,7 @@ class ChappieTree implements vscode.TreeDataProvider<vscode.TreeItem> {
   public getChildren(item?: vscode.TreeItem): vscode.TreeItem[] {
     if (item) { return []; }
     const rows = [
-      `Connection: ${humanState(this.state)}`,
+      `● ${humanState(this.state)}`,
       `System: ${humanState(String(this.snapshot.status?.status?.overall_state ?? "UNKNOWN"))}`,
       `AI: ${this.snapshot.ai?.model ?? humanState(this.snapshot.ai?.provider_state)}`,
       `Knowledge: ${humanState(componentState(this.snapshot.status, "KNOWLEDGE"))}`,
@@ -50,7 +50,7 @@ class ChappieTree implements vscode.TreeDataProvider<vscode.TreeItem> {
         treeItem.command = { command: "chappie.showCapabilities", title: "Chappie: Show Capabilities" };
       }
       if (label === "System: SETUP_REQUIRED") {
-        treeItem.command = { command: "chappie.showSetupInstructions", title: "Chappie: Show Setup Instructions" };
+        treeItem.command = { command: "chappie.runSetup", title: "Chappie: Set Up" };
       }
       return treeItem;
     });
@@ -63,7 +63,7 @@ class ChappieChatView implements vscode.WebviewViewProvider {
   private state: ConnectionState = "DISCONNECTED";
   private model: string | null = null;
   private availability = "Chappie Control Plane is not connected.";
-  private preview = "No workspace context selected.";
+  private preview = "";
 
   public constructor(private readonly client: () => ChappieControlPlaneClient) {}
 
@@ -72,6 +72,10 @@ class ChappieChatView implements vscode.WebviewViewProvider {
     view.webview.options = { enableScripts: true };
     view.webview.html = chatHtml();
     view.webview.onDidReceiveMessage(async (message: unknown) => {
+      if (isSetupMessage(message)) {
+        await vscode.commands.executeCommand("chappie.runSetup");
+        return;
+      }
       if (isContextPreviewMessage(message)) {
         this.preview = contextPreviewFor(message);
         this.render();
@@ -117,6 +121,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const bar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   const tree = new ChappieTree();
   const ownedProcess = new OwnedControlPlaneProcess();
+  const setupTerminal = new ChappieSetupTerminalV1();
   const configuredPort = (): number => vscode.workspace.getConfiguration("chappie").get<number>("controlPlane.port", 8765);
   const chat = new ChappieChatView(() => new ChappieControlPlaneClient(configuredPort()));
   context.subscriptions.push(output, bar, vscode.window.registerTreeDataProvider("chappie.status", tree), vscode.window.registerWebviewViewProvider("chappie.chat", chat), { dispose: () => { ownedProcess.stop(); } });
@@ -170,6 +175,42 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return false;
   };
 
+  const runSetup = (): void => {
+    const root = workspaceRoot();
+    const platform = globalThis.process.platform as "win32" | "darwin" | "linux";
+    if (!root) {
+      void vscode.window.showWarningMessage("Open a recognized Chappie workspace before running setup.");
+      return;
+    }
+    const command = resolveChappieSetupCommand(root, platform, fs.existsSync);
+    if (!command) {
+      void vscode.window.showWarningMessage(setupBootstrapRemediation(platform));
+      return;
+    }
+    const existing = vscode.window.terminals.find((terminal) => terminal.name === "Chappie Setup");
+    if (existing) {
+      setupTerminal.adopt(existing);
+      output.appendLine("Revealed existing Chappie Setup terminal.");
+      return;
+    }
+    setupTerminal.launch(command, (options) => vscode.window.createTerminal(options));
+    output.appendLine(`Started canonical interactive setup in ${command.command}.`);
+  };
+
+  context.subscriptions.push(vscode.window.onDidCloseTerminal((terminal) => {
+    setupTerminal.closed(
+      terminal,
+      () => {
+        output.appendLine("Chappie setup completed; refreshing local status.");
+        void connect();
+      },
+      () => {
+        output.appendLine("Chappie setup did not complete; keeping the current status.");
+        void vscode.window.showWarningMessage("Chappie setup did not complete. Review the Chappie Setup terminal.");
+      },
+    );
+  }));
+
   context.subscriptions.push(
     vscode.commands.registerCommand("chappie.refresh", connect),
     vscode.commands.registerCommand("chappie.openView", () => vscode.commands.executeCommand("workbench.view.extension.chappie")),
@@ -192,9 +233,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         void vscode.window.showErrorMessage(error instanceof Error ? error.message : "Chappie capabilities unavailable");
       }
     }),
-    vscode.commands.registerCommand("chappie.showSetupInstructions", () => {
-      void vscode.window.showInformationMessage("Chappie macOS local AI setup is not implemented. Run .venv/bin/chappie setup --plan to review safe local setup steps.");
-    }),
+    vscode.commands.registerCommand("chappie.runSetup", runSetup),
     vscode.commands.registerCommand("chappie.startLocalControlPlane", async () => {
       await startOwned();
     }),
@@ -242,6 +281,10 @@ function isContextPreviewMessage(value: unknown): value is { type: "context-prev
   return typeof value === "object" && value !== null && (value as { type?: unknown }).type === "context-preview";
 }
 
+function isSetupMessage(value: unknown): value is { type: "setup" } {
+  return typeof value === "object" && value !== null && (value as { type?: unknown }).type === "setup";
+}
+
 function collectWorkspaceContext(message: { includeFile?: boolean; includeSelection?: boolean; includeGit?: boolean }) {
   const editor = vscode.window.activeTextEditor;
   const folder = editor ? vscode.workspace.getWorkspaceFolder(editor.document.uri) : undefined;
@@ -281,34 +324,33 @@ function chatHtml(): string {
 :root { color: var(--vscode-foreground); font-family: var(--vscode-font-family); font-size: 13px; }
 * { box-sizing: border-box; } body { background: var(--vscode-sideBar-background); color: var(--vscode-foreground); margin: 0; padding: 12px; }
 .visually-hidden { height: 1px; margin: -1px; overflow: hidden; position: absolute; width: 1px; }
-.header { align-items: center; border-bottom: 1px solid var(--vscode-panel-border); display: flex; justify-content: space-between; padding-bottom: 10px; }
-.brand { font-size: 12px; font-weight: 700; letter-spacing: .08em; } .connection { color: var(--vscode-descriptionForeground); font-size: 12px; }
-.dot { color: var(--vscode-testing-iconPassed); font-size: 14px; } .subtle { color: var(--vscode-descriptionForeground); margin: 8px 0 12px; white-space: pre-line; }
-#availability { background: color-mix(in srgb, var(--vscode-editorWarning-foreground) 12%, transparent); border-left: 2px solid var(--vscode-editorWarning-foreground); color: var(--vscode-foreground); display: none; margin: 12px 0; padding: 8px; }
-#history { display: grid; gap: 10px; } .empty { border: 1px dashed var(--vscode-panel-border); color: var(--vscode-descriptionForeground); padding: 12px; }
-.suggestions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; } .suggestion { background: var(--vscode-badge-background); border: 0; color: var(--vscode-badge-foreground); cursor: pointer; padding: 4px 7px; }
+.readiness { color: var(--vscode-descriptionForeground); font-size: 12px; margin: 0 0 8px; }
+#availability { align-items: center; border-top: 1px solid var(--vscode-panel-border); color: var(--vscode-descriptionForeground); display: none; font-size: 12px; gap: 8px; margin: 0 0 8px; padding: 8px 0; }
+#setup { background: transparent; border: 1px solid var(--vscode-button-border, var(--vscode-input-border)); color: var(--vscode-textLink-foreground); cursor: pointer; font: inherit; padding: 2px 6px; }
+#history { display: grid; gap: 8px; } .empty { color: var(--vscode-descriptionForeground); padding: 4px 0; }
+.suggestions { display: grid; gap: 2px; margin-top: 6px; } .suggestion { background: transparent; border: 0; color: var(--vscode-textLink-foreground); cursor: pointer; padding: 3px 0; text-align: left; }
 .turn { border: 1px solid var(--vscode-panel-border); padding: 9px; } .turn p { margin: 0 0 8px; } .turn .label { color: var(--vscode-descriptionForeground); font-size: 11px; font-weight: 700; text-transform: uppercase; }
 details { color: var(--vscode-descriptionForeground); font-size: 12px; margin-top: 6px; } ul { margin: 5px 0 0; padding-left: 18px; }
-.composer { background: var(--vscode-editor-background); border: 1px solid var(--vscode-input-border); margin-top: 12px; padding: 8px; } .composer:focus-within { outline: 1px solid var(--vscode-focusBorder); }
-textarea { background: transparent; border: 0; color: var(--vscode-input-foreground); font: inherit; min-height: 62px; outline: 0; resize: vertical; width: 100%; }
-.context-label { color: var(--vscode-descriptionForeground); font-size: 12px; } .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
-.chip { background: var(--vscode-input-background); border: 1px solid var(--vscode-input-border); color: var(--vscode-input-foreground); cursor: pointer; padding: 4px 8px; } .chip[aria-pressed="true"] { background: var(--vscode-badge-background); border-color: var(--vscode-focusBorder); color: var(--vscode-badge-foreground); }
-#preview { color: var(--vscode-descriptionForeground); font-family: var(--vscode-editor-font-family); font-size: 11px; margin: 6px 0; white-space: pre-line; }
-.actions { align-items: center; display: flex; justify-content: space-between; gap: 8px; } .hint { color: var(--vscode-descriptionForeground); font-size: 11px; } button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
-#send { background: var(--vscode-button-background); border: 0; color: var(--vscode-button-foreground); cursor: pointer; padding: 6px 10px; } #send:hover { background: var(--vscode-button-hoverBackground); } #send:disabled { cursor: default; opacity: .6; }
+.composer { background: var(--vscode-editor-background); border: 1px solid var(--vscode-input-border); margin-top: 8px; padding: 8px; } .composer:focus-within { border-color: var(--vscode-focusBorder); }
+textarea { background: transparent; border: 0; color: var(--vscode-input-foreground); font: inherit; min-height: 54px; outline: 0; resize: vertical; width: 100%; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
+.chip { background: transparent; border: 0; border-radius: 3px; color: var(--vscode-descriptionForeground); cursor: pointer; padding: 3px 5px; } .chip[aria-pressed="true"] { background: var(--vscode-list-activeSelectionBackground); color: var(--vscode-list-activeSelectionForeground); }
+#preview { color: var(--vscode-descriptionForeground); font-family: var(--vscode-editor-font-family); font-size: 11px; margin: 4px 0; white-space: pre-line; } #preview:empty { display: none; }
+.actions { align-items: center; display: flex; justify-content: flex-end; gap: 8px; } .hint { color: var(--vscode-descriptionForeground); font-size: 11px; margin-right: auto; } button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: 2px; }
+#send { background: transparent; border: 0; color: var(--vscode-icon-foreground); cursor: pointer; font-size: 16px; line-height: 1; padding: 4px 6px; } #send:hover { background: var(--vscode-toolbar-hoverBackground); } #send:disabled { cursor: default; opacity: .45; }
 </style></head><body>
-<header class="header"><span class="brand">CHAPPIE</span><span class="connection"><span class="dot">●</span> <span id="connection">Disconnected</span></span></header>
-<p id="model" class="subtle">Setup required</p><p id="availability" role="status"></p><main id="history" aria-live="polite"></main>
-<form id="ask" class="composer"><label for="question" class="visually-hidden">Ask Chappie</label><textarea id="question" maxlength="1000" placeholder="Ask Chappie..."></textarea><div class="context-label">Context</div><div class="chips" role="group" aria-label="Workspace context"><button class="chip" id="file" type="button" aria-pressed="false">File</button><button class="chip" id="selection" type="button" aria-pressed="false">Selection</button><button class="chip" id="git" type="button" aria-pressed="false">Git</button></div><p id="preview">No workspace context selected.</p><div class="actions"><span class="hint">⌘/Ctrl+Enter to send</span><button id="send" type="submit" aria-label="Send question to Chappie">Send</button></div></form>
+<p id="readiness" class="readiness">Chat unavailable · Setup required</p><p id="availability" role="status"><span id="availability-text"></span><button id="setup" type="button">Set up</button></p><main id="history" aria-live="polite"></main>
+<form id="ask" class="composer"><label for="question" class="visually-hidden">Ask Chappie</label><textarea id="question" maxlength="1000" placeholder="Ask Chappie..."></textarea><div class="chips" role="group" aria-label="Workspace context"><button class="chip" id="file" type="button" aria-pressed="false">File</button><button class="chip" id="selection" type="button" aria-pressed="false">Selection</button><button class="chip" id="git" type="button" aria-pressed="false">Git</button></div><p id="preview"></p><div class="actions"><span class="hint">⌘/Ctrl+Enter to send</span><button id="send" type="submit" aria-label="Send question to Chappie">→</button></div></form>
 <script nonce="${nonce}">
-const vscode=acquireVsCodeApi(),form=document.getElementById('ask'),question=document.getElementById('question'),send=document.getElementById('send'),history=document.getElementById('history'),availability=document.getElementById('availability');
+const vscode=acquireVsCodeApi(),form=document.getElementById('ask'),question=document.getElementById('question'),send=document.getElementById('send'),history=document.getElementById('history'),availability=document.getElementById('availability'),availabilityText=document.getElementById('availability-text'),readiness=document.getElementById('readiness');
 const chips=['file','selection','git'].map(id=>document.getElementById(id));
 const options=()=>({includeFile:chips[0].getAttribute('aria-pressed')==='true',includeSelection:chips[1].getAttribute('aria-pressed')==='true',includeGit:chips[2].getAttribute('aria-pressed')==='true'});
 const preview=()=>vscode.postMessage({type:'context-preview',...options()});
 chips.forEach(chip=>chip.addEventListener('click',()=>{chip.setAttribute('aria-pressed',chip.getAttribute('aria-pressed')!=='true');preview();}));
 const submit=()=>{if(!question.value.trim()||send.disabled)return;send.disabled=true;send.textContent='Asking…';vscode.postMessage({type:'ask',question:question.value,...options()});};
 form.addEventListener('submit',event=>{event.preventDefault();submit();});question.addEventListener('keydown',event=>{if(event.key==='Enter'&&(event.metaKey||event.ctrlKey)){event.preventDefault();submit();}});
-window.addEventListener('message',event=>{const data=event.data;if(data.type!=='render')return;document.getElementById('connection').textContent=data.state;document.getElementById('model').textContent=data.model?'Connected • '+data.model:(data.availability?'Setup required':'Connected');availability.textContent=data.availability||'';availability.style.display=data.availability?'block':'none';history.innerHTML=data.html||'<section class="empty"><strong>Ask Chappie about this project</strong><div class="suggestions"><button class="suggestion" type="button">Understand architecture</button><button class="suggestion" type="button">Explain selected code</button><button class="suggestion" type="button">Ask about project decisions</button></div></section>';document.getElementById('preview').textContent=data.preview;send.disabled=Boolean(data.availability);send.textContent=data.availability?'Project Chat Unavailable':'Send';});
+document.getElementById('setup').addEventListener('click',()=>vscode.postMessage({type:'setup'}));
+window.addEventListener('message',event=>{const data=event.data;if(data.type!=='render')return;const unavailable=Boolean(data.availability);readiness.textContent=data.model?'Ready · '+data.model:(unavailable?'Chat unavailable · Setup required':'Ready');availabilityText.textContent=data.availability&&data.availability.includes('AI and Knowledge')?'Chat requires AI and Knowledge.':data.availability||'';availability.style.display=unavailable?'flex':'none';history.innerHTML=data.html||'<section class="empty"><div class="suggestions"><button class="suggestion" type="button">Understand architecture</button><button class="suggestion" type="button">Explain selected code</button><button class="suggestion" type="button">Ask about project decisions</button></div></section>';document.getElementById('preview').textContent=data.preview;send.disabled=unavailable;send.textContent='→';});
 history.addEventListener('click',event=>{const target=event.target;if(target.classList&&target.classList.contains('suggestion')){question.value=target.textContent;question.focus();}});
 </script></body></html>`;
 }
