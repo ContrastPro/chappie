@@ -18,8 +18,8 @@ from datetime import UTC, datetime
 from math import sqrt
 from pathlib import Path
 
-from app.research_data import ResearchStore
-from app.research_outcomes import HORIZONS
+from app.research.data.outcomes import HORIZONS
+from app.research.data.store import ResearchStore
 
 BRIDGE_SCHEMA = "chappie-compact-event-bridge/v3"
 EVENT_TYPES = ("CROWDED_STRESS", "CROWDED_EXPANSION", "OI_ACTIVE_VOLATILITY_CLUSTER")

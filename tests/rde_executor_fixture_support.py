@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from statistics import mean, median
 
-from app.research_cache_identity import VerifiedResearchCacheIdentityV1
+from app.research.data.cache_identity import VerifiedResearchCacheIdentityV1
 
 
 @dataclass(frozen=True)

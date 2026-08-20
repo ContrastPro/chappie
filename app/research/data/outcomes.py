@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from app.research_data import ALIGNMENT_SCHEMA_VERSION, ResearchStore
+from app.research.data.store import ALIGNMENT_SCHEMA_VERSION, ResearchStore
 
 OUTCOME_SCHEMA_VERSION = "chappie-intelligence-outcomes/v1"
 HORIZONS = {60: 12, 180: 36, 360: 72, 720: 144, 1440: 288}

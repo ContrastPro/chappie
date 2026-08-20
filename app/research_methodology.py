@@ -5,9 +5,9 @@ from __future__ import annotations
 import hashlib
 import json
 
-from app.research_data import ALIGNMENT_SCHEMA_VERSION
-from app.research_event_bridge import BRIDGE_SCHEMA
-from app.research_outcomes import HORIZONS, OUTCOME_SCHEMA_VERSION, THRESHOLDS
+from app.research.data.event_bridge import BRIDGE_SCHEMA
+from app.research.data.outcomes import HORIZONS, OUTCOME_SCHEMA_VERSION, THRESHOLDS
+from app.research.data.store import ALIGNMENT_SCHEMA_VERSION
 
 METHODOLOGY_NAME = "compact_matched_event_research"
 METHODOLOGY_VERSION = "1.0.0"

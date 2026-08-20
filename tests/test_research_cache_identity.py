@@ -1,4 +1,4 @@
-from app.research_cache_identity import (
+from app.research.data.cache_identity import (
     IDENTITY_SCHEMA,
     IdentityVerificationStatus,
     VerifiedResearchCacheIdentityV1,

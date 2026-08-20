@@ -8,7 +8,7 @@ from enum import StrEnum
 from app.ai.research_query_compiler import CanonicalRDEQueryV1
 from app.ai.research_reasoning import RELATIONSHIPS, TARGET_HORIZONS, TARGET_METRICS
 from app.ai.schemas import digest
-from app.research_event_bridge import EVENT_TYPES
+from app.research.data.event_bridge import EVENT_TYPES
 
 CAPABILITY_RESOLVER_IDENTITY = "rde_capability_resolver/1.0.0"
 METHODOLOGY_IDENTITY = "compact_matched_event_research/1.0.0"

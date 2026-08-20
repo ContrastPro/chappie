@@ -30,7 +30,7 @@ from app.ai.rde_query_executor import (
 )
 from app.ai.research_query_compiler import CanonicalRDEQueryV1
 from app.ai.schemas import digest
-from app.research_cache_identity import VerifiedResearchCacheIdentityV1
+from app.research.data.cache_identity import VerifiedResearchCacheIdentityV1
 
 CACHE_SCHEMA = "rde_execution_cache/1.0.0"
 ARTIFACT_SCHEMA = "rde_execution_artifact/1.0.0"

@@ -16,7 +16,7 @@ from app.news_event_macro import (
     official_macro_source_registry,
     parse_official_macro_html,
 )
-from app.research_data import ResearchStore
+from app.research.data.store import ResearchStore
 
 
 @pytest.mark.parametrize(

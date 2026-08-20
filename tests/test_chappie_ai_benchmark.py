@@ -42,7 +42,7 @@ from app.ai.runtime import AIConfig, ChappieAI
 from app.ai.schemas import FactV1, parse_reasoning_output
 from app.ai.tasks import AITask, ModelProfile
 from app.ai.trace import AITraceEventType, AITraceRenderer, TraceVerbosity, trace_event
-from app.research_data import IntelligenceRow, ResearchStore
+from app.research.data.store import IntelligenceRow, ResearchStore
 from app.tools.chappie_ai_benchmark import _parser
 
 NOW = datetime(2024, 1, 15, 12, tzinfo=UTC)

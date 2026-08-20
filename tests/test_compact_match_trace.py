@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.research_event_bridge import trace_compact_match
+from app.research.data.event_bridge import trace_compact_match
 
 
 def _snapshot(volatility: float, recent: float = 0, volume: float | None = 1):

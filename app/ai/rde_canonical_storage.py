@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Self
 
 from app.ai.rde_query_executor import HORIZON_MINUTES, METRIC_COLUMNS
-from app.research_cache_identity import (
+from app.research.data.cache_identity import (
     VerifiedResearchCacheIdentityV1,
     build_verified_research_cache_identity,
 )

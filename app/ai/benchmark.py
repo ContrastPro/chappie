@@ -36,7 +36,7 @@ from app.research_paths import results_dir
 
 if TYPE_CHECKING:
     from app.ai.runtime import ChappieAI
-    from app.research_data import ResearchStore
+    from app.research.data.store import ResearchStore
 
 
 BENCHMARK_IDENTITY = "chappie_ai_market_benchmark/1.0.0"

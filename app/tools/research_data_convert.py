@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from app.research.data.legacy_json import iter_legacy_rows
-from app.research_data import ResearchStore
+from app.research.data.store import ResearchStore
 from app.research_paths import compact_db_path
 
 BATCH_SIZE = 1_000

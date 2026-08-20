@@ -18,8 +18,8 @@ from statistics import mean, median
 from typing import Final
 
 from app.market_intelligence_universe import UNIVERSE_NAME, UNIVERSE_VERSION, universe_digest
+from app.research.data.outcomes import HORIZONS
 from app.research_methodology import METHODOLOGY_NAME, METHODOLOGY_VERSION, methodology_digest
-from app.research_outcomes import HORIZONS
 
 FIVE_MINUTES_MS: Final = 300_000
 ASSETS: Final = ("BTC", "ETH", "SOL", "BNB", "AVAX", "XRP", "LINK", "DOGE")

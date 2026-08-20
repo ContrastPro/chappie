@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from app.research.data.alignment import build_aligned_intelligence
-from app.research_event_bridge import (
+from app.research.data.event_bridge import (
     _causal_snapshots,
     build_event_match_cache,
     trace_compact_match,

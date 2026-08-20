@@ -29,12 +29,12 @@ from app.ai.research_query_compiler import (
 )
 from app.ai.research_reasoning import RELATIONSHIPS
 from app.ai.schemas import digest
-from app.research_cache_identity import (
+from app.research.data.cache_identity import (
     VerifiedResearchCacheIdentityV1,
     verify_research_cache_identity,
 )
-from app.research_event_bridge import BRIDGE_SCHEMA
-from app.research_outcomes import OUTCOME_SCHEMA_VERSION
+from app.research.data.event_bridge import BRIDGE_SCHEMA
+from app.research.data.outcomes import OUTCOME_SCHEMA_VERSION
 
 EXECUTOR_IDENTITY = "rde_query_executor/1.0.0"
 SUPPORTED_FIELDS = frozenset({"EVENT_TYPE"})

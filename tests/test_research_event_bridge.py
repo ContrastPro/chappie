@@ -4,15 +4,19 @@ import hashlib
 import json
 from pathlib import Path
 
-from app.research_event_bridge import build_event_match_cache, extract_events, iter_event_matches
-from app.research_outcomes import build_outcome_cache
+from app.research.data.event_bridge import (
+    build_event_match_cache,
+    extract_events,
+    iter_event_matches,
+)
+from app.research.data.outcomes import build_outcome_cache
 from tests.test_research_outcomes import _seed
 
 
 def _prepare(path: Path) -> None:
     _seed(path, [100] * 40)
     build_outcome_cache(store_path=path, asset="BTCUSDT")
-    from app.research_data import ResearchStore
+    from app.research.data.store import ResearchStore
 
     store = ResearchStore(path)
     store.initialize()

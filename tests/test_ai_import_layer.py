@@ -24,9 +24,9 @@ def test_schemas_import_does_not_eagerly_load_high_level_ai_modules() -> None:
 
 def test_cache_identity_and_knowledge_import_orders_are_safe() -> None:
     for statement in (
-        "import app.research_cache_identity",
-        "import app.research_cache_identity; import app.ai",
-        "import app.ai; import app.research_cache_identity",
+        "import app.research.data.cache_identity",
+        "import app.research.data.cache_identity; import app.ai",
+        "import app.ai; import app.research.data.cache_identity",
         "import app.knowledge; import app.ai",
         "import app.ai; import app.knowledge",
         "import app.ai.project_qa",

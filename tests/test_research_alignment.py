@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from app.research.data.alignment import build_aligned_intelligence, iter_intelligence_batches
-from app.research_data import ResearchStore
+from app.research.data.store import ResearchStore
 
 
 def _seed(path: Path, *, flow_state: str = "VERIFIED", basis_state: str = "VERIFIED") -> None:

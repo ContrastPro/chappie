@@ -6,7 +6,7 @@ from app.multi_asset_flow_intelligence import (
     select_control,
     state_contract,
 )
-from app.research_event_bridge import trace_compact_match
+from app.research.data.event_bridge import trace_compact_match
 
 
 def test_multi_asset_experiment_contract_is_bounded_and_predeclared():

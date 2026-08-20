@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from app.research_data import ALIGNMENT_SCHEMA_VERSION, ResearchStore
+from app.research.data.store import ALIGNMENT_SCHEMA_VERSION, ResearchStore
 
 FIVE_MINUTES_MS = 300_000
 

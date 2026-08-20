@@ -8,10 +8,10 @@ import random
 import sqlite3
 from pathlib import Path
 
-from app.research_data import ResearchStore
-from app.research_event_bridge import build_event_match_cache
+from app.research.data.event_bridge import build_event_match_cache
+from app.research.data.outcomes import build_outcome_cache
+from app.research.data.store import ResearchStore
 from app.research_methodology import METHODOLOGY_NAME, METHODOLOGY_VERSION, methodology_digest
-from app.research_outcomes import build_outcome_cache
 
 SEEDS = (11, 29, 47, 71, 101)
 ROWS = 7_200

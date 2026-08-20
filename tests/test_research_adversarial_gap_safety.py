@@ -7,13 +7,13 @@ import json
 import sqlite3
 from pathlib import Path
 
-from app.research_event_bridge import _causal_snapshots, extract_events
+from app.research.data.event_bridge import _causal_snapshots, extract_events
+from app.research.data.outcomes import build_outcome_cache
 from app.research_methodology import (
     METHODOLOGY_NAME,
     METHODOLOGY_VERSION,
     methodology_digest,
 )
-from app.research_outcomes import build_outcome_cache
 from tests.test_research_outcomes import _outcome, _seed
 
 FIVE_MINUTES_MS = 300_000

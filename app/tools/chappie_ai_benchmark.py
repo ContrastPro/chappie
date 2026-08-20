@@ -24,7 +24,7 @@ from app.ai.router import ModelRouter
 from app.ai.runtime import AIConfig, ChappieAI
 from app.ai.tasks import AITask, ModelProfile, task_contract
 from app.ai.trace import AITraceEventType, AITraceRenderer, TraceVerbosity, trace_event
-from app.research_data import ResearchStore
+from app.research.data.store import ResearchStore
 
 
 def _parser() -> argparse.ArgumentParser:

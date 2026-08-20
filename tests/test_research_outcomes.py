@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from app.research_data import ResearchStore
-from app.research_outcomes import build_outcome_cache, iter_outcome_batches
+from app.research.data.outcomes import build_outcome_cache, iter_outcome_batches
+from app.research.data.store import ResearchStore
 
 
 def _seed(
