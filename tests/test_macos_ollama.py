@@ -184,6 +184,52 @@ def test_engine_rejects_durable_macos_provider_when_runtime_is_down(
     assert result.steps[0].state.value == "FAILED"
 
 
+def test_engine_preserves_delayed_macos_first_launch_as_readiness_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A durable fresh install that needs longer than polling bound fails closed by stage."""
+    monkeypatch.setattr("app.macos_ollama.shutil.which", lambda _: None)
+    executable = tmp_path / "Applications/Ollama.app/Contents/Resources/ollama"
+
+    class Installer(MacOllamaInstallerV1):
+        installed = False
+
+        def executable(self) -> Path | None:
+            return executable if self.installed else None
+
+        def version(self) -> str | None:
+            return "ollama version fixture" if self.installed else None
+
+        def install(self, *, allow_external: bool, allow_privileged: bool = False):
+            del allow_external, allow_privileged
+            executable.parent.mkdir(parents=True)
+            executable.touch()
+            self.installed = True
+            return ExternalActionResultV1(
+                "INSTALL_OLLAMA", ExternalActionStatusV1.COMPLETED, "Darwin", "fixture"
+            )
+
+    class DelayedCoordinator:
+        executable = "ollama"
+
+        def ensure_ready(self) -> OllamaReadinessResultV1:
+            return OllamaReadinessResultV1(
+                OllamaReadinessStateV1.NOT_READY,
+                "http://localhost:11434",
+                error_category="START_TIMEOUT",
+            )
+
+    result = _ProviderOnlyEngine(
+        _paths(tmp_path),
+        macos_installer=Installer(applications_dir=tmp_path / "Applications"),
+        ollama_readiness_coordinator=DelayedCoordinator(),
+    ).execute(approval=SetupApprovalV1(allow_external=True))
+
+    assert len(result.steps) == 1
+    assert result.steps[0].message == "PROVIDER_SETUP_FAILED:OLLAMA_READINESS_TIMEOUT"
+    assert result.steps[0].state.value == "FAILED"
+
+
 @pytest.mark.parametrize(
     ("failure", "expected"),
     [

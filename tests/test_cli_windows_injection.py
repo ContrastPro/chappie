@@ -37,6 +37,8 @@ def test_macos_cli_constructs_production_executor(monkeypatch, tmp_path):
     assert engine._windows_installer is None
     assert isinstance(engine._macos_installer, MacOllamaInstallerV1)
     assert isinstance(engine._ollama_readiness_coordinator, cli.OllamaReadinessCoordinatorV1)
+    assert engine._ollama_readiness_coordinator.policy.max_attempts == 30
+    assert engine._ollama_readiness_coordinator.policy.interval_seconds == 0.5
     assert isinstance(engine._smoke, ChappieAISetupSmokeV1)
     assert isinstance(engine._project_qa_smoke, ProjectQASetupSmokeV1)
 

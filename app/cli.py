@@ -32,7 +32,7 @@ from app.control_plane_transport import (
 )
 from app.macos_ollama import MacOllamaInstallerV1
 from app.ollama_readiness import OllamaReadinessProbe
-from app.ollama_start import OllamaReadinessCoordinatorV1
+from app.ollama_start import OllamaReadinessCoordinatorV1, OllamaRetryPolicyV1
 from app.project_qa_setup_smoke import ProjectQASetupSmokeV1
 from app.setup_engine import (
     KNOWLEDGE_BUILD_BLOCKED_DIRTY_REPOSITORY,
@@ -85,6 +85,7 @@ def _setup_engine(paths: ChappiePaths, *, interactive_output: bool = True) -> Se
                 OllamaReadinessProbe(),
                 str(installer.executable() or "ollama"),
                 _launch_macos_ollama,
+                policy=OllamaRetryPolicyV1(max_attempts=30, interval_seconds=0.5),
             ),
             smoke=ChappieAISetupSmokeV1(),
             project_qa_smoke=ProjectQASetupSmokeV1(),
@@ -184,6 +185,9 @@ class _SetupProgress:
                     "OLLAMA_APP_COPY_FAILED": "Ollama installation failed: application bundle could not be copied.",
                     "OLLAMA_EXECUTABLE_NOT_FOUND": "Ollama installation failed: bundled executable was not found after copy.",
                     "OLLAMA_VERSION_CHECK_FAILED": "Ollama installation failed: installed executable did not pass version verification.",
+                    "OLLAMA_START_FAILED": "Ollama installation failed: the installed app could not be started.",
+                    "OLLAMA_READINESS_TIMEOUT": "Ollama installation timed out waiting for the local runtime to become ready.",
+                    "OLLAMA_READINESS_FAILED": "Ollama installation failed: local runtime readiness could not be verified.",
                 }
                 print(
                     f"      {messages.get(reason, 'Ollama installation failed: provider setup failed.')}"

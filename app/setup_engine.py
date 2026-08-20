@@ -398,6 +398,8 @@ class SetupEngineV1:
         previous = self._load_state()
         results: list[SetupStepResultV1] = []
         self._provider_runtime_ready = False
+        self._provider_ready_after_apply = False
+        self._provider_last_readiness: OllamaReadinessResultV1 | None = None
         self._smoke_verified_this_run = False
         self._project_qa_verified_this_run = False
         completed = {
@@ -564,6 +566,8 @@ class SetupEngineV1:
             except (OSError, ValueError, subprocess.SubprocessError):
                 return False
         if action.code == SetupActionCodeV1.INSTALL_AI_PROVIDER:
+            if self._provider_ready_after_apply:
+                return True
             if installer := self._ollama_installer():
                 executable = installer.executable()
                 if executable is None or installer.version() is None:
@@ -571,10 +575,8 @@ class SetupEngineV1:
                 if self._ollama_readiness_coordinator is None:
                     return False
                 self._ollama_readiness_coordinator.executable = str(executable)
-                return (
-                    self._ollama_readiness_coordinator.ensure_ready().state
-                    == OllamaReadinessStateV1.READY
-                )
+                self._provider_last_readiness = self._ollama_readiness_coordinator.ensure_ready()
+                return self._provider_last_readiness.state == OllamaReadinessStateV1.READY
             return OllamaInstallerV1().detect() == ComponentStateV1.DEGRADED
         if action.code == SetupActionCodeV1.INSTALL_AI_MODEL:
             model = self._selected_model()
@@ -608,11 +610,31 @@ class SetupEngineV1:
             action.code == SetupActionCodeV1.INSTALL_AI_PROVIDER
             and (installer := self._ollama_installer()) is not None
         ):
-            if installer.version() is not None:
-                raise RuntimeError("installed Ollama provider is not runtime ready")
-            result = installer.install(allow_external=True)
-            if result.status.value != "COMPLETED":
-                raise ProviderSetupFailure(result.error_code or "OLLAMA_PROVIDER_INSTALL_FAILED")
+            if installer.version() is None:
+                result = installer.install(allow_external=True)
+                if result.status.value != "COMPLETED":
+                    raise ProviderSetupFailure(
+                        result.error_code or "OLLAMA_PROVIDER_INSTALL_FAILED"
+                    )
+            executable = installer.executable()
+            if executable is None or installer.version() is None:
+                raise ProviderSetupFailure("OLLAMA_EXECUTABLE_NOT_FOUND")
+            coordinator = self._ollama_readiness_coordinator
+            if coordinator is None:
+                raise ProviderSetupFailure("OLLAMA_READINESS_FAILED")
+            readiness = self._provider_last_readiness
+            if readiness is None:
+                coordinator.executable = str(executable)
+                readiness = coordinator.ensure_ready()
+            if readiness.state != OllamaReadinessStateV1.READY:
+                raise ProviderSetupFailure(
+                    "OLLAMA_START_FAILED"
+                    if readiness.error_category == "START_FAILED"
+                    else "OLLAMA_READINESS_TIMEOUT"
+                    if readiness.error_category in {"START_TIMEOUT", "TIMEOUT"}
+                    else "OLLAMA_READINESS_FAILED"
+                )
+            self._provider_ready_after_apply = True
             return
         if (
             action.code == SetupActionCodeV1.INSTALL_AI_MODEL
