@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { ChappieControlPlaneClient, ControlPlaneClientError, ControlPlaneDependencyError, ControlPlaneIncompatibleError } from "../client";
+import { ChappieControlPlaneClient, CONTROL_PLANE_HEALTH_TIMEOUT_MS, ControlPlaneClientError, ControlPlaneDependencyError, ControlPlaneIncompatibleError, PROJECT_QA_HTTP_TIMEOUT_MS } from "../client";
 import { capabilitySummary, contextPreview, humanState, projectChatAvailability, projectQaFailureMessage } from "../presentation";
 import { CONTROL_PLANE_DIGEST, CONTROL_PLANE_IDENTITY, TRANSPORT_DIGEST, TRANSPORT_IDENTITY } from "../contracts";
 import { ChappieSetupTerminalV1, isChappieWorkspace, OwnedControlPlaneProcess, resolveChappieExecutable, resolveChappieSetupCommand, setupBootstrapRemediation, shouldAutoStartControlPlane } from "../workspace";
@@ -23,6 +23,21 @@ test("health handshake validates exact identities", async () => {
   const client = new ChappieControlPlaneClient(8765, async () => envelope({ status: "OK" }));
   assert.deepEqual(await client.health(), { status: "OK" });
   await assert.rejects(() => new ChappieControlPlaneClient(8765, async () => envelope({ status: "OK" }, { transport_contract_digest: "wrong" })).health(), ControlPlaneIncompatibleError);
+});
+
+test("Project QA has a bounded local-inference timeout longer than health checks", async () => {
+  const client = new ChappieControlPlaneClient(8765, async () => new Response(JSON.stringify({
+    transport_contract: TRANSPORT_IDENTITY,
+    transport_contract_digest: TRANSPORT_DIGEST,
+    control_plane_contract: CONTROL_PLANE_IDENTITY,
+    control_plane_contract_digest: CONTROL_PLANE_DIGEST,
+    request_id: "a".repeat(32), status: "OK",
+    data: { answer: "grounded", unknowns: [], supporting_records: [] }, error: null,
+  })));
+  assert.ok(PROJECT_QA_HTTP_TIMEOUT_MS > CONTROL_PLANE_HEALTH_TIMEOUT_MS);
+  assert.ok(PROJECT_QA_HTTP_TIMEOUT_MS >= 45_000);
+  assert.equal((await client.askProject("What owns evidence?")).answer, "grounded");
+  assert.equal(projectQaFailureMessage("AI_TIMEOUT"), "Chappie Project QA timed out before local inference completed.");
 });
 
 test("client is fixed to loopback and configured port", () => {

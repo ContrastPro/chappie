@@ -59,5 +59,6 @@ export function projectChatAvailability(
 export function projectQaFailureMessage(reasonCode: string | undefined): string {
   if (reasonCode === "AI_UNAVAILABLE") return "Chappie AI is not configured for this workspace.";
   if (reasonCode === "KNOWLEDGE_UNAVAILABLE") return "Chappie Knowledge is not configured for this workspace.";
+  if (reasonCode === "AI_TIMEOUT") return "Chappie Project QA timed out before local inference completed.";
   return "Chappie Project QA is temporarily unavailable.";
 }

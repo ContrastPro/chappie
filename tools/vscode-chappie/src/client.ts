@@ -22,10 +22,19 @@ export class ControlPlaneDependencyError extends ControlPlaneClientError {
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
+/** Status calls stay responsive; bounded local inference is allowed its backend budget. */
+export const CONTROL_PLANE_HEALTH_TIMEOUT_MS = 1_500;
+export const PROJECT_QA_HTTP_TIMEOUT_MS = 60_000;
+
 export class ChappieControlPlaneClient {
   public readonly endpoint: string;
 
-  public constructor(port: number, private readonly fetcher: FetchLike = fetch, private readonly timeoutMs = 1500) {
+  public constructor(
+    port: number,
+    private readonly fetcher: FetchLike = fetch,
+    private readonly healthTimeoutMs = CONTROL_PLANE_HEALTH_TIMEOUT_MS,
+    private readonly projectQaTimeoutMs = PROJECT_QA_HTTP_TIMEOUT_MS,
+  ) {
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
       throw new ControlPlaneClientError("Control Plane port must be between 1 and 65535");
     }
@@ -56,20 +65,24 @@ export class ChappieControlPlaneClient {
     if (!question.trim() || question.length > 1000) {
       throw new ControlPlaneClientError("Project question must be between 1 and 1000 characters");
     }
-    return parseProjectQA(await this.data("/v1/project/qa", { method: "POST", body: JSON.stringify({ question, workspace_context: workspaceContext ?? null }) }));
+    return parseProjectQA(await this.data(
+      "/v1/project/qa",
+      { method: "POST", body: JSON.stringify({ question, workspace_context: workspaceContext ?? null }) },
+      this.projectQaTimeoutMs,
+    ));
   }
 
-  private async data<T>(path: string, init: RequestInit = { method: "GET" }): Promise<T> {
-    const response = await this.get<T>(path, init);
+  private async data<T>(path: string, init: RequestInit = { method: "GET" }, timeoutMs = this.healthTimeoutMs): Promise<T> {
+    const response = await this.get<T>(path, init, timeoutMs);
     if (response.status !== "OK" || response.data === null) {
       throw new ControlPlaneClientError(response.error?.message ?? "Control Plane request failed");
     }
     return response.data;
   }
 
-  private async get<T>(path: string, init: RequestInit = { method: "GET" }): Promise<TransportEnvelopeV1<T>> {
+  private async get<T>(path: string, init: RequestInit = { method: "GET" }, timeoutMs = this.healthTimeoutMs): Promise<TransportEnvelopeV1<T>> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const response = await this.fetcher(`${this.endpoint}${path}`, { ...init, signal: controller.signal, headers: { "content-type": "application/json" } });
       const value: unknown = await response.json();
