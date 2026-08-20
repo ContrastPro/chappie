@@ -35,6 +35,15 @@ from app.windows_ollama import WindowsOllamaInstallerV1
 
 SETUP_ENGINE_IDENTITY = "chappie_setup_engine/1.0.0"
 KNOWLEDGE_BUILD_BLOCKED_DIRTY_REPOSITORY = "KNOWLEDGE_BUILD_BLOCKED_DIRTY_REPOSITORY"
+PROJECT_QA_SMOKE_FAILED_PREFIX = "PROJECT_QA_SMOKE_FAILED:"
+
+
+class ProjectQASmokeFailure(RuntimeError):
+    """Preserve the bounded Project QA smoke state through setup execution."""
+
+    def __init__(self, state: ProjectQASetupSmokeStateV1) -> None:
+        super().__init__(state.value)
+        self.state = state
 
 
 class ActionSafetyV1(StrEnum):
@@ -538,7 +547,7 @@ class SetupEngineV1:
                 raise RuntimeError("AI configuration is missing")
             result = self._project_qa_smoke.run(config, self.paths.knowledge_file)
             if result.state != ProjectQASetupSmokeStateV1.VALID:
-                raise RuntimeError("Project QA smoke failed")
+                raise ProjectQASmokeFailure(result.state)
             self._project_qa_verified_this_run = True
             return
         if action.safety != ActionSafetyV1.SAFE:
@@ -624,6 +633,10 @@ class SetupEngineV1:
 
     @staticmethod
     def _failure_reason(action: SetupActionV1, error: Exception) -> str:
+        if action.code == SetupActionCodeV1.PROJECT_QA_SMOKE and isinstance(
+            error, ProjectQASmokeFailure
+        ):
+            return f"{PROJECT_QA_SMOKE_FAILED_PREFIX}{error.state.value}"
         if (
             action.code == SetupActionCodeV1.BUILD_KNOWLEDGE
             and isinstance(error, ValueError)

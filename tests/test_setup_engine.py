@@ -20,6 +20,7 @@ from app.ollama_readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
 from app.project_qa_setup_smoke import ProjectQASetupSmokeResultV1, ProjectQASetupSmokeStateV1
 from app.setup_engine import (
     KNOWLEDGE_BUILD_BLOCKED_DIRTY_REPOSITORY,
+    PROJECT_QA_SMOKE_FAILED_PREFIX,
     SETUP_ENGINE_DIGEST,
     SETUP_ENGINE_IDENTITY,
     ActionSafetyV1,
@@ -464,6 +465,34 @@ class _FakeProjectQASmoke:
         self.calls += 1
         self.events.append("PROJECT_QA_SMOKE")
         return ProjectQASetupSmokeResultV1(next(self.states))
+
+
+def test_project_qa_smoke_failure_preserves_its_typed_state(tmp_path: Path) -> None:
+    class QAOnlyEngine(SetupEngineV1):
+        def plan(self, *, developer: bool = False, ai_profile: AIModelProfileV1 | None = None):
+            del developer, ai_profile
+            return (
+                SetupActionV1(
+                    SetupActionCodeV1.PROJECT_QA_SMOKE,
+                    ActionSafetyV1.SAFE,
+                    "Project QA smoke",
+                    None,
+                ),
+            )
+
+    events: list[str] = []
+    smoke = _FakeProjectQASmoke([ProjectQASetupSmokeStateV1.GROUNDING_ERROR], events)
+    paths = _paths(tmp_path)
+    paths.config_file.parent.mkdir(parents=True)
+    paths.config_file.write_text(
+        '{"schema":"chappie_local_config/1.0.0","setup_version":"1.0.0","provider":"ollama","model":"qwen3:8b","enabled_capabilities":["BALANCED"]}\n'
+    )
+    engine = QAOnlyEngine(paths, project_qa_smoke=smoke)
+    result = engine.execute(approval=SetupApprovalV1(allow_safe=True, allow_external=True))
+    failed = next(step for step in result.steps if step.code == SetupActionCodeV1.PROJECT_QA_SMOKE)
+    assert failed.state == SetupStepStateV1.FAILED
+    assert failed.message == f"{PROJECT_QA_SMOKE_FAILED_PREFIX}GROUNDING_ERROR"
+    assert not engine._project_qa_verified_this_run
 
 
 def test_existing_windows_provider_requires_ready_coordinator(tmp_path: Path) -> None:

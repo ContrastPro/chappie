@@ -36,6 +36,7 @@ from app.ollama_start import OllamaReadinessCoordinatorV1
 from app.project_qa_setup_smoke import ProjectQASetupSmokeV1
 from app.setup_engine import (
     KNOWLEDGE_BUILD_BLOCKED_DIRTY_REPOSITORY,
+    PROJECT_QA_SMOKE_FAILED_PREFIX,
     AIModelProfileV1,
     SetupActionCodeV1,
     SetupApprovalV1,
@@ -151,6 +152,21 @@ class _SetupProgress:
                 print("      Uncommitted source changes detected.")
                 print(
                     "      Remediation: commit or stash the intended source changes, then rerun setup."
+                )
+                return
+            if result.message.startswith(PROJECT_QA_SMOKE_FAILED_PREFIX):
+                state = result.message.removeprefix(PROJECT_QA_SMOKE_FAILED_PREFIX)
+                messages = {
+                    "KNOWLEDGE_ERROR": "Project QA smoke failed: canonical Knowledge validation failed.",
+                    "RETRIEVAL_ERROR": "Project QA smoke failed: deterministic Knowledge retrieval failed.",
+                    "CONFIG_ERROR": "Project QA smoke failed: local AI configuration is invalid.",
+                    "PROVIDER_ERROR": "Project QA smoke failed: local AI provider is unavailable.",
+                    "TIMEOUT": "Project QA smoke failed: local inference timed out.",
+                    "VALIDATION_ERROR": "Project QA smoke failed: local model response did not satisfy the canonical Project QA schema.",
+                    "GROUNDING_ERROR": "Project QA smoke failed: grounding or authority validation failed.",
+                }
+                print(
+                    f"      {messages.get(state, 'Project QA smoke failed: internal validation error.')}"
                 )
                 return
             print(f"      {result.message}.")

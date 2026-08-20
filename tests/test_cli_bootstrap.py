@@ -270,6 +270,28 @@ def test_cli_setup_prints_dirty_knowledge_remediation_without_traceback(
     assert "FAILED:ValueError" not in output
 
 
+def test_cli_setup_prints_typed_project_qa_grounding_failure(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    from app import cli
+    from app.setup_engine import PROJECT_QA_SMOKE_FAILED_PREFIX
+
+    engine = _ResultSetupEngine(
+        (
+            SetupStepResultV1(
+                SetupActionCodeV1.PROJECT_QA_SMOKE,
+                SetupStepStateV1.FAILED,
+                f"{PROJECT_QA_SMOKE_FAILED_PREFIX}GROUNDING_ERROR",
+            ),
+        )
+    )
+    monkeypatch.setattr(cli, "_setup_engine", lambda *_args, **_kwargs: engine)
+    assert main(["setup", "--yes", "--non-interactive"], paths=_paths(tmp_path)) == 1
+    output = capsys.readouterr().out
+    assert "Project QA smoke failed: grounding or authority validation failed." in output
+    assert "FAILED:RuntimeError" not in output
+
+
 def test_cli_setup_prints_single_complete_per_successful_step(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
