@@ -35,6 +35,11 @@ Research documentation lives in [research/](research/README.md).
 [Chappie Knowledge v1](knowledge/README.md) is the deterministic, provenance-bound
 project-knowledge index. It is separate from AI prompts and runtime state.
 
+## Control Plane
+
+[Chappie Local Control Plane v1](control_plane/README.md) is the frontend-neutral,
+read-only application boundary for current CLI status and future local consumers.
+
 ## Historical evidence
 
 Completed milestone and Stage 4/M4.10 evidence is indexed in

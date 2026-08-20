@@ -23,6 +23,13 @@ from app.bootstrap import (
     recommend_model_profiles,
     status_exit_code,
 )
+from app.control_plane import ChappieControlPlaneV1
+from app.control_plane_transport import (
+    CONTROL_PLANE_TRANSPORT_IDENTITY,
+    DEFAULT_CONTROL_PLANE_PORT,
+    ChappieControlPlaneServerV1,
+    ControlPlaneTransportErrorV1,
+)
 from app.ollama_readiness import OllamaReadinessProbe
 from app.ollama_start import OllamaReadinessCoordinatorV1
 from app.project_qa_setup_smoke import ProjectQASetupSmokeV1
@@ -48,6 +55,25 @@ def _setup_engine(paths: ChappiePaths, *, interactive_output: bool = True) -> Se
             project_qa_smoke=ProjectQASetupSmokeV1(),
         )
     return SetupEngineV1(paths)
+
+
+def _control_plane(paths: ChappiePaths) -> ChappieControlPlaneV1:
+    """Build the frontend-neutral read-only service used by CLI adapters."""
+    return ChappieControlPlaneV1(paths, status_collector=collect_status)
+
+
+def _control_plane_server(paths: ChappiePaths, *, port: int) -> ChappieControlPlaneServerV1:
+    return ChappieControlPlaneServerV1(_control_plane(paths), port=port)
+
+
+def _serve_port(value: str) -> int:
+    try:
+        port = int(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("port must be an integer") from error
+    if not 1 <= port <= 65535:
+        raise argparse.ArgumentTypeError("port must be between 1 and 65535")
+    return port
 
 
 class _SetupProgress:
@@ -117,6 +143,9 @@ def _parser() -> argparse.ArgumentParser:
     for name in ("status", "doctor"):
         command = sub.add_parser(name)
         command.add_argument("--json", action="store_true")
+    serve = sub.add_parser("serve")
+    serve.add_argument("--port", type=_serve_port, default=DEFAULT_CONTROL_PLANE_PORT)
+    serve.add_argument("--json", action="store_true")
     setup = sub.add_parser("setup")
     setup.add_argument("--plan", action="store_true")
     setup.add_argument("--dry-run", action="store_true")
@@ -245,6 +274,33 @@ def main(argv: Sequence[str] | None = None, *, paths: ChappiePaths | None = None
             if not report.issues:
                 print("No issues detected.")
         return status_exit_code(report.status)
+    if args.command == "serve":
+        server = _control_plane_server(paths, port=args.port)
+        try:
+            server.start()
+        except ControlPlaneTransportErrorV1 as error:
+            payload = {
+                "transport_contract": CONTROL_PLANE_TRANSPORT_IDENTITY,
+                "status": "ERROR",
+                "error": {"code": error.code, "message": error.message},
+            }
+            print(json_output(payload), end="") if args.json else print(error.message)
+            return 1
+        startup = server.startup_payload()
+        if args.json:
+            print(json_output(startup), end="")
+        else:
+            print("Chappie Control Plane")
+            print(f"Listening on {startup['endpoint']}")
+            print(f"Contract: {startup['transport_contract']}")
+            print("Ctrl+C to stop.")
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
+        finally:
+            server.shutdown()
+        return 0
     if args.command == "setup":
         engine = _setup_engine(paths, interactive_output=not args.json)
         profile = None
@@ -337,34 +393,19 @@ def main(argv: Sequence[str] | None = None, *, paths: ChappiePaths | None = None
         return 0 if all(item.state != "FAILED" for item in result.steps) else 1
     if args.command == "ai" and args.ai_command in {"status", "models"}:
         if args.ai_command == "status":
-            status = collect_status(paths)
-            data = {
-                item.component: item.payload()
-                for item in status.components
-                if item.component in {"AI_PROVIDER", "AI_MODEL"}
-            }
-            config = load_local_config(paths)
-            payload = {
-                **data,
-                "PROVIDER": config.provider if config and config.provider else None,
-                "PROFILE": (
-                    config.enabled_capabilities[0].upper()
-                    if config and config.enabled_capabilities
-                    else None
-                ),
-                "MODEL": config.model if config and config.model else None,
-            }
+            ai_status = _control_plane(paths).get_ai_status()
+            payload = ai_status.payload()
             if args.json:
                 print(json_output(payload), end="")
             else:
                 print(
                     "\n".join(
                         (
-                            f"AI_PROVIDER: {data['AI_PROVIDER']['state']}",
-                            f"AI_MODEL: {data['AI_MODEL']['state']}",
-                            f"PROVIDER: {payload['PROVIDER'] or 'UNKNOWN'}",
-                            f"PROFILE: {payload['PROFILE'] or 'UNKNOWN'}",
-                            f"MODEL: {payload['MODEL'] or 'UNKNOWN'}",
+                            f"AI_PROVIDER: {ai_status.provider_state or 'UNKNOWN'}",
+                            f"AI_MODEL: {ai_status.model_state or 'UNKNOWN'}",
+                            f"PROVIDER: {ai_status.provider or 'UNKNOWN'}",
+                            f"PROFILE: {ai_status.profile or 'UNKNOWN'}",
+                            f"MODEL: {ai_status.model or 'UNKNOWN'}",
                         )
                     )
                 )
