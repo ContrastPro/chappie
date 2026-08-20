@@ -30,6 +30,13 @@ class ProjectQASetupSmokeStateV1(StrEnum):
     CONFIG_ERROR = "CONFIG_ERROR"
 
 
+class ProjectQAGroundingReasonV1(StrEnum):
+    CANONICAL_AUTHORITY_RECORD_MISMATCH = "CANONICAL_AUTHORITY_RECORD_MISMATCH"
+    MISSING_REQUIRED_FACT_CITATION = "MISSING_REQUIRED_FACT_CITATION"
+    RDE_AUTHORITY_NOT_STATED = "RDE_AUTHORITY_NOT_STATED"
+    WRONG_AUTHORITY_CLAIM = "WRONG_AUTHORITY_CLAIM"
+
+
 @dataclass(frozen=True, slots=True)
 class ProjectQASetupSmokeResultV1:
     state: ProjectQASetupSmokeStateV1
@@ -38,6 +45,7 @@ class ProjectQASetupSmokeResultV1:
     selected_knowledge_ids: tuple[str, ...] = ()
     provider: str | None = None
     model: str | None = None
+    reason_code: str | None = None
 
 
 AIBuilder = Callable[[ChappieLocalConfigV1], ChappieAI]
@@ -78,7 +86,9 @@ class ProjectQASetupSmokeV1:
             "RDE evidence is immutable authority"
         ):
             return ProjectQASetupSmokeResultV1(
-                ProjectQASetupSmokeStateV1.GROUNDING_ERROR, **metadata
+                ProjectQASetupSmokeStateV1.GROUNDING_ERROR,
+                reason_code=ProjectQAGroundingReasonV1.CANONICAL_AUTHORITY_RECORD_MISMATCH,
+                **metadata,
             )
         ai: ChappieAI | None = None
         try:
@@ -86,11 +96,14 @@ class ProjectQASetupSmokeV1:
             answer = ai.answer_project_qa(
                 question=PROJECT_QA_SETUP_QUESTION, knowledge_context=context
             )
-            if not _grounded_authority_answer(
+            grounding_reason = _grounded_authority_reason(
                 answer.answer, answer.supporting_knowledge_fact_ids, context
-            ):
+            )
+            if grounding_reason is not None:
                 return ProjectQASetupSmokeResultV1(
-                    ProjectQASetupSmokeStateV1.GROUNDING_ERROR, **metadata
+                    ProjectQASetupSmokeStateV1.GROUNDING_ERROR,
+                    reason_code=grounding_reason,
+                    **metadata,
                 )
             return ProjectQASetupSmokeResultV1(
                 ProjectQASetupSmokeStateV1.VALID,
@@ -124,16 +137,17 @@ class ProjectQASetupSmokeV1:
                 ai.close()
 
 
-def _grounded_authority_answer(
+def _grounded_authority_reason(
     answer: str, fact_ids: tuple[str, ...], context: KnowledgeContextV1
-) -> bool:
+) -> ProjectQAGroundingReasonV1 | None:
     records = context.records
     required = f"knowledge.{records[0].knowledge_id}.statement"
     text = answer.casefold()
     forbidden = ("ai owns", "model owns", "provider owns", "trading agent owns")
-    return (
-        required in fact_ids
-        and "rde" in text
-        and "authority" in text
-        and not any(phrase in text for phrase in forbidden)
-    )
+    if required not in fact_ids:
+        return ProjectQAGroundingReasonV1.MISSING_REQUIRED_FACT_CITATION
+    if any(phrase in text for phrase in forbidden):
+        return ProjectQAGroundingReasonV1.WRONG_AUTHORITY_CLAIM
+    if "rde" not in text or "authority" not in text:
+        return ProjectQAGroundingReasonV1.RDE_AUTHORITY_NOT_STATED
+    return None

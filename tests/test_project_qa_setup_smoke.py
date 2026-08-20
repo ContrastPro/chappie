@@ -15,6 +15,7 @@ from app.knowledge import (
     write_store,
 )
 from app.project_qa_setup_smoke import (
+    ProjectQAGroundingReasonV1,
     ProjectQASetupSmokeStateV1,
     ProjectQASetupSmokeV1,
 )
@@ -81,7 +82,42 @@ def test_unknown_fact_and_wrong_authority_are_rejected(tmp_path: Path) -> None:
     assert (
         _smoke(unknown).run(_config(), store).state == ProjectQASetupSmokeStateV1.VALIDATION_ERROR
     )
-    assert _smoke(wrong).run(_config(), store).state == ProjectQASetupSmokeStateV1.GROUNDING_ERROR
+    wrong_result = _smoke(wrong).run(_config(), store)
+    assert wrong_result.state == ProjectQASetupSmokeStateV1.GROUNDING_ERROR
+    assert wrong_result.reason_code == ProjectQAGroundingReasonV1.WRONG_AUTHORITY_CLAIM
+
+
+def test_missing_exact_statement_citation_is_a_grounding_failure(tmp_path: Path) -> None:
+    store, knowledge_id = _store(tmp_path)
+    result = _smoke(
+        MockProvider(
+            output={
+                **_valid_output(knowledge_id),
+                "supporting_knowledge_fact_ids": [],
+                "unknowns": ["citation omitted"],
+            }
+        )
+    ).run(_config(), store)
+    assert result.state == ProjectQASetupSmokeStateV1.GROUNDING_ERROR
+    assert result.reason_code == ProjectQAGroundingReasonV1.MISSING_REQUIRED_FACT_CITATION
+
+    record_id = _smoke(
+        MockProvider(
+            output={**_valid_output(knowledge_id), "supporting_knowledge_fact_ids": [knowledge_id]}
+        )
+    ).run(_config(), store)
+    assert record_id.state == ProjectQASetupSmokeStateV1.VALIDATION_ERROR
+
+
+def test_prompt_requires_exact_citation_and_rde_authority_without_reasoning_leakage() -> None:
+    from app.ai.prompts import PROJECT_QA_V1_INSTRUCTION
+
+    assert "supporting_knowledge_fact_ids" in PROJECT_QA_V1_INSTRUCTION
+    assert "knowledge.<record_id>.<field>" in PROJECT_QA_V1_INSTRUCTION
+    assert "RDE owns immutable" in PROJECT_QA_V1_INSTRUCTION
+    assert "research evidence authority" in PROJECT_QA_V1_INSTRUCTION
+    assert "Hidden reasoning is not" in PROJECT_QA_V1_INSTRUCTION
+    assert "part of the result" in PROJECT_QA_V1_INSTRUCTION
 
 
 def test_provider_failures_and_invalid_config_fail_closed(tmp_path: Path) -> None:
