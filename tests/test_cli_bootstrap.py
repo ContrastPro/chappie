@@ -317,6 +317,27 @@ def test_cli_setup_prints_typed_project_qa_grounding_failure(
     assert "FAILED:RuntimeError" not in output
 
 
+def test_cli_setup_prints_bounded_project_qa_grounding_reason(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    from app import cli
+    from app.setup_engine import PROJECT_QA_SMOKE_FAILED_PREFIX
+
+    engine = _ResultSetupEngine(
+        (
+            SetupStepResultV1(
+                SetupActionCodeV1.PROJECT_QA_SMOKE,
+                SetupStepStateV1.FAILED,
+                f"{PROJECT_QA_SMOKE_FAILED_PREFIX}GROUNDING_ERROR:RDE_AUTHORITY_NOT_STATED",
+            ),
+        )
+    )
+    monkeypatch.setattr(cli, "_setup_engine", lambda *_args, **_kwargs: engine)
+    assert main(["setup", "--yes", "--non-interactive"], paths=_paths(tmp_path)) == 1
+    output = capsys.readouterr().out
+    assert "Grounding reason: RDE_AUTHORITY_NOT_STATED" in output
+
+
 def test_cli_setup_prints_single_complete_per_successful_step(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

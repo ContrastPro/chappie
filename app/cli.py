@@ -162,7 +162,9 @@ class _SetupProgress:
                 )
                 return
             if result.message.startswith(PROJECT_QA_SMOKE_FAILED_PREFIX):
-                state = result.message.removeprefix(PROJECT_QA_SMOKE_FAILED_PREFIX)
+                state, _, reason_code = result.message.removeprefix(
+                    PROJECT_QA_SMOKE_FAILED_PREFIX
+                ).partition(":")
                 messages = {
                     "KNOWLEDGE_ERROR": "Project QA smoke failed: canonical Knowledge validation failed.",
                     "RETRIEVAL_ERROR": "Project QA smoke failed: deterministic Knowledge retrieval failed.",
@@ -175,6 +177,8 @@ class _SetupProgress:
                 print(
                     f"      {messages.get(state, 'Project QA smoke failed: internal validation error.')}"
                 )
+                if state == "GROUNDING_ERROR" and reason_code:
+                    print(f"      Grounding reason: {reason_code}")
                 return
             if result.message.startswith(PROVIDER_SETUP_FAILED_PREFIX):
                 reason = result.message.removeprefix(PROVIDER_SETUP_FAILED_PREFIX)

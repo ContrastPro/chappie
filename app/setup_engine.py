@@ -30,7 +30,11 @@ from app.bootstrap import (
 )
 from app.macos_ollama import MacOllamaInstallerV1
 from app.ollama_readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
-from app.project_qa_setup_smoke import ProjectQASetupSmokeStateV1, ProjectQASetupSmokeV1
+from app.project_qa_setup_smoke import (
+    ProjectQAGroundingReasonV1,
+    ProjectQASetupSmokeStateV1,
+    ProjectQASetupSmokeV1,
+)
 from app.vscode_integration import VscodeExtensionInstallerV1, VscodeExtensionStateV1
 from app.windows_ollama import WindowsOllamaInstallerV1
 
@@ -43,9 +47,14 @@ PROVIDER_SETUP_FAILED_PREFIX = "PROVIDER_SETUP_FAILED:"
 class ProjectQASmokeFailure(RuntimeError):
     """Preserve the bounded Project QA smoke state through setup execution."""
 
-    def __init__(self, state: ProjectQASetupSmokeStateV1) -> None:
+    def __init__(
+        self,
+        state: ProjectQASetupSmokeStateV1,
+        reason_code: ProjectQAGroundingReasonV1 | None = None,
+    ) -> None:
         super().__init__(state.value)
         self.state = state
+        self.reason_code = reason_code
 
 
 class ProviderSetupFailure(RuntimeError):
@@ -667,7 +676,7 @@ class SetupEngineV1:
                 raise RuntimeError("AI configuration is missing")
             result = self._project_qa_smoke.run(config, self.paths.knowledge_file)
             if result.state != ProjectQASetupSmokeStateV1.VALID:
-                raise ProjectQASmokeFailure(result.state)
+                raise ProjectQASmokeFailure(result.state, result.reason_code)
             self._project_qa_verified_this_run = True
             return
         if action.code == SetupActionCodeV1.INSTALL_VSCODE_EXTENSION:
@@ -770,7 +779,8 @@ class SetupEngineV1:
         if action.code == SetupActionCodeV1.PROJECT_QA_SMOKE and isinstance(
             error, ProjectQASmokeFailure
         ):
-            return f"{PROJECT_QA_SMOKE_FAILED_PREFIX}{error.state.value}"
+            detail = f":{error.reason_code.value}" if error.reason_code else ""
+            return f"{PROJECT_QA_SMOKE_FAILED_PREFIX}{error.state.value}{detail}"
         if (
             action.code == SetupActionCodeV1.BUILD_KNOWLEDGE
             and isinstance(error, ValueError)

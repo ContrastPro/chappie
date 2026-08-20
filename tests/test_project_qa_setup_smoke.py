@@ -115,9 +115,16 @@ def test_prompt_requires_exact_citation_and_rde_authority_without_reasoning_leak
     assert "supporting_knowledge_fact_ids" in PROJECT_QA_V1_INSTRUCTION
     assert "knowledge.<record_id>.<field>" in PROJECT_QA_V1_INSTRUCTION
     assert "RDE owns immutable" in PROJECT_QA_V1_INSTRUCTION
+    assert "must begin exactly" in PROJECT_QA_V1_INSTRUCTION
     assert "research evidence authority" in PROJECT_QA_V1_INSTRUCTION
     assert "Hidden reasoning is not" in PROJECT_QA_V1_INSTRUCTION
     assert "part of the result" in PROJECT_QA_V1_INSTRUCTION
+
+
+def test_project_qa_prompt_revision_tracks_the_hardened_answer_contract() -> None:
+    from app.ai.tasks import AITask, task_contract
+
+    assert task_contract(AITask.PROJECT_QA_V1).prompt_identity == "project_qa/1.0.1"
 
 
 def test_provider_failures_and_invalid_config_fail_closed(tmp_path: Path) -> None:

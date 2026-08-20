@@ -18,7 +18,11 @@ from app.bootstrap import (
     load_local_config,
 )
 from app.ollama_readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
-from app.project_qa_setup_smoke import ProjectQASetupSmokeResultV1, ProjectQASetupSmokeStateV1
+from app.project_qa_setup_smoke import (
+    ProjectQAGroundingReasonV1,
+    ProjectQASetupSmokeResultV1,
+    ProjectQASetupSmokeStateV1,
+)
 from app.setup_engine import (
     KNOWLEDGE_BUILD_BLOCKED_DIRTY_REPOSITORY,
     PROJECT_QA_SMOKE_FAILED_PREFIX,
@@ -514,6 +518,42 @@ def test_project_qa_smoke_failure_preserves_its_typed_state(tmp_path: Path) -> N
     assert failed.state == SetupStepStateV1.FAILED
     assert failed.message == f"{PROJECT_QA_SMOKE_FAILED_PREFIX}GROUNDING_ERROR"
     assert not engine._project_qa_verified_this_run
+
+
+def test_project_qa_smoke_failure_preserves_bounded_grounding_reason(tmp_path: Path) -> None:
+    class QAOnlyEngine(SetupEngineV1):
+        def plan(self, *, developer: bool = False, ai_profile: AIModelProfileV1 | None = None):
+            del developer, ai_profile
+            return (
+                SetupActionV1(
+                    SetupActionCodeV1.PROJECT_QA_SMOKE,
+                    ActionSafetyV1.SAFE,
+                    "Project QA smoke",
+                    None,
+                ),
+            )
+
+    class GroundingSmoke:
+        def run(
+            self, config: ChappieLocalConfigV1, knowledge_store: Path
+        ) -> ProjectQASetupSmokeResultV1:
+            del config, knowledge_store
+            return ProjectQASetupSmokeResultV1(
+                ProjectQASetupSmokeStateV1.GROUNDING_ERROR,
+                reason_code=ProjectQAGroundingReasonV1.RDE_AUTHORITY_NOT_STATED,
+            )
+
+    paths = _paths(tmp_path)
+    paths.config_file.parent.mkdir(parents=True)
+    paths.config_file.write_text(
+        '{"schema":"chappie_local_config/1.0.0","setup_version":"1.0.0","provider":"ollama","model":"qwen3:8b","enabled_capabilities":["BALANCED"]}\n'
+    )
+    result = QAOnlyEngine(paths, project_qa_smoke=GroundingSmoke()).execute(
+        approval=SetupApprovalV1(allow_safe=True, allow_external=True)
+    )
+    assert result.steps[0].message == (
+        f"{PROJECT_QA_SMOKE_FAILED_PREFIX}GROUNDING_ERROR:RDE_AUTHORITY_NOT_STATED"
+    )
 
 
 def test_existing_windows_provider_requires_ready_coordinator(tmp_path: Path) -> None:

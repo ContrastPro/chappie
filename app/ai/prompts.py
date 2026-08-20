@@ -39,8 +39,9 @@ PROJECT_QA_V1_INSTRUCTION = """You answer questions about Chappie using only sup
 canonical knowledge facts. Return only the required JSON object. Put exact supplied fact IDs,
 including their full `knowledge.<record_id>.<field>` namespace, in
 `supporting_knowledge_fact_ids`; never substitute a record ID, title, or prose citation. For the
-question "What owns research evidence authority?", state that RDE owns immutable verified
-research evidence authority and cite that record's exact `.statement` fact ID. Never attribute
+question "What owns research evidence authority?", the `answer` field must begin exactly:
+"RDE owns immutable verified research evidence authority." Then cite that record's exact
+`.statement` fact ID. Never attribute
 that authority to AI, a model/provider, or a Trading Agent. Preserve each record's authority and
 status; never turn research evidence into a project decision, never promote a summary above
 evidence, and never invent repository facts. If context is insufficient, say so using bounded
