@@ -28,6 +28,38 @@ Discovery alone is not readiness:
 runtime readiness, exact model verification, canonical Knowledge verification,
 atomic configuration binding, Chappie AI structured smoke, and Project QA smoke.
 
+## Three-step workstation onboarding acceptance criterion
+
+Every production-supported desktop platform must prove this normal-workstation
+experience:
+
+```text
+clone repository → run one platform bootstrap command → open the repository in normal VS Code
+```
+
+On macOS and Linux the sole bootstrap command is `./setup.sh`; on Windows it is
+`./setup.ps1`. A supported workstation with VS Code already installed must be
+ready to work with Chappie after that command: the project environment, required
+runtime dependencies, canonical Knowledge, configured AI, and compatible local
+Chappie VS Code extension are ready. Opening the repository in normal VS Code
+then activates Chappie and lets the extension start or connect to its owned
+Control Plane as designed.
+
+Normal onboarding must not require npm, manual VSIX installation, manual Ollama
+start, manual model pull, a manual Chappie server command, Extension Development
+Host/F5, or a Marketplace publication. Setup may prompt only for genuine choices
+or explicit external authorization required by this contract.
+
+For headless/server use, the equivalent criterion is:
+
+```text
+clone → one platform bootstrap command → READY
+```
+
+VS Code integration is optional or not applicable there and must never block
+core readiness. A future desktop OS is not production-supported until it proves
+the same three-step onboarding acceptance criterion.
+
 ### Development checkout rule
 
 Canonical Knowledge is built only from a clean committed source snapshot. A

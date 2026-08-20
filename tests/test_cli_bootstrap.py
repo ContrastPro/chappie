@@ -246,6 +246,29 @@ def test_cli_setup_missing_complete_is_not_printed_on_final_stage_failure(
     assert "final stage failed." in output
 
 
+def test_cli_renders_bounded_macos_provider_install_failure(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    from app import cli
+    from app.setup_engine import PROVIDER_SETUP_FAILED_PREFIX
+
+    engine = _ResultSetupEngine(
+        (
+            SetupStepResultV1(
+                SetupActionCodeV1.INSTALL_AI_PROVIDER,
+                SetupStepStateV1.FAILED,
+                f"{PROVIDER_SETUP_FAILED_PREFIX}OLLAMA_DOWNLOAD_FAILED",
+            ),
+        )
+    )
+    monkeypatch.setattr(cli, "_setup_engine", lambda *_args, **_kwargs: engine)
+
+    assert main(["setup", "--yes", "--non-interactive"], paths=_paths(tmp_path)) == 1
+    output = capsys.readouterr().out
+    assert "official download could not be verified" in output
+    assert "CHAPPIE SETUP FAILED" in output
+
+
 def test_cli_setup_prints_dirty_knowledge_remediation_without_traceback(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:

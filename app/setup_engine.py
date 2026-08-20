@@ -37,6 +37,7 @@ from app.windows_ollama import WindowsOllamaInstallerV1
 SETUP_ENGINE_IDENTITY = "chappie_setup_engine/1.0.0"
 KNOWLEDGE_BUILD_BLOCKED_DIRTY_REPOSITORY = "KNOWLEDGE_BUILD_BLOCKED_DIRTY_REPOSITORY"
 PROJECT_QA_SMOKE_FAILED_PREFIX = "PROJECT_QA_SMOKE_FAILED:"
+PROVIDER_SETUP_FAILED_PREFIX = "PROVIDER_SETUP_FAILED:"
 
 
 class ProjectQASmokeFailure(RuntimeError):
@@ -45,6 +46,14 @@ class ProjectQASmokeFailure(RuntimeError):
     def __init__(self, state: ProjectQASetupSmokeStateV1) -> None:
         super().__init__(state.value)
         self.state = state
+
+
+class ProviderSetupFailure(RuntimeError):
+    """Preserve a bounded provider-installation reason through setup execution."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 class ActionSafetyV1(StrEnum):
@@ -603,7 +612,7 @@ class SetupEngineV1:
                 raise RuntimeError("installed Ollama provider is not runtime ready")
             result = installer.install(allow_external=True)
             if result.status.value != "COMPLETED":
-                raise RuntimeError(result.error_code or "provider install failed")
+                raise ProviderSetupFailure(result.error_code or "OLLAMA_PROVIDER_INSTALL_FAILED")
             return
         if (
             action.code == SetupActionCodeV1.INSTALL_AI_MODEL
@@ -732,6 +741,10 @@ class SetupEngineV1:
 
     @staticmethod
     def _failure_reason(action: SetupActionV1, error: Exception) -> str:
+        if action.code == SetupActionCodeV1.INSTALL_AI_PROVIDER and isinstance(
+            error, ProviderSetupFailure
+        ):
+            return f"{PROVIDER_SETUP_FAILED_PREFIX}{error.reason}"
         if action.code == SetupActionCodeV1.PROJECT_QA_SMOKE and isinstance(
             error, ProjectQASmokeFailure
         ):

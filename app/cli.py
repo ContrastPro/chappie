@@ -37,6 +37,7 @@ from app.project_qa_setup_smoke import ProjectQASetupSmokeV1
 from app.setup_engine import (
     KNOWLEDGE_BUILD_BLOCKED_DIRTY_REPOSITORY,
     PROJECT_QA_SMOKE_FAILED_PREFIX,
+    PROVIDER_SETUP_FAILED_PREFIX,
     AIModelProfileV1,
     SetupActionCodeV1,
     SetupApprovalV1,
@@ -58,7 +59,7 @@ def _launch_macos_ollama(_argv: list[str]) -> None:
     if bundle is None:
         raise RuntimeError("Ollama.app is not installed")
     subprocess.Popen(
-        ["/usr/bin/open", "-a", str(bundle)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        ["/usr/bin/open", str(bundle)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
     )
 
 
@@ -172,6 +173,20 @@ class _SetupProgress:
                 }
                 print(
                     f"      {messages.get(state, 'Project QA smoke failed: internal validation error.')}"
+                )
+                return
+            if result.message.startswith(PROVIDER_SETUP_FAILED_PREFIX):
+                reason = result.message.removeprefix(PROVIDER_SETUP_FAILED_PREFIX)
+                messages = {
+                    "OLLAMA_DOWNLOAD_FAILED": "Ollama installation failed: official download could not be verified.",
+                    "OLLAMA_DMG_MOUNT_FAILED": "Ollama installation failed: the official installer image could not be mounted.",
+                    "OLLAMA_APP_NOT_FOUND": "Ollama installation failed: application bundle was not found in the mounted installer.",
+                    "OLLAMA_APP_COPY_FAILED": "Ollama installation failed: application bundle could not be copied.",
+                    "OLLAMA_EXECUTABLE_NOT_FOUND": "Ollama installation failed: bundled executable was not found after copy.",
+                    "OLLAMA_VERSION_CHECK_FAILED": "Ollama installation failed: installed executable did not pass version verification.",
+                }
+                print(
+                    f"      {messages.get(reason, 'Ollama installation failed: provider setup failed.')}"
                 )
                 return
             print(f"      {result.message}.")

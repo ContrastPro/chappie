@@ -48,7 +48,7 @@ def test_macos_runtime_start_uses_fixed_open_argv(monkeypatch, tmp_path):
         cli.subprocess, "Popen", lambda argv, **kwargs: calls.append((argv, kwargs))
     )
     cli._launch_macos_ollama(["ignored", "serve"])
-    assert calls[0][0] == ["/usr/bin/open", "-a", str(tmp_path / "Ollama.app")]
+    assert calls[0][0] == ["/usr/bin/open", str(tmp_path / "Ollama.app")]
     assert calls[0][1]["stdout"] == cli.subprocess.DEVNULL
 
 

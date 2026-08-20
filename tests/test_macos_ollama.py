@@ -182,3 +182,55 @@ def test_engine_rejects_durable_macos_provider_when_runtime_is_down(
     ).execute(approval=SetupApprovalV1(allow_external=True))
 
     assert result.steps[0].state.value == "FAILED"
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected"),
+    [
+        ("download", "OLLAMA_DOWNLOAD_FAILED"),
+        ("mount", "OLLAMA_DMG_MOUNT_FAILED"),
+        ("app", "OLLAMA_APP_NOT_FOUND"),
+        ("executable", "OLLAMA_EXECUTABLE_NOT_FOUND"),
+        ("version", "OLLAMA_VERSION_CHECK_FAILED"),
+    ],
+)
+def test_installation_pipeline_returns_bounded_failure_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str, expected: str
+) -> None:
+    monkeypatch.setattr("app.macos_ollama.shutil.which", lambda _: None)
+    calls: list[list[str]] = []
+
+    def downloader(_url: str, destination: Path) -> None:
+        if failure == "download":
+            raise OSError("fixture download failure")
+        destination.write_bytes(b"fixture")
+
+    def runner(argv: list[str], **_kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        if argv[1:2] == ["attach"]:
+            if failure == "mount":
+                raise subprocess.CalledProcessError(1, argv)
+            if failure != "app":
+                mount = Path(argv[argv.index("-mountpoint") + 1])
+                source = mount / "Ollama.app/Contents/Resources"
+                source.mkdir(parents=True)
+                if failure != "executable":
+                    (source / "ollama").touch()
+        if argv[-1] == "--version" and failure == "version":
+            return subprocess.CompletedProcess(argv, 0, "", "")
+        if argv[-1] == "--version":
+            return subprocess.CompletedProcess(argv, 0, "ollama 1.0", "")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    installer = MacOllamaInstallerV1(
+        applications_dir=tmp_path / "Applications with spaces",
+        system_applications_dir=tmp_path / "SystemApplications",
+        downloader=downloader,
+        runner=runner,
+    )
+    result = installer.install(allow_external=True)
+
+    assert result.status == ExternalActionStatusV1.FAILED
+    assert result.error_code == expected
+    if failure in {"app", "executable", "version"}:
+        assert any(argv[1:2] == ["detach"] for argv in calls)
