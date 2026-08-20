@@ -156,11 +156,23 @@ paths and executables are implementation details, not cross-platform rules.
 | AI and Project QA smoke | Implemented | Adapter-wired | Required before READY |
 | Idempotent rerun/status/doctor | Implemented | Shared status behavior | Revalidate without side effects |
 
-For the current Mac acceptance case—Ollama and `qwen3:8b` installed with no
-bound Chappie config—the required path is: detect provider/model → uniquely map
-`qwen3:8b` to `BALANCED` → adopt it without profile or external-consent prompt
-→ verify → bind → smoke → READY. Remaining macOS acceptance work is real
-end-to-end proof of this existing shared path, not a separate behavior design.
+For the current Mac acceptance case, an exact supported local model with no
+bound Chappie config is uniquely adopted into its matching profile without a
+profile or external-consent prompt, then verified, bound, and smoked before
+READY. This is shared setup behavior, not a separate macOS policy.
+
+### Current macOS clean-AI acceptance status
+
+`MACOS_CLEAN_AI_FIRST_RUN` is **PARTIAL / KNOWN_GAP**. During first launch,
+Ollama may relocate its application or require a macOS application lifecycle
+step that outlasts the bounded readiness window. The initial setup correctly
+fails closed rather than reporting READY.
+
+`MACOS_RESUME_SECOND_RUN` is **OBSERVED PASS**: canonical setup reuses the
+durable provider, performs only still-missing work (such as a selected model
+pull), verifies the exact model, runs AI and Project QA smoke, installs the
+compatible VS Code extension when applicable, and reaches COMPLETE. This is the
+current supported recovery; it is not presented as the final first-run UX.
 
 ## Acceptance scenarios
 

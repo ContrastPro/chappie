@@ -56,6 +56,17 @@ export function projectChatAvailability(
   return "Project chat is temporarily unavailable. Refresh Chappie status for details.";
 }
 
+/** Use repair language once any configured Chappie state can be restored. */
+export function setupActionLabel(
+  connection: string,
+  capability: string | undefined,
+  aiProvider: string | null | undefined,
+  knowledge: string,
+): "Set up" | "Repair" {
+  if (connection !== "CONNECTED" || capability === "AVAILABLE") return "Set up";
+  return aiProvider === "NOT_CONFIGURED" && knowledge === "NOT_CONFIGURED" ? "Set up" : "Repair";
+}
+
 export function projectQaFailureMessage(reasonCode: string | undefined): string {
   if (reasonCode === "AI_UNAVAILABLE") return "Chappie AI is not configured for this workspace.";
   if (reasonCode === "KNOWLEDGE_UNAVAILABLE") return "Chappie Knowledge is not configured for this workspace.";

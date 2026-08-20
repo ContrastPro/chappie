@@ -9,7 +9,7 @@ import {
 } from "./contracts";
 import { ChappieControlPlaneClient, ControlPlaneClientError, ControlPlaneDependencyError, ControlPlaneIncompatibleError } from "./client";
 import { appendTurn, ChatTurnV1, renderTurns } from "./chat";
-import { capabilitySummary, contextPreview, humanState, projectChatAvailability, projectQaFailureMessage } from "./presentation";
+import { capabilitySummary, contextPreview, humanState, projectChatAvailability, projectQaFailureMessage, setupActionLabel } from "./presentation";
 import { WorkspaceContextCollector } from "./workspace_context";
 import { collectGitMetadata } from "./git_metadata";
 import { ChappieSetupTerminalV1, isChappieWorkspace, OwnedControlPlaneProcess, resolveChappieExecutable, resolveChappieSetupCommand, setupBootstrapRemediation, shouldAutoStartControlPlane } from "./workspace";
@@ -63,6 +63,7 @@ class ChappieChatView implements vscode.WebviewViewProvider {
   private state: ConnectionState = "DISCONNECTED";
   private model: string | null = null;
   private availability = "Chappie Control Plane is not connected.";
+  private setupAction = "Set up";
   private preview = "";
 
   public constructor(private readonly client: () => ChappieControlPlaneClient) {}
@@ -96,16 +97,17 @@ class ChappieChatView implements vscode.WebviewViewProvider {
     this.render();
   }
 
-  public update(state: ConnectionState, model: string | null, availability: string | null): void {
+  public update(state: ConnectionState, model: string | null, availability: string | null, setupAction = "Set up"): void {
     this.state = state;
     this.model = model;
     this.availability = availability ?? "";
+    this.setupAction = setupAction;
     this.render();
   }
 
   private add(turn: ChatTurnV1): void { this.history = appendTurn(this.history, turn); this.render(); }
   private render(): void {
-    this.view?.webview.postMessage({ type: "render", state: this.state, model: this.model, availability: this.availability, preview: this.preview, html: renderTurns(this.history) });
+    this.view?.webview.postMessage({ type: "render", state: this.state, model: this.model, availability: this.availability, setupAction: this.setupAction, preview: this.preview, html: renderTurns(this.history) });
   }
 }
 
@@ -136,7 +138,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       const [status, ai, capabilities] = await Promise.all([client.status(), client.aiStatus(), client.capabilities()]);
       tree.update("CONNECTED", { status, ai, capabilities });
       const projectQa = capabilities.capabilities.find((item) => item.capability_id === "project.qa");
-      chat.update("CONNECTED", ai.model, projectChatAvailability("CONNECTED", projectQa?.status, ai.provider_state, componentState(status, "KNOWLEDGE")));
+      const knowledge = componentState(status, "KNOWLEDGE");
+      chat.update(
+        "CONNECTED",
+        ai.model,
+        projectChatAvailability("CONNECTED", projectQa?.status, ai.provider_state, knowledge),
+        setupActionLabel("CONNECTED", projectQa?.status, ai.provider_state, knowledge),
+      );
       renderStatus(bar, "CONNECTED");
       output.appendLine("Control Plane connected.");
       return "CONNECTED";
@@ -149,6 +157,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       output.appendLine(`${state}: ${message}`);
       if (state === "INCOMPATIBLE") { void vscode.window.showWarningMessage(message, "Chappie: Refresh"); }
       return state;
+    }
+  };
+
+  const refreshAfterSetup = async (): Promise<void> => {
+    output.appendLine("Chappie setup completed; refreshing local status.");
+    const connection = await connect();
+    if (shouldAutoStartControlPlane(true, true, connection) && !ownedProcess.running) {
+      await startOwned();
     }
   };
 
@@ -201,8 +217,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     setupTerminal.closed(
       terminal,
       () => {
-        output.appendLine("Chappie setup completed; refreshing local status.");
-        void connect();
+        void refreshAfterSetup();
       },
       () => {
         output.appendLine("Chappie setup did not complete; keeping the current status.");
@@ -350,7 +365,7 @@ chips.forEach(chip=>chip.addEventListener('click',()=>{chip.setAttribute('aria-p
 const submit=()=>{if(!question.value.trim()||send.disabled)return;send.disabled=true;send.textContent='Asking…';vscode.postMessage({type:'ask',question:question.value,...options()});};
 form.addEventListener('submit',event=>{event.preventDefault();submit();});question.addEventListener('keydown',event=>{if(event.key==='Enter'&&(event.metaKey||event.ctrlKey)){event.preventDefault();submit();}});
 document.getElementById('setup').addEventListener('click',()=>vscode.postMessage({type:'setup'}));
-window.addEventListener('message',event=>{const data=event.data;if(data.type!=='render')return;const unavailable=Boolean(data.availability);readiness.textContent=data.model?'Ready · '+data.model:(unavailable?'Chat unavailable · Setup required':'Ready');availabilityText.textContent=data.availability&&data.availability.includes('AI and Knowledge')?'Chat requires AI and Knowledge.':data.availability||'';availability.style.display=unavailable?'flex':'none';history.innerHTML=data.html||'<section class="empty"><div class="suggestions"><button class="suggestion" type="button">Understand architecture</button><button class="suggestion" type="button">Explain selected code</button><button class="suggestion" type="button">Ask about project decisions</button></div></section>';document.getElementById('preview').textContent=data.preview;send.disabled=unavailable;send.textContent='→';});
+window.addEventListener('message',event=>{const data=event.data;if(data.type!=='render')return;const unavailable=Boolean(data.availability);readiness.textContent=data.model?'Ready · '+data.model:(unavailable?'Chat unavailable · Setup required':'Ready');availabilityText.textContent=data.availability&&data.availability.includes('AI and Knowledge')?'Chat requires AI and Knowledge.':data.availability||'';availability.style.display=unavailable?'flex':'none';document.getElementById('setup').textContent=data.setupAction||'Set up';history.innerHTML=data.html||'<section class="empty"><div class="suggestions"><button class="suggestion" type="button">Understand architecture</button><button class="suggestion" type="button">Explain selected code</button><button class="suggestion" type="button">Ask about project decisions</button></div></section>';document.getElementById('preview').textContent=data.preview;send.disabled=unavailable;send.textContent='→';});
 history.addEventListener('click',event=>{const target=event.target;if(target.classList&&target.classList.contains('suggestion')){question.value=target.textContent;question.focus();}});
 </script></body></html>`;
 }

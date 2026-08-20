@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { ChappieControlPlaneClient, CONTROL_PLANE_HEALTH_TIMEOUT_MS, ControlPlaneClientError, ControlPlaneDependencyError, ControlPlaneIncompatibleError, PROJECT_QA_HTTP_TIMEOUT_MS } from "../client";
-import { capabilitySummary, contextPreview, humanState, projectChatAvailability, projectQaFailureMessage } from "../presentation";
+import { capabilitySummary, contextPreview, humanState, projectChatAvailability, projectQaFailureMessage, setupActionLabel } from "../presentation";
 import { CONTROL_PLANE_DIGEST, CONTROL_PLANE_IDENTITY, TRANSPORT_DIGEST, TRANSPORT_IDENTITY } from "../contracts";
 import { ChappieSetupTerminalV1, isChappieWorkspace, OwnedControlPlaneProcess, resolveChappieExecutable, resolveChappieSetupCommand, setupBootstrapRemediation, shouldAutoStartControlPlane } from "../workspace";
 import { appendTurn, ChatTurnV1, escapeHtml, MAX_CHAT_TURNS, renderTurns } from "../chat";
@@ -151,6 +151,9 @@ test("connected degraded Project QA remains connected and presents bounded remed
   assert.equal(projectChatAvailability("CONNECTED", "DEGRADED", "READY", "NOT_CONFIGURED"), "Project chat unavailable. Chappie Knowledge is not configured for this workspace.");
   assert.equal(projectChatAvailability("CONNECTED", "AVAILABLE", "READY", "READY"), null);
   assert.equal(capabilitySummary([{ status: "AVAILABLE" }, { status: "DEGRADED" }, { status: "UNAVAILABLE" }]), "1/3");
+  assert.equal(setupActionLabel("CONNECTED", "DEGRADED", "DEGRADED", "READY"), "Repair");
+  assert.equal(setupActionLabel("CONNECTED", "DEGRADED", "NOT_CONFIGURED", "NOT_CONFIGURED"), "Set up");
+  assert.equal(setupActionLabel("CONNECTED", "AVAILABLE", "READY", "READY"), "Set up");
 });
 
 test("compact presentation translates states and only renders selected safe context previews", () => {
