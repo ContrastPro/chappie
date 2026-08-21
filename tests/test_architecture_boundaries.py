@@ -38,21 +38,15 @@ ROOT_MODULE_ALLOWLIST = frozenset(
     {
         "ai_setup_smoke.py",
         "application.py",
-        "behavioral_market.py",
         "bootstrap.py",
-        "capital_rotation.py",
         "control_plane.py",
         "control_plane_transport.py",
         "knowledge.py",
         "knowledge_retrieval.py",
-        "leverage_stress.py",
         "macos_ollama.py",
-        "market_intelligence.py",
-        "market_intelligence_flow.py",
         "market_intelligence_universe.py",
         "multi_asset_flow_intelligence.py",
         "news_event_intelligence.py",
-        "news_event_macro.py",
         "ollama_readiness.py",
         "ollama_start.py",
         "project_qa_setup_smoke.py",
@@ -69,14 +63,10 @@ STABLE_ROOT_ADAPTERS = frozenset({"cli.py", "main.py"})
 # Current root-level research identities. When the app.research package exists,
 # replace these with its namespace without changing the guard's semantics.
 OFFLINE_RESEARCH_PREFIXES = (
-    "app.behavioral_market",
-    "app.capital_rotation",
-    "app.leverage_stress",
-    "app.market_intelligence",
     "app.multi_asset_flow_intelligence",
     "app.news_event_intelligence",
-    "app.news_event_macro",
     "app.research_",
+    "app.research.intelligence",
     "app.research.strategy",
 )
 RUNTIME_TRADING_PREFIXES = (
@@ -124,6 +114,12 @@ COMPLETED_DIRECT_MIGRATIONS = {
     "app.research.data.outcomes": "COMPLETED_DIRECT_MIGRATION",
     "app.research.paths": "COMPLETED_DIRECT_MIGRATION",
     "app.research.data.store": "COMPLETED_DIRECT_MIGRATION",
+    "app.research.intelligence.behavioral": "COMPLETED_DIRECT_MIGRATION",
+    "app.research.intelligence.capital_rotation": "COMPLETED_DIRECT_MIGRATION",
+    "app.research.intelligence.flow": "COMPLETED_DIRECT_MIGRATION",
+    "app.research.intelligence.leverage_stress": "COMPLETED_DIRECT_MIGRATION",
+    "app.research.intelligence.macro_events": "COMPLETED_DIRECT_MIGRATION",
+    "app.research.intelligence.market": "COMPLETED_DIRECT_MIGRATION",
     "app.research.strategy.history": "COMPLETED_DIRECT_MIGRATION",
     "app.research.strategy.lab": "COMPLETED_DIRECT_MIGRATION",
     "app.research.strategy.long_history": "COMPLETED_DIRECT_MIGRATION",
@@ -243,6 +239,12 @@ def test_completed_direct_migrations_have_only_canonical_paths() -> None:
     assert not (APP / "research_json.py").exists()
     assert not (APP / "research_outcomes.py").exists()
     assert not (APP / "research_paths.py").exists()
+    assert not (APP / "behavioral_market.py").exists()
+    assert not (APP / "capital_rotation.py").exists()
+    assert not (APP / "leverage_stress.py").exists()
+    assert not (APP / "market_intelligence.py").exists()
+    assert not (APP / "market_intelligence_flow.py").exists()
+    assert not (APP / "news_event_macro.py").exists()
     assert not (APP / "strategy_history.py").exists()
     assert not (APP / "strategy_lab.py").exists()
     assert not (APP / "strategy_long_history.py").exists()

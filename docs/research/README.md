@@ -29,7 +29,7 @@ infrastructure. It uses VERIFIED compact inputs, flow-led exact alignment,
 segment-safe outcomes, causal collapsed events, and deterministic matched controls.
 Its contract digest is defined in `app.research_methodology`.
 
-`app.behavioral_market` is `LEGACY_REFERENCE`: useful for historical
+`app.research.intelligence.behavioral` is `LEGACY_REFERENCE`: useful for historical
 reproduction and sanity checks, but exact parity is not a compact-methodology
 release requirement. This validation establishes research-engine behavior only;
 it does not establish strategy profitability. V4C remains the next pending

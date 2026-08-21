@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
 from itertools import pairwise
 
-from app.market_intelligence import FUNDING_MAX_AGE_MS, ContextDataset, asof_observation
+from app.research.intelligence.market import FUNDING_MAX_AGE_MS, ContextDataset, asof_observation
 
 FIVE_MINUTES_MS = 5 * 60 * 1_000
 ONE_MINUTE_MS = 60 * 1_000

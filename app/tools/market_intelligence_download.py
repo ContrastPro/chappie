@@ -11,7 +11,7 @@ from pathlib import Path
 
 import httpx
 
-from app.market_intelligence import ContextDataset, ContextObservation, context_to_payload
+from app.research.intelligence.market import ContextDataset, ContextObservation, context_to_payload
 from app.research.strategy.history import utc_date_to_ms
 
 USD_M_FUTURES_URL = "https://fapi.binance.com"

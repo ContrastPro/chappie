@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from app.behavioral_market import (
+from app.research.intelligence.behavioral import (
     HORIZONS,
     analyze_asset,
+    analyze_behavioral_market,
     collapse_events,
     independent_events,
 )
-from app.market_intelligence_flow import FIVE_MINUTES_MS, FlowObservation, SpotFlowObservation
+from app.research.intelligence.flow import FIVE_MINUTES_MS, FlowObservation, SpotFlowObservation
 
 
 def _row(
@@ -102,6 +103,9 @@ def test_analysis_is_causal_and_reports_intensity_and_years() -> None:
     assert result["independent_events"] == 5
     assert set(result["threshold_outcomes"]) == {"60", "100", "150"}
     assert result["years"]
+    assert analyze_behavioral_market({"BTC": rows}, gaps_after_ms={})["format"] == (
+        "chappie-behavioral-market-v1"
+    )
 
 
 def test_future_price_change_does_not_change_event_identity() -> None:

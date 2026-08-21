@@ -16,7 +16,7 @@ from statistics import median
 from typing import Final
 
 from app.market.models import Candle
-from app.market_intelligence import FUNDING_MAX_AGE_MS, ContextDataset
+from app.research.intelligence.market import FUNDING_MAX_AGE_MS, ContextDataset
 
 ASSETS: Final = ("BTC", "ETH", "SOL", "BNB")
 RELATIVE_PAIRS: Final = {"ETH": "ETHBTC", "SOL": "SOLBTC", "BNB": "BNBBTC"}

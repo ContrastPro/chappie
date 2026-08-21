@@ -7,7 +7,7 @@ import json
 from decimal import Decimal
 from pathlib import Path
 
-from app.market_intelligence import (
+from app.research.intelligence.market import (
     FUNDING_MAX_AGE_MS,
     OI_MAX_AGE_MS,
     asof_observation,

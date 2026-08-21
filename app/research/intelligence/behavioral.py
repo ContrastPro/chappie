@@ -17,7 +17,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 from statistics import median
 
-from app.market_intelligence_flow import FIVE_MINUTES_MS, FlowObservation
+from app.research.intelligence.flow import FIVE_MINUTES_MS, FlowObservation
 
 HORIZONS = {"1h": 12, "3h": 36, "6h": 72, "12h": 144, "24h": 288}
 THRESHOLDS_BPS = (60, 100, 150)

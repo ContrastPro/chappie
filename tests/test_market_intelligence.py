@@ -5,7 +5,7 @@ from decimal import Decimal
 import pytest
 
 from app.market.models import Candle
-from app.market_intelligence import (
+from app.research.intelligence.market import (
     ContextDataset,
     ContextObservation,
     asof_observation,
@@ -69,6 +69,7 @@ def test_eth_join_requires_completed_candle_at_btc_timestamp() -> None:
 def test_context_digest_is_deterministic_and_tampering_fails_closed() -> None:
     dataset = ContextDataset("funding_rate", "BTCUSDT", "8h", "fixture", (_observation(0),))
     payload = context_to_payload(dataset)
+    assert payload["format"] == "chappie-market-context/v1"
     assert load_context_payload(payload) == dataset
     payload["observations"][0]["value"] = "2"  # type: ignore[index]
     with pytest.raises(ValueError, match="digest"):

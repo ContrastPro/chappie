@@ -26,7 +26,7 @@ from app.ai.research_reasoning import RESEARCH_REASONING_JSON_SCHEMA
 from app.ai.router import ModelRouter
 from app.ai.schemas import REASONING_OUTPUT_JSON_SCHEMA
 from app.ai.tasks import task_contract
-from app.news_event_macro import HistoricalEventAIContextV1
+from app.research.intelligence.macro_events import HistoricalEventAIContextV1
 
 NOW = datetime(2026, 8, 18, 12, tzinfo=UTC)
 

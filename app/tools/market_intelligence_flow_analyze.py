@@ -9,7 +9,7 @@ from collections import defaultdict
 from decimal import Decimal
 from pathlib import Path
 
-from app.market_intelligence_flow import (
+from app.research.intelligence.flow import (
     FlowObservation,
     conditional_lift,
     cross_asset_flow_state,

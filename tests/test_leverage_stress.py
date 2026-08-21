@@ -4,7 +4,8 @@ from decimal import Decimal
 
 import pytest
 
-from app.leverage_stress import (
+from app.research.intelligence.flow import FIVE_MINUTES_MS, ONE_MINUTE_MS
+from app.research.intelligence.leverage_stress import (
     PriceObservation,
     aggregate_completed_basis_5m,
     basis_payload,
@@ -13,7 +14,6 @@ from app.leverage_stress import (
     leverage_state,
     load_basis_payload,
 )
-from app.market_intelligence_flow import FIVE_MINUTES_MS, ONE_MINUTE_MS
 
 
 def _prices(*, start: int = 0, count: int = 12, offset: str = "0"):
@@ -56,7 +56,9 @@ def test_percentile_is_causal_and_payload_is_deterministic() -> None:
     )
     assert rows[10].rolling_percentile is None
     assert rows[11].rolling_percentile is not None
-    assert load_basis_payload(basis_payload(rows)) == rows
+    payload = basis_payload(rows)
+    assert payload["format"] == "chappie-leverage-stress-basis/v1"
+    assert load_basis_payload(payload) == rows
     changed = list(rows)
     changed[-1] = PriceObservation(0, 0, Decimal(1))  # type: ignore[list-item]
     assert (

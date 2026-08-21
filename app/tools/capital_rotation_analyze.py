@@ -7,7 +7,8 @@ import json
 from decimal import Decimal
 from pathlib import Path
 
-from app.capital_rotation import (
+from app.market.intervals import fixed_binance_spot_interval_ms
+from app.research.intelligence.capital_rotation import (
     ASSETS,
     RELATIVE_PAIRS,
     STATES,
@@ -19,8 +20,7 @@ from app.capital_rotation import (
     transition_matrix,
     volume_breadth_outcomes,
 )
-from app.market.intervals import fixed_binance_spot_interval_ms
-from app.market_intelligence import load_context_payload
+from app.research.intelligence.market import load_context_payload
 from app.research.paths import results_dir
 from app.research.strategy.history import load_dataset
 from app.tools.strategy_evaluate import write_report_atomic

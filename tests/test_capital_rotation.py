@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from app.capital_rotation import (
+from app.market.models import Candle
+from app.research.intelligence.capital_rotation import (
     ASSETS,
     RELATIVE_PAIRS,
     capital_flow_proxy,
@@ -12,8 +13,7 @@ from app.capital_rotation import (
     rotation_observations,
     transition_matrix,
 )
-from app.market.models import Candle
-from app.market_intelligence import ContextDataset, ContextObservation
+from app.research.intelligence.market import ContextDataset, ContextObservation
 
 HOUR = 3_600_000
 

@@ -27,8 +27,7 @@ from time import sleep
 
 import httpx
 
-from app.market_intelligence import ContextDataset, ContextObservation
-from app.market_intelligence_flow import (
+from app.research.intelligence.flow import (
     MetricsDataset,
     SpotFlowObservation,
     aggregate_completed_spot_5m,
@@ -42,6 +41,7 @@ from app.market_intelligence_flow import (
     metrics_to_payload,
     parse_spot_minute_rows_excluding_invalid,
 )
+from app.research.intelligence.market import ContextDataset, ContextObservation
 from app.research.strategy.history import utc_date_to_ms
 from app.tools.strategy_evaluate import write_report_atomic
 

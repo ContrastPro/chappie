@@ -7,8 +7,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.market_intelligence import ContextDataset, ContextObservation
-from app.market_intelligence_flow import (
+from app.research.intelligence.flow import (
     FIVE_MINUTES_MS,
     METRICS_COLUMNS,
     FuturesMetricsObservation,
@@ -27,6 +26,7 @@ from app.market_intelligence_flow import (
     parse_spot_minute_rows,
     parse_spot_minute_rows_excluding_invalid,
 )
+from app.research.intelligence.market import ContextDataset, ContextObservation
 from app.tools.market_intelligence_flow_download import (
     MAX_WORKERS,
     DailyMetricsResult,
@@ -308,6 +308,7 @@ def test_flow_payload_is_deterministic_and_tampering_fails_closed() -> None:
         funding=None,
     )
     payload = flow_to_payload(rows)
+    assert payload["format"] == "chappie-flow-positioning/v1"
     assert load_flow_payload(payload) == rows
     payload["rows"][0]["close"] = "999"  # type: ignore[index]
     with pytest.raises(ValueError, match="digest"):
@@ -367,7 +368,9 @@ def test_daily_metrics_cache_reuses_verified_artifact_and_preserves_canonical_or
     assert second.reused
     assert client.calls == 1
     assert _load_cached_metrics(tmp_path, "BTCUSDT", "2024-01-01") == second
-    assert load_metrics_payload(metrics_to_payload(second.dataset)) == second.dataset  # type: ignore[arg-type]
+    payload = metrics_to_payload(second.dataset)  # type: ignore[arg-type]
+    assert payload["format"] == "chappie-usdm-metrics/v1"
+    assert load_metrics_payload(payload) == second.dataset  # type: ignore[arg-type]
 
 
 def test_funding_cache_is_identity_and_digest_checked_and_reusable(tmp_path) -> None:

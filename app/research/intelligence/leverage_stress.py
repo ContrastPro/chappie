@@ -14,7 +14,7 @@ from dataclasses import asdict, dataclass
 from decimal import Decimal, InvalidOperation
 from itertools import pairwise
 
-from app.market_intelligence_flow import FIVE_MINUTES_MS, ONE_MINUTE_MS
+from app.research.intelligence.flow import FIVE_MINUTES_MS, ONE_MINUTE_MS
 
 
 @dataclass(frozen=True, slots=True)

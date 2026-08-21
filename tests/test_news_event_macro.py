@@ -7,7 +7,12 @@ from pathlib import Path
 import pytest
 
 from app.news_event_intelligence import strict_after_five_minute_anchor
-from app.news_event_macro import (
+from app.research.data.store import ResearchStore
+from app.research.intelligence.macro_events import (
+    MACRO_STORE_SCHEMA,
+    PARSER_VERSION,
+    REGISTRY_NAME,
+    REGISTRY_VERSION,
     OfficialMacroSource,
     historical_event_ai_context,
     ingest_official_macro_records,
@@ -16,7 +21,6 @@ from app.news_event_macro import (
     official_macro_source_registry,
     parse_official_macro_html,
 )
-from app.research.data.store import ResearchStore
 
 
 @pytest.mark.parametrize(
@@ -60,6 +64,12 @@ def test_registry_is_primary_official_and_deterministic() -> None:
     assert [item.source_id.value for item in registry] == ["FED_FOMC", "BLS_CPI", "BLS_EMPLOYMENT"]
     assert {item.source_quality.value for item in registry} == {"PRIMARY_OFFICIAL"}
     assert official_macro_registry_digest() == official_macro_registry_digest()
+    assert (REGISTRY_NAME, REGISTRY_VERSION, PARSER_VERSION, MACRO_STORE_SCHEMA) == (
+        "news_event_official_macro_sources",
+        "1.0.0",
+        "official-macro-html/1.0.0",
+        "chappie-news-event-macro/v1",
+    )
 
 
 def test_ingestion_is_idempotent_and_sidecar_is_append_only(tmp_path: Path) -> None:

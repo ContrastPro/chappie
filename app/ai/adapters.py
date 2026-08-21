@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 
 from app.ai.errors import AIValidationError
 from app.ai.schemas import FactV1, digest
-from app.news_event_macro import HistoricalEventAIContextV1
+from app.research.intelligence.macro_events import HistoricalEventAIContextV1
 
 
 def facts_from_historical_event_context(

@@ -14,7 +14,7 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 
 from app.news_event_intelligence import DEFAULT_NEWS_EVENT_STORE_PATH
-from app.news_event_macro import (
+from app.research.intelligence.macro_events import (
     OfficialMacroSource,
     ingest_official_macro_records,
     official_macro_registry_digest,
