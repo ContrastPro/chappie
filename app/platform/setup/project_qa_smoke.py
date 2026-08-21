@@ -10,10 +10,10 @@ from typing import Any
 
 from app.ai.errors import AIProviderError, AIProviderTimeoutError, AIValidationError
 from app.ai.runtime import ChappieAI
-from app.ai_setup_smoke import build_configured_chappie_ai, valid_setup_ai_config
-from app.bootstrap import ChappieLocalConfigV1
 from app.knowledge import KnowledgeAuthorityV1, KnowledgeContextV1, KnowledgeTypeV1, read_store
 from app.knowledge_retrieval import KnowledgeRetrievalRequestV1, retrieve
+from app.platform.bootstrap import ChappieLocalConfigV1
+from app.platform.setup.ai_smoke import build_configured_chappie_ai, valid_setup_ai_config
 
 PROJECT_QA_SETUP_SMOKE_IDENTITY = "project_qa_setup_smoke/1.0.0"
 PROJECT_QA_SETUP_QUESTION = "What owns research evidence authority?"

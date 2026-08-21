@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from app.bootstrap import (
+from app.cli import main
+from app.platform.bootstrap import (
     INSTALLATION_CONTRACT_DIGEST,
     INSTALLATION_IDENTITY,
     AIModelCatalogEntryV1,
@@ -30,8 +31,7 @@ from app.bootstrap import (
     recommend_model_profiles,
     setup_plan,
 )
-from app.cli import main
-from app.setup_engine import (
+from app.platform.setup.engine import (
     KNOWLEDGE_BUILD_BLOCKED_DIRTY_REPOSITORY,
     ActionSafetyV1,
     SetupActionCodeV1,
@@ -166,7 +166,7 @@ class _ResultSetupEngine:
 
 
 def test_cli_bootstrap_ascii_separator_is_windows_friendly(tmp_path: Path) -> None:
-    from app.bootstrap import format_status
+    from app.platform.bootstrap import format_status
 
     status = collect_status(_paths(tmp_path))
     rendered = format_status(status)
@@ -250,7 +250,7 @@ def test_cli_renders_bounded_macos_provider_install_failure(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     from app import cli
-    from app.setup_engine import PROVIDER_SETUP_FAILED_PREFIX
+    from app.platform.setup.engine import PROVIDER_SETUP_FAILED_PREFIX
 
     engine = _ResultSetupEngine(
         (
@@ -329,7 +329,7 @@ def test_cli_setup_prints_typed_project_qa_grounding_failure(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     from app import cli
-    from app.setup_engine import PROJECT_QA_SMOKE_FAILED_PREFIX
+    from app.platform.setup.engine import PROJECT_QA_SMOKE_FAILED_PREFIX
 
     engine = _ResultSetupEngine(
         (
@@ -351,7 +351,7 @@ def test_cli_setup_prints_bounded_project_qa_grounding_reason(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
     from app import cli
-    from app.setup_engine import PROJECT_QA_SMOKE_FAILED_PREFIX
+    from app.platform.setup.engine import PROJECT_QA_SMOKE_FAILED_PREFIX
 
     engine = _ResultSetupEngine(
         (
@@ -526,7 +526,7 @@ def test_cli_reuses_balanced_config_even_when_hardware_prefers_light(tmp_path: P
     engine = _DummySetupEngine({AIModelProfileV1.BALANCED: ()})
     monkeypatch.setattr(cli, "_setup_engine", lambda *_args, **_kwargs: engine)
     monkeypatch.setattr(
-        "app.bootstrap.recommend_model_profiles",
+        "app.platform.bootstrap.recommend_model_profiles",
         lambda *_a, **_k: {"recommended": ("qwen3:4b",), "unsupported": ()},
     )
     monkeypatch.setattr(
@@ -747,7 +747,7 @@ def test_model_recommendations_do_not_require_provider_calls() -> None:
 
 
 def test_phase_two_acceptance_hardware_recommendations_are_platform_neutral() -> None:
-    from app.bootstrap import TEST_MODEL_CATALOG
+    from app.platform.bootstrap import TEST_MODEL_CATALOG
 
     apple = HardwareProfileV1("Darwin", "x", "arm64", None, 8, 18 * 1024**3)
     rtx = HardwareProfileV1(
@@ -762,7 +762,7 @@ def test_phase_two_acceptance_hardware_recommendations_are_platform_neutral() ->
 def test_apple_silicon_uses_system_memory_without_inventing_vram(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from app import bootstrap
+    from app.platform import bootstrap
 
     monkeypatch.setattr(bootstrap, "_memory_bytes", lambda _system: 18 * 1024**3)
     hardware = detect_hardware(_paths(tmp_path), system="Darwin", machine="arm64", cpu_count=11)
@@ -782,7 +782,7 @@ def test_macos_shell_bootstrap_remains_a_thin_interactive_handoff() -> None:
 def test_windows_rtx_4070_ti_is_recommended_when_windows_memory_is_available(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from app import bootstrap
+    from app.platform import bootstrap
 
     monkeypatch.setattr(bootstrap, "_memory_bytes", lambda _: 32 * 1024**3)
     monkeypatch.setattr(
@@ -799,7 +799,7 @@ def test_unknown_windows_vram_keeps_safe_cpu_compatible_recommendations() -> Non
     profile = HardwareProfileV1(
         "Windows", "x", "x86_64", None, 12, 32 * 1024**3, ("NVIDIA fixture",), None, None
     )
-    from app.bootstrap import TEST_MODEL_CATALOG
+    from app.platform.bootstrap import TEST_MODEL_CATALOG
 
     assert "qwen3:8b" in recommend_model_profiles(profile, TEST_MODEL_CATALOG)["recommended"]
 
@@ -826,7 +826,7 @@ def test_cli_bridges_knowledge_without_rebuilding_store(
 
 def test_model_pull_progress_is_a_single_writer_stage(capsys: pytest.CaptureFixture[str]) -> None:
     from app.cli import _SetupProgress
-    from app.setup_engine import ActionSafetyV1, SetupActionCodeV1, SetupActionV1
+    from app.platform.setup.engine import ActionSafetyV1, SetupActionCodeV1, SetupActionV1
 
     progress = _SetupProgress(1)
     action = SetupActionV1(
@@ -859,8 +859,8 @@ def test_windows_ready_ai_status_is_observational_and_fail_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """The real Windows setup result is reported without setup side effects."""
-    from app import bootstrap
     from app.knowledge import KnowledgeManifestV1, RepositorySnapshotV1
+    from app.platform import bootstrap
     from app.platform.ollama.readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
 
     paths = _paths(tmp_path)
@@ -957,8 +957,8 @@ def test_windows_ready_ai_status_is_observational_and_fail_closed(
 def test_macos_ready_ai_status_uses_the_darwin_executor(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from app import bootstrap
     from app.knowledge import KnowledgeManifestV1, RepositorySnapshotV1
+    from app.platform import bootstrap
     from app.platform.ollama.readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
 
     paths = _paths(tmp_path)
@@ -1006,7 +1006,7 @@ def test_macos_ready_ai_status_uses_the_darwin_executor(
 def test_status_provider_down_and_missing_model_get_current_remediation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from app import bootstrap
+    from app.platform import bootstrap
     from app.platform.ollama.readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
 
     paths = _paths(tmp_path)

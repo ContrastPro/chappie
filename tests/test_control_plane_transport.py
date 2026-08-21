@@ -10,15 +10,6 @@ from pathlib import Path
 
 import pytest
 
-from app.bootstrap import (
-    ChappieLocalConfigV1,
-    ChappiePaths,
-    ChappieStatusV1,
-    ComponentStateV1,
-    ComponentStatusV1,
-    HardwareProfileV1,
-    InstallationStateV1,
-)
 from app.control_plane import (
     CONTROL_PLANE_IDENTITY,
     ChappieControlPlaneV1,
@@ -32,6 +23,15 @@ from app.control_plane_transport import (
     LOOPBACK_HOST,
     ChappieControlPlaneServerV1,
     ControlPlaneTransportErrorV1,
+)
+from app.platform.bootstrap import (
+    ChappieLocalConfigV1,
+    ChappiePaths,
+    ChappieStatusV1,
+    ComponentStateV1,
+    ComponentStatusV1,
+    HardwareProfileV1,
+    InstallationStateV1,
 )
 
 

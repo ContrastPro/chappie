@@ -10,8 +10,14 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import ClassVar
 
-from app.ai_setup_smoke import ChappieAISetupSmokeV1
-from app.bootstrap import (
+from app.control_plane import ChappieControlPlaneV1
+from app.control_plane_transport import (
+    CONTROL_PLANE_TRANSPORT_IDENTITY,
+    DEFAULT_CONTROL_PLANE_PORT,
+    ChappieControlPlaneServerV1,
+    ControlPlaneTransportErrorV1,
+)
+from app.platform.bootstrap import (
     CHAPPIE_VERSION,
     TEST_MODEL_CATALOG,
     ChappiePaths,
@@ -24,19 +30,12 @@ from app.bootstrap import (
     recommend_model_profiles,
     status_exit_code,
 )
-from app.control_plane import ChappieControlPlaneV1
-from app.control_plane_transport import (
-    CONTROL_PLANE_TRANSPORT_IDENTITY,
-    DEFAULT_CONTROL_PLANE_PORT,
-    ChappieControlPlaneServerV1,
-    ControlPlaneTransportErrorV1,
-)
 from app.platform.ollama.macos import MacOllamaInstallerV1
 from app.platform.ollama.readiness import OllamaReadinessProbe
 from app.platform.ollama.start import OllamaReadinessCoordinatorV1, OllamaRetryPolicyV1
 from app.platform.ollama.windows import WindowsOllamaInstallerV1
-from app.project_qa_setup_smoke import ProjectQASetupSmokeV1
-from app.setup_engine import (
+from app.platform.setup.ai_smoke import ChappieAISetupSmokeV1
+from app.platform.setup.engine import (
     KNOWLEDGE_BUILD_BLOCKED_DIRTY_REPOSITORY,
     PROJECT_QA_SMOKE_FAILED_PREFIX,
     PROVIDER_SETUP_FAILED_PREFIX,
@@ -45,7 +44,8 @@ from app.setup_engine import (
     SetupApprovalV1,
     SetupEngineV1,
 )
-from app.vscode_integration import VscodeExtensionInstallerV1
+from app.platform.setup.project_qa_smoke import ProjectQASetupSmokeV1
+from app.platform.vscode import VscodeExtensionInstallerV1
 
 
 def _launch_current_user_ollama(argv: list[str]) -> None:

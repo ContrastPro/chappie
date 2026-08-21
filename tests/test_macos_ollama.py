@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from app.bootstrap import ChappiePaths
+from app.platform.bootstrap import ChappiePaths
 from app.platform.ollama.contracts import ExternalActionResultV1, ExternalActionStatusV1
 from app.platform.ollama.macos import (
     MACOS_OLLAMA_DMG_URL,
@@ -14,7 +14,7 @@ from app.platform.ollama.macos import (
     MacOllamaInstallerV1,
 )
 from app.platform.ollama.readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
-from app.setup_engine import (
+from app.platform.setup.engine import (
     ActionSafetyV1,
     SetupActionCodeV1,
     SetupActionV1,

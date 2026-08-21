@@ -4,12 +4,12 @@ from app.ai.providers import MockMode, MockProvider
 from app.ai.router import ModelRouter
 from app.ai.runtime import AIConfig, ChappieAI
 from app.ai.tasks import ModelProfile
-from app.ai_setup_smoke import (
+from app.platform.bootstrap import ChappieLocalConfigV1
+from app.platform.setup.ai_smoke import (
     SETUP_SMOKE_TIMEOUT_SECONDS,
     AISetupSmokeStateV1,
     ChappieAISetupSmokeV1,
 )
-from app.bootstrap import ChappieLocalConfigV1
 
 
 def _config(*, model: str = "qwen3:8b") -> ChappieLocalConfigV1:

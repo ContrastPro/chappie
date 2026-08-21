@@ -8,8 +8,7 @@ from pathlib import Path
 import pytest
 
 from app.ai.schemas import canonical_json
-from app.ai_setup_smoke import AISetupSmokeResultV1, AISetupSmokeStateV1
-from app.bootstrap import (
+from app.platform.bootstrap import (
     AIModelProfileV1,
     ChappieLocalConfigV1,
     ChappiePaths,
@@ -20,12 +19,8 @@ from app.bootstrap import (
 from app.platform.ollama.contracts import ExternalActionResultV1, ExternalActionStatusV1
 from app.platform.ollama.readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
 from app.platform.ollama.windows import WindowsOllamaInstallerV1
-from app.project_qa_setup_smoke import (
-    ProjectQAGroundingReasonV1,
-    ProjectQASetupSmokeResultV1,
-    ProjectQASetupSmokeStateV1,
-)
-from app.setup_engine import (
+from app.platform.setup.ai_smoke import AISetupSmokeResultV1, AISetupSmokeStateV1
+from app.platform.setup.engine import (
     KNOWLEDGE_BUILD_BLOCKED_DIRTY_REPOSITORY,
     PROJECT_QA_SMOKE_FAILED_PREFIX,
     SETUP_ENGINE_DIGEST,
@@ -39,6 +34,11 @@ from app.setup_engine import (
     SetupRunStateV1,
     SetupStepResultV1,
     default_actions,
+)
+from app.platform.setup.project_qa_smoke import (
+    ProjectQAGroundingReasonV1,
+    ProjectQASetupSmokeResultV1,
+    ProjectQASetupSmokeStateV1,
 )
 
 
@@ -311,7 +311,7 @@ def test_clean_machine_second_run_and_resume_do_not_duplicate_work(tmp_path: Pat
 
 
 def test_ollama_installer_is_a_provider_aware_offline_planner(monkeypatch) -> None:  # type: ignore[no-untyped-def]
-    monkeypatch.setattr("app.setup_engine.shutil.which", lambda _: None)
+    monkeypatch.setattr("app.platform.setup.engine.shutil.which", lambda _: None)
     installer = OllamaInstallerV1()
     assert installer.detect() == ComponentStateV1.NOT_INSTALLED
     action = installer.plan_install()

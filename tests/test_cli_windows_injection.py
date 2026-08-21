@@ -1,11 +1,11 @@
 from pathlib import Path
 
 from app import cli
-from app.ai_setup_smoke import ChappieAISetupSmokeV1
-from app.bootstrap import ChappiePaths
+from app.platform.bootstrap import ChappiePaths
 from app.platform.ollama.macos import MacOllamaInstallerV1
 from app.platform.ollama.windows import WindowsOllamaInstallerV1
-from app.project_qa_setup_smoke import ProjectQASetupSmokeV1
+from app.platform.setup.ai_smoke import ChappieAISetupSmokeV1
+from app.platform.setup.project_qa_smoke import ProjectQASetupSmokeV1
 
 
 def _paths(tmp_path: Path) -> ChappiePaths:

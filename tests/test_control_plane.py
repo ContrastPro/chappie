@@ -5,16 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from app.bootstrap import (
-    ChappieDoctorReportV1,
-    ChappieLocalConfigV1,
-    ChappiePaths,
-    ChappieStatusV1,
-    ComponentStateV1,
-    ComponentStatusV1,
-    HardwareProfileV1,
-    InstallationStateV1,
-)
 from app.control_plane import (
     CONTROL_PLANE_CONTRACT_DIGEST,
     CONTROL_PLANE_IDENTITY,
@@ -25,6 +15,16 @@ from app.control_plane import (
     ProjectQAControlPlaneResponseV1,
     ProjectQASourceV1,
     ProjectQAStateV1,
+)
+from app.platform.bootstrap import (
+    ChappieDoctorReportV1,
+    ChappieLocalConfigV1,
+    ChappiePaths,
+    ChappieStatusV1,
+    ComponentStateV1,
+    ComponentStatusV1,
+    HardwareProfileV1,
+    InstallationStateV1,
 )
 
 

@@ -13,7 +13,7 @@ from app.ai.router import ModelRouter
 from app.ai.runtime import AIConfig, ChappieAI
 from app.ai.schemas import FactV1
 from app.ai.tasks import AITask, ModelProfile
-from app.bootstrap import ChappieLocalConfigV1
+from app.platform.bootstrap import ChappieLocalConfigV1
 
 AI_SETUP_SMOKE_IDENTITY = "chappie_ai_setup_smoke/1.0.0"
 LOCAL_OLLAMA_ENDPOINT = "http://localhost:11434"

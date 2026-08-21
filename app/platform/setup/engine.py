@@ -19,8 +19,7 @@ from pathlib import Path
 from typing import Protocol
 
 from app.ai.schemas import canonical_json, digest
-from app.ai_setup_smoke import AISetupSmokeStateV1, ChappieAISetupSmokeV1
-from app.bootstrap import (
+from app.platform.bootstrap import (
     AIModelProfileV1,
     ChappieLocalConfigV1,
     ChappiePaths,
@@ -31,12 +30,13 @@ from app.bootstrap import (
 from app.platform.ollama.macos import MacOllamaInstallerV1
 from app.platform.ollama.readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
 from app.platform.ollama.windows import WindowsOllamaInstallerV1
-from app.project_qa_setup_smoke import (
+from app.platform.setup.ai_smoke import AISetupSmokeStateV1, ChappieAISetupSmokeV1
+from app.platform.setup.project_qa_smoke import (
     ProjectQAGroundingReasonV1,
     ProjectQASetupSmokeStateV1,
     ProjectQASetupSmokeV1,
 )
-from app.vscode_integration import VscodeExtensionInstallerV1, VscodeExtensionStateV1
+from app.platform.vscode import VscodeExtensionInstallerV1, VscodeExtensionStateV1
 
 SETUP_ENGINE_IDENTITY = "chappie_setup_engine/1.0.0"
 KNOWLEDGE_BUILD_BLOCKED_DIRTY_REPOSITORY = "KNOWLEDGE_BUILD_BLOCKED_DIRTY_REPOSITORY"

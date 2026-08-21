@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from app.ai.schemas import canonical_json, digest
-from app.bootstrap import (
+from app.platform.bootstrap import (
     ChappieDoctorReportV1,
     ChappieLocalConfigV1,
     ChappieStatusV1,
@@ -436,9 +436,9 @@ def _run_project_qa(
 ) -> ProjectQAControlPlaneResponseV1:
     """Execute one bounded Project QA request over an existing verified Knowledge store."""
     from app.ai.errors import AIProviderError, AIProviderTimeoutError, AIValidationError
-    from app.ai_setup_smoke import build_configured_chappie_ai, valid_setup_ai_config
     from app.knowledge import read_store
     from app.knowledge_retrieval import KnowledgeRetrievalRequestV1, retrieve, tokenize_topic
+    from app.platform.setup.ai_smoke import build_configured_chappie_ai, valid_setup_ai_config
 
     config = load_local_config(paths)
     if config is None or not valid_setup_ai_config(config):

@@ -5,7 +5,7 @@ import json
 import subprocess
 from pathlib import Path
 
-from app.vscode_integration import VscodeExtensionInstallerV1, VscodeExtensionStateV1
+from app.platform.vscode import VscodeExtensionInstallerV1, VscodeExtensionStateV1
 
 
 def _root(tmp_path: Path) -> Path:

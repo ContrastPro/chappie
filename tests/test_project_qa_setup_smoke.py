@@ -6,7 +6,6 @@ from app.ai.providers import MockMode, MockProvider
 from app.ai.router import ModelRouter
 from app.ai.runtime import AIConfig, ChappieAI
 from app.ai.tasks import ModelProfile
-from app.bootstrap import ChappieLocalConfigV1
 from app.knowledge import (
     KnowledgeTypeV1,
     RepositorySnapshotV1,
@@ -14,7 +13,8 @@ from app.knowledge import (
     manifest,
     write_store,
 )
-from app.project_qa_setup_smoke import (
+from app.platform.bootstrap import ChappieLocalConfigV1
+from app.platform.setup.project_qa_smoke import (
     ProjectQAGroundingReasonV1,
     ProjectQASetupSmokeStateV1,
     ProjectQASetupSmokeV1,
