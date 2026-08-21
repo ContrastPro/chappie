@@ -28,6 +28,8 @@ The composer auto-grows, submits with Ctrl/Cmd+Enter, and supports explicit File
 
 The local draft limit is 50,000 characters, while the explicit Project QA request limit is 12,000 characters. The latter preserves headroom for supported 16K-context local models and the independently bounded 12,000-character workspace context; an oversized draft stays editable but is never silently truncated or sent. File opens the workspace file picker, Selection captures a non-empty active editor selection, and Git captures bounded local repository metadata.
 
+The Inspector is a floating secondary surface at wide and medium widths: it is rounded like the composer, uses the same theme-aware elevated background and subtle border, and has visible right/top/bottom outer spacing. Its content scrolls independently. Closing it collapses the grid slot instead of leaving an empty right margin. At narrow widths it remains the existing responsive drawer, inset from the Webview edges; it must not collide with a native Codex panel. This presentation change does not alter Inspector data, selection, lifecycle, or authority.
+
 The Inspector has four tabs:
 
 - Reasoning: bounded response metadata only—Project QA validation status, authority, source count, and measured host-side duration. It never displays chain-of-thought.
@@ -59,7 +61,7 @@ The current production components are Header, Conversation, Turn, Safe Markdown,
 
 ## Versioning and packaging
 
-UX-A increments the extension install identity to 0.1.10. It adds compact keyboard-accessible per-message actions, local Copy feedback, edit-to-draft without historical mutation, per-turn Sources disclosure, and near-bottom scroll anchoring with a Jump to latest control. Distribution contains one active versioned VSIX plus `SHA256SUMS`. A same-version replacement is prohibited because VS Code can retain stale installed code and make acceptance ambiguous. The Host-to-Webview session snapshot carries a monotonic revision; Webview discards older snapshots, so a terminal answer cannot be overwritten by a delayed pending snapshot for the same turn.
+UX-A incremented the extension install identity to 0.1.10 with compact keyboard-accessible per-message actions, local Copy feedback, edit-to-draft without historical mutation, per-turn Sources disclosure, and near-bottom scroll anchoring with a Jump to latest control. The Inspector visual follow-up increments it to 0.1.11. Distribution contains one active versioned VSIX plus `SHA256SUMS`. A same-version replacement is prohibited because VS Code can retain stale installed code and make acceptance ambiguous. The Host-to-Webview session snapshot carries a monotonic revision; Webview discards older snapshots, so a terminal answer cannot be overwritten by a delayed pending snapshot for the same turn.
 
 ## Acceptance gates
 

@@ -169,6 +169,18 @@ test("Workbench renderer uses incremental DOM-safe turn rendering", () => {
   assert.match(script, /composer-region\{border-top:0/);
 });
 
+test("Inspector is a floating responsive surface and close collapses its grid slot", () => {
+  const source = readFileSync("src/ui/workbench_html.ts", "utf8");
+  assert.match(source, /class=\"shell inspector-open\"/);
+  assert.match(source, /--chappie-surface-radius:10px/);
+  assert.match(source, /column-gap:var\(--chappie-workbench-gap\)/);
+  assert.match(source, /padding-right:var\(--chappie-workbench-gap\)/);
+  assert.match(source, /\.shell:has\(\.inspector\[hidden\]\)/);
+  assert.match(source, /border-radius:var\(--chappie-surface-radius\)/);
+  assert.match(source, /\.inspector-body\{flex:1;min-height:0/);
+  assert.match(source, /@media\(max-width:1040px\)/);
+});
+
 test("Workbench Markdown subset builds inert DOM nodes for untrusted text", () => {
   const script = workbenchMarkdownRendererScript();
   assert.match(script, /document\.createElement/);
