@@ -52,6 +52,12 @@ SOURCE_ALLOWLIST = frozenset(
         "docs/platform/SETUP_CONTRACT.md",
         "VISION.md",
         "ARCHITECTURE.md",
+        "docs/architecture/CLEAN_ARCHITECTURE.md",
+        "docs/architecture/DEPENDENCY_RULES.md",
+        "docs/architecture/FEATURE_IMPLEMENTATION_RULES.md",
+        "docs/architecture/PACKAGE_BOUNDARIES.md",
+        "docs/architecture/ARCHITECTURE_DECISIONS.md",
+        "docs/architecture/REFACTOR_FINAL_REPORT.md",
     }
 )
 
@@ -473,7 +479,331 @@ def initial_records(
                 tags,
             )
         )
+    # These are deliberate, source-backed architecture facts, not extracted Markdown
+    # fragments.  Stable semantic titles keep identities independent of headings and
+    # formatting edits in the governance documents.
+    existing_ids = {record.title: record.knowledge_id for record in records}
+    architecture_definitions = _architecture_record_definitions()
+    for kind, title, statement, path, locator, tags, related_titles in architecture_definitions:
+        source = _source(root, snapshot, path, KnowledgeAuthorityV1.DOCUMENTATION, locator)
+        related = tuple(existing_ids[item] for item in related_titles)
+        records.append(
+            KnowledgeRecordV1(
+                knowledge_id(
+                    kind,
+                    title,
+                    statement,
+                    KnowledgeAuthorityV1.DOCUMENTATION,
+                    KnowledgeStatusV1.ACTIVE,
+                    (source,),
+                    tags,
+                    related,
+                ),
+                kind,
+                title,
+                statement,
+                KnowledgeAuthorityV1.DOCUMENTATION,
+                KnowledgeStatusV1.ACTIVE,
+                (source,),
+                tags,
+                related,
+            )
+        )
     return tuple(records)
+
+
+def _architecture_record_definitions() -> tuple[
+    tuple[
+        KnowledgeTypeV1,
+        str,
+        str,
+        str,
+        str,
+        tuple[str, ...],
+        tuple[str, ...],
+    ],
+    ...,
+]:
+    """Explicit canonical architecture facts; never AI-authored or chunk-derived."""
+
+    source = "docs/architecture/CLEAN_ARCHITECTURE.md"
+    package_responsibilities = (
+        ("AI", "app.ai", "Provider-neutral structured reasoning and read-only assistance"),
+        (
+            "AI research",
+            "app.ai.research",
+            "Research reasoning, RDE query, and evidence review workflows",
+        ),
+        ("AI evaluation", "app.ai.evaluation", "Offline AI benchmarks and calibration"),
+        (
+            "Control Plane",
+            "app.control_plane",
+            "Read-only local application projection and loopback transport",
+        ),
+        ("Coordination", "app.coordination", "Cross-service trading workflow coordination"),
+        (
+            "Exchange execution",
+            "app.exchange_execution",
+            "Durable exchange execution lifecycle and reconciliation",
+        ),
+        (
+            "Exchange runtime",
+            "app.exchange_runtime",
+            "Exchange-mode application services and composition",
+        ),
+        (
+            "Execution",
+            "app.execution",
+            "Execution contracts, provider ports, and paper execution boundary",
+        ),
+        ("Foundation", "app.foundation", "Neutral configuration and logging primitives"),
+        (
+            "Infrastructure",
+            "app.infrastructure",
+            "External-system adapters implementing bounded ports",
+        ),
+        (
+            "Knowledge",
+            "app.knowledge",
+            "Clean-snapshot provenance store and deterministic retrieval",
+        ),
+        ("Market", "app.market", "Market data contracts, validation, events, and provider ports"),
+        ("Paper trading", "app.paper", "Paper-trading application service"),
+        ("Persistence", "app.persistence", "Durable repositories, migrations, and recovery"),
+        (
+            "Platform",
+            "app.platform",
+            "Host setup, provider installation, and workstation integration",
+        ),
+        ("Platform Ollama", "app.platform.ollama", "Shared and OS-specific Ollama adapters"),
+        (
+            "Platform setup",
+            "app.platform.setup",
+            "Setup orchestration and bounded verification smokes",
+        ),
+        ("Portfolio", "app.portfolio", "Portfolio state and accounting domain"),
+        ("Research", "app.research", "Offline reproducible research and canonical data paths"),
+        (
+            "Research data",
+            "app.research.data",
+            "Research storage, alignment, outcomes, and provenance identities",
+        ),
+        (
+            "Research intelligence",
+            "app.research.intelligence",
+            "Offline market, flow, event, and behavioral intelligence studies",
+        ),
+        (
+            "Research strategy",
+            "app.research.strategy",
+            "Offline strategy history, lab, and walk-forward evaluation",
+        ),
+        ("Risk", "app.risk", "Deterministic risk decisions, limits, and rejection reasons"),
+        ("Runtime", "app.runtime", "Application composition, process lifecycle, and status"),
+        ("Shadow", "app.shadow", "Read-only shadow observation and comparison services"),
+        ("Strategies", "app.strategies", "Advisory strategy implementations"),
+        ("Trading", "app.trading", "Trading intent, snapshots, pipeline, and strategy ports"),
+        ("Tools", "app.tools", "Leaf operator and offline command entry points"),
+        ("CLI", "app.cli", "Stable command-line composition adapter"),
+        ("Main", "app.main", "Stable runtime process adapter"),
+        (
+            "Research methodology",
+            "app.research_methodology",
+            "Stable frozen research methodology contract",
+        ),
+    )
+    packages = tuple(
+        (
+            KnowledgeTypeV1.MODULE_RESPONSIBILITY,
+            f"Package ownership: {title}",
+            f"{path} owns {responsibility.casefold()}.",
+            source,
+            "Package ownership",
+            (
+                "architecture",
+                "ownership",
+                *path.split(".")[1:],
+                *(("production", "code", "import") if path == "app.tools" else ()),
+            ),
+            ("Chappie Architecture",),
+        )
+        for title, path, responsibility in package_responsibilities
+    )
+    governance = (
+        (
+            KnowledgeTypeV1.ARCHITECTURE,
+            "Clean Architecture layers",
+            "Chappie separates interfaces, composition, platform, application services, domain, offline side planes, and a neutral foundation so authority does not leak outward.",
+            source,
+            "Layers and direction",
+            ("architecture", "layers", "dependency", "authority"),
+            ("Chappie Architecture",),
+        ),
+        (
+            KnowledgeTypeV1.AUTHORITY_BOUNDARY,
+            "Dependency direction",
+            "Domain packages do not depend on composition, platform, UI, tools, research, or AI; composition owns lifecycle rather than business rules.",
+            source,
+            "Layers and direction",
+            ("architecture", "dependency", "domain", "composition"),
+            ("Chappie Architecture",),
+        ),
+        (
+            KnowledgeTypeV1.AUTHORITY_BOUNDARY,
+            "Risk decisions authority",
+            "app.risk owns deterministic risk approvals, limits, and rejection reasons; AI and interfaces cannot approve risk.",
+            source,
+            "Package ownership",
+            ("risk", "authority", "decisions", "architecture"),
+            ("Chappie Architecture",),
+        ),
+        (
+            KnowledgeTypeV1.AUTHORITY_BOUNDARY,
+            "Execution authority",
+            "Execution authority remains in deterministic execution and exchange-execution boundaries; AI, research, and UI cannot submit orders directly.",
+            source,
+            "Provenance and authority",
+            ("execution", "authority", "trading", "ai", "interface"),
+            ("RDE evidence authority",),
+        ),
+        (
+            KnowledgeTypeV1.AUTHORITY_BOUNDARY,
+            "AI authority boundary",
+            "AI is provider-neutral, structured, and read-only: it may reason over supplied facts and evidence but owns no trading, Risk, execution, or portfolio authority.",
+            source,
+            "Layers and direction",
+            ("ai", "authority", "risk", "execution", "execute", "trades", "directly", "portfolio"),
+            ("RDE evidence authority",),
+        ),
+        (
+            KnowledgeTypeV1.AUTHORITY_BOUNDARY,
+            "Knowledge provenance boundary",
+            "Knowledge owns clean-snapshot provenance, canonical records, and deterministic retrieval; it does not own arbitrary generation or application authority.",
+            source,
+            "Layers and direction",
+            ("knowledge", "provenance", "authority", "snapshot", "allowlisted", "source", "move"),
+            ("Knowledge Store",),
+        ),
+        (
+            KnowledgeTypeV1.MODULE_RESPONSIBILITY,
+            "Persistence state ownership",
+            "Persistence owns durable representation, repositories, migrations, and recovery; persistence writes go through repository ports rather than bypassing owning services.",
+            source,
+            "Composition roots and state ownership",
+            ("persistence", "state", "ownership", "recovery", "role"),
+            ("Chappie Architecture",),
+        ),
+        (
+            KnowledgeTypeV1.AUTHORITY_BOUNDARY,
+            "Platform I/O boundary",
+            "Infrastructure adapters own network, filesystem, OS, and subprocess I/O behind bounded ports; app.platform owns host setup and workstation integration, not trading decisions.",
+            source,
+            "Composition roots and state ownership",
+            (
+                "platform",
+                "io",
+                "infrastructure",
+                "external",
+                "provider",
+                "adapter",
+                "adapters",
+                "installation",
+                "mechanism",
+            ),
+            ("Setup Engine",),
+        ),
+        (
+            KnowledgeTypeV1.AUTHORITY_BOUNDARY,
+            "Control Plane boundary",
+            "The Control Plane projects read-only state over loopback and may invoke bounded Project QA, but cannot become a runtime or trading composition root.",
+            source,
+            "Layers and direction",
+            ("control", "plane", "read-only", "loopback", "interface"),
+            ("Chappie Control Plane", "Project QA"),
+        ),
+        (
+            KnowledgeTypeV1.AUTHORITY_BOUNDARY,
+            "VS Code interface boundary",
+            "VS Code Workbench and webviews own presentation and user interaction only; they do not own backend business rules or directly execute provider, network, or process logic.",
+            source,
+            "VS Code boundary",
+            ("vscode", "interface", "ui", "presentation", "authority"),
+            ("Chappie Control Plane",),
+        ),
+        (
+            KnowledgeTypeV1.DECISION,
+            "Feature implementation placement",
+            "A new feature determines its owning package before coding, places contracts at the lowest stable owner, preserves dependency direction, and avoids cross-package feature blobs.",
+            "docs/architecture/FEATURE_IMPLEMENTATION_RULES.md",
+            "Feature placement",
+            (
+                "feature",
+                "implementation",
+                "ownership",
+                "dependency",
+                "contracts",
+                "architecture",
+                "layers",
+                "split",
+            ),
+            ("Chappie Architecture",),
+        ),
+        (
+            KnowledgeTypeV1.DECISION,
+            "Feature integration boundaries",
+            "External integrations belong behind adapters, persistence is separate from business authority, UI consumes bounded interfaces, and architecture guards and tests are required.",
+            "docs/architecture/FEATURE_IMPLEMENTATION_RULES.md",
+            "Feature implementation",
+            ("feature", "adapters", "persistence", "ui", "tests"),
+            ("Chappie Architecture",),
+        ),
+        (
+            KnowledgeTypeV1.CONTRACT,
+            "Frozen contract discipline",
+            "A semantic change to a frozen or versioned contract requires a version bump, digest update, dependent tests, and migration notes; file moves alone do not change a semantic identity.",
+            source,
+            "OOP and contracts",
+            ("contracts", "frozen", "version", "digest", "compatibility"),
+            ("Compact matched-event methodology",),
+        ),
+        (
+            KnowledgeTypeV1.LIMITATION,
+            "Current capability versus planned capability",
+            "Chappie distinguishes current implemented capabilities from explicitly planned future roles; planned agents or features are not active authority.",
+            "docs/architecture/ARCHITECTURE_DECISIONS.md",
+            "Current and deferred decisions",
+            ("current", "future", "planned", "capability", "authority"),
+            ("Trading Agent",),
+        ),
+        (
+            KnowledgeTypeV1.ARCHITECTURE,
+            "Governance rules",
+            "Package ownership, dependency direction, authority boundaries, provenance, and permanent architecture guards govern future Chappie implementation.",
+            "docs/architecture/PACKAGE_BOUNDARIES.md",
+            "Governance",
+            ("architecture", "governance", "ownership", "dependency", "guards"),
+            ("Chappie Architecture",),
+        ),
+        (
+            KnowledgeTypeV1.AUTHORITY_BOUNDARY,
+            "Forbidden dependency enforcement",
+            "Dependency rules reject forbidden upward and authority-crossing imports, including domain dependencies on runtime, platform, UI, research, or AI.",
+            "docs/architecture/DEPENDENCY_RULES.md",
+            "Forbidden dependencies",
+            ("architecture", "dependency", "forbidden", "guards", "authority"),
+            ("Chappie Architecture",),
+        ),
+        (
+            KnowledgeTypeV1.DECISION,
+            "Refactor completion status",
+            "The structural refactor completed with zero production module strongly connected components; deferred items remain explicitly classified rather than silently accepted as architecture authority.",
+            "docs/architecture/REFACTOR_FINAL_REPORT.md",
+            "Final structural audit",
+            ("architecture", "refactor", "current", "deferred", "cycles"),
+            ("Chappie Architecture",),
+        ),
+    )
+    return packages + governance
 
 
 def manifest(

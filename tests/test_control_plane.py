@@ -171,7 +171,7 @@ def test_project_qa_is_injected_read_only_and_validates_questions(tmp_path: Path
     assert calls == ["What owns evidence?"]
 
 
-def test_ready_knowledge_with_no_relevant_deep_records_is_not_reported_as_unconfigured(
+def test_ready_knowledge_with_no_relevant_records_is_not_reported_as_unconfigured(
     tmp_path: Path, monkeypatch
 ) -> None:
     from app.control_plane import service
@@ -186,7 +186,7 @@ def test_ready_knowledge_with_no_relevant_deep_records_is_not_reported_as_unconf
 
     response = service._run_project_qa(
         _paths(tmp_path),
-        "Design News and Event Intelligence architecture across ownership dependencies authority data contracts persistence failure model Workbench UX implementation sequence",
+        "What is the Chappie banana protocol?",
     )
 
     assert response.state == ProjectQAStateV1.VALIDATION_ERROR

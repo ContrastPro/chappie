@@ -429,3 +429,32 @@ The honest `PROJECT_QA_NO_RELEVANT_KNOWLEDGE` result protects grounding and must
 remain fail-closed. The next step is not News-specific implementation or weaker
 matching. It is SK-2, a clean-snapshot, source-backed self-Knowledge expansion;
 SK-3 is conditional on evidence after that content exists.
+
+## SK-2 implementation appendix
+
+SK-2 implements the source-backed architecture content layer proposed above. It
+adds six governance documents to the canonical source allowlist and defines 48
+explicit deterministic architecture records: package ownership records, clean
+architecture and dependency rules, authority and I/O boundaries, persistence,
+Control Plane and VS Code boundaries, feature-placement rules, frozen-contract
+discipline, current-versus-planned capability, and final governance status.
+
+The records are explicit semantic mappings with stable titles and bounded source
+locators; they are not Markdown chunks and are never authored by AI. They use
+the existing Knowledge schema, provenance references, authority/status rules,
+and `related_record_ids` links to stable canonical records. No News/Event
+source or record is introduced.
+
+Unit-level retrieval evidence shows direct ownership and boundary questions now
+select their relevant records. The original broad News/Event design fixture now
+returns a bounded, useful architecture context (architecture, execution, Control
+Plane, dependency, feature-placement, layer, Risk, and AI-boundary records)
+without a News-specific record or any ranking change. This resolves the primary
+content gap. The lexical retriever remains intentionally unchanged; SK-3 is not
+required for this bounded fixture, although future evidence may justify a
+separate composition enhancement.
+
+Canonical Knowledge is deliberately not rebuilt during SK-2 implementation:
+the source tree is dirty and clean-snapshot provenance remains fail-closed. A
+later clean committed snapshot must perform that rebuild and verify the new
+manifest.

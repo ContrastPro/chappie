@@ -78,3 +78,26 @@ def test_weak_multi_token_collision_is_excluded_instead_of_becoming_context():
     )
     assert not context.records
     assert dict(result.excluded_reason_counts)["WEAK_TOPIC_MATCH"] >= 1
+
+
+def test_architecture_self_knowledge_answers_direct_ownership_and_boundary_questions():
+    snapshot = RepositorySnapshotV1("a" * 40, True)
+    records = initial_records(snapshot=snapshot)
+    value = manifest(records, snapshot)
+    expected_titles = {
+        "What package owns risk decisions?": "Risk decisions authority",
+        "Who owns execution authority?": "Execution authority",
+        "Can AI execute trades directly?": "AI authority boundary",
+        "What is the role of persistence?": "Persistence state ownership",
+        "Where should external provider adapters live?": "Platform I/O boundary",
+        "What is the VS Code Workbench allowed to own?": "VS Code interface boundary",
+        "What is the dependency direction for a new feature?": "Dependency direction",
+        "How should a new feature be split across architecture layers?": "Feature implementation placement",
+    }
+    for question, expected_title in expected_titles.items():
+        _, context = retrieve(
+            records,
+            value,
+            KnowledgeRetrievalRequestV1(topic_tokens=tokenize_topic(question)),
+        )
+        assert expected_title in {record.title for record in context.records}

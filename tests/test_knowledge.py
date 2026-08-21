@@ -32,7 +32,16 @@ def test_contract_and_initial_records_are_deterministic() -> None:
     assert KNOWLEDGE_IDENTITY == "chappie_knowledge/1.0.0"
     assert len(KNOWLEDGE_CONTRACT_DIGEST) == 64
     assert first == second
-    assert len(first) == 14
+    assert len(first) == 62
+    architecture_records = [
+        record for record in first if record.sources[0].path.startswith("docs/architecture/")
+    ]
+    assert len(architecture_records) == 48
+    assert all(
+        record.authority == KnowledgeAuthorityV1.DOCUMENTATION for record in architecture_records
+    )
+    assert all(record.status == KnowledgeStatusV1.ACTIVE for record in architecture_records)
+    assert all(record.related_record_ids for record in architecture_records)
 
 
 def test_records_cover_authority_result_decision_and_exact_filters() -> None:
