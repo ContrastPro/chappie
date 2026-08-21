@@ -10,10 +10,18 @@ from decimal import Decimal
 from enum import StrEnum
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import TYPE_CHECKING
+from typing import Any, Protocol
 
-if TYPE_CHECKING:
-    from app.application import ChappieTraderApplication
+
+class ApplicationStatusSource(Protocol):
+    """Minimal application surface required for operator status rendering."""
+
+    settings: Any
+    paper_engine: Any
+    startup_safe_stop_reason: str | None
+
+    def status_report(self) -> Any:
+        """Return the current runtime status report."""
 
 
 class ServerProcessState(StrEnum):
@@ -86,7 +94,7 @@ class AtomicServerStatusPublisher:
 
 
 def status_for_application(
-    application: ChappieTraderApplication,
+    application: ApplicationStatusSource,
     state: ServerProcessState,
     *,
     safe_stop_reason: str | None = None,

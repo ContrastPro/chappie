@@ -211,7 +211,7 @@ def test_phase2_module_has_no_submission_runtime_or_persistence_dependencies() -
     assert not forbidden & (names | attrs)
     for forbidden_module in (
         "app.main",
-        "app.application",
+        "app.runtime.application",
         "app.exchange_runtime",
         "app.persistence",
         "app.portfolio",

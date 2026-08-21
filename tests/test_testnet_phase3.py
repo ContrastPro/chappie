@@ -217,7 +217,7 @@ def test_phase3_tool_has_no_continuous_or_raw_runtime_imports() -> None:
         "app.exchange_runtime.consumer",
         "app.strategies",
         "app.market.polling",
-        "app.application",
+        "app.runtime.application",
     }
     assert not imports & forbidden
 

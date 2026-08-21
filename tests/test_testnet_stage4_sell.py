@@ -936,6 +936,6 @@ def test_operator_architecture_has_no_continuous_or_live_imports() -> None:
     assert not imports & {
         "app.main",
         "app.exchange_runtime.consumer",
-        "app.application",
+        "app.runtime.application",
         "app.strategies",
     }

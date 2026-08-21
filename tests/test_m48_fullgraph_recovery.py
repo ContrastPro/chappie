@@ -6,12 +6,12 @@ from urllib.parse import parse_qs
 import httpx
 import pytest
 
-from app.application import build_application
 from app.core.config import Settings
 from app.exchange_execution import ExchangeOrderStatus, KillSwitchState
 from app.market.events import CandleClosed, CandleClosedReason, MarketEventSource
 from app.market.models import Candle, CandleSnapshot, MarketStreamKey, ServerTime, TickerPrice
 from app.persistence import SQLiteExchangePersistence, SQLitePersistenceConfig
+from app.runtime.application import build_application
 
 NOW = 1_700_000_600_000
 KEY = MarketStreamKey("BTCUSDT", "1m")

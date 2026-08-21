@@ -11,11 +11,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.application import StageOneStatusReport, run_application
 from app.core.config import Settings
 from app.market.models import CandleSnapshot
 from app.market.polling import PollingLifecycleState
-from app.server_status import (
+from app.runtime.application import StageOneStatusReport, run_application
+from app.runtime.status import (
     AtomicServerStatusPublisher,
     ServerProcessState,
     ServerStatus,

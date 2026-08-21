@@ -4,7 +4,6 @@ from decimal import Decimal
 
 import httpx
 
-from app.agent.trader import TraderAgent
 from app.coordination import TradingDecisionCoordinator, UUIDCoordinationIdFactory
 from app.core.config import Settings
 from app.exchange_runtime.composition import (
@@ -79,7 +78,8 @@ from app.persistence.runtime import (
 from app.persistence.sqlite import SQLiteTradingPersistence
 from app.portfolio import InstrumentRules, Portfolio, PortfolioConfig
 from app.risk import PortfolioRiskPolicy, RiskManager, UUIDRiskDecisionIdFactory
-from app.server_status import ServerProcessState, status_for_application
+from app.runtime.status import ServerProcessState, status_for_application
+from app.runtime.trader import TraderAgent
 from app.shadow import (
     LoggingShadowDecisionObserver,
     ShadowDecisionConsumer,

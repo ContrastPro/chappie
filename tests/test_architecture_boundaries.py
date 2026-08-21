@@ -37,7 +37,6 @@ APP = ROOT / "app"
 ROOT_MODULE_ALLOWLIST = frozenset(
     {
         "ai_setup_smoke.py",
-        "application.py",
         "bootstrap.py",
         "control_plane.py",
         "control_plane_transport.py",
@@ -48,7 +47,6 @@ ROOT_MODULE_ALLOWLIST = frozenset(
         "ollama_start.py",
         "project_qa_setup_smoke.py",
         "research_methodology.py",
-        "server_status.py",
         "setup_engine.py",
         "vscode_integration.py",
         "windows_ollama.py",
@@ -63,9 +61,8 @@ OFFLINE_RESEARCH_PREFIXES = (
     "app.research.strategy",
 )
 RUNTIME_TRADING_PREFIXES = (
-    "app.application",
     "app.main",
-    "app.server_status",
+    "app.runtime",
     "app.agent",
     "app.coordination",
     "app.exchange_runtime",
@@ -77,7 +74,7 @@ RUNTIME_TRADING_PREFIXES = (
     "app.trading",
 )
 AI_FORBIDDEN_AUTHORITY_PREFIXES = (
-    "app.application",
+    "app.runtime",
     "app.coordination",
     "app.exchange_execution",
     "app.exchange_runtime",
@@ -116,6 +113,9 @@ COMPLETED_DIRECT_MIGRATIONS = {
     "app.research.intelligence.multi_asset_flow": "COMPLETED_DIRECT_MIGRATION",
     "app.research.intelligence.news_events": "COMPLETED_DIRECT_MIGRATION",
     "app.research.intelligence.universe": "COMPLETED_DIRECT_MIGRATION",
+    "app.runtime.application": "COMPLETED_DIRECT_MIGRATION",
+    "app.runtime.status": "COMPLETED_DIRECT_MIGRATION",
+    "app.runtime.trader": "COMPLETED_DIRECT_MIGRATION",
     "app.research.strategy.history": "COMPLETED_DIRECT_MIGRATION",
     "app.research.strategy.lab": "COMPLETED_DIRECT_MIGRATION",
     "app.research.strategy.long_history": "COMPLETED_DIRECT_MIGRATION",
@@ -248,6 +248,8 @@ def test_completed_direct_migrations_have_only_canonical_paths() -> None:
     assert not (APP / "strategy_lab.py").exists()
     assert not (APP / "strategy_long_history.py").exists()
     assert not (APP / "strategy_walk_forward.py").exists()
+    assert not (APP / "application.py").exists()
+    assert not (APP / "server_status.py").exists()
     for module in COMPLETED_DIRECT_MIGRATIONS:
         assert importlib.util.find_spec(module) is not None
 
@@ -269,6 +271,32 @@ def test_runtime_trading_code_does_not_import_offline_research() -> None:
         if _matches(_module_name(path), RUNTIME_TRADING_PREFIXES)
         for imported in _imports(path)
         if _matches(imported, OFFLINE_RESEARCH_PREFIXES)
+    }
+    assert violations == {}
+
+
+def test_domain_subsystems_do_not_import_runtime_composition() -> None:
+    domain_roots = (
+        "coordination",
+        "exchange_execution",
+        "exchange_runtime",
+        "execution",
+        "infrastructure",
+        "market",
+        "paper",
+        "persistence",
+        "portfolio",
+        "risk",
+        "shadow",
+        "strategies",
+        "trading",
+    )
+    violations = {
+        _module_name(path): imported
+        for root in domain_roots
+        for path in (APP / root).rglob("*.py")
+        for imported in _imports(path)
+        if imported == "app.runtime" or imported.startswith("app.runtime.")
     }
     assert violations == {}
 

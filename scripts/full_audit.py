@@ -20,7 +20,7 @@ import app
 import app.market
 import app.trading
 import app.strategies
-import app.application
+import app.runtime.application
 import app.agent
 import app.core
 import app.coordination

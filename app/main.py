@@ -8,10 +8,10 @@ from typing import Protocol
 
 from pydantic import ValidationError
 
-from app.application import ChappieTraderApplication, build_application, run_application
 from app.core.config import get_settings
 from app.core.logger import UUIDRunIdFactory, configure_logging, shutdown_logging
-from app.server_status import (
+from app.runtime.application import ChappieTraderApplication, build_application, run_application
+from app.runtime.status import (
     AtomicServerStatusPublisher,
     ServerProcessState,
     ServerStatus,

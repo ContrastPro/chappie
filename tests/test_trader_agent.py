@@ -1,5 +1,5 @@
-from app.agent.trader import TraderAgent
 from app.core.config import Settings
+from app.runtime.trader import TraderAgent
 
 
 class FakePollingEngine:

@@ -8,9 +8,8 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-import app.application as application_module
 import app.exchange_runtime.composition as production_composition
-from app.application import build_application, run_application
+import app.runtime.application as application_module
 from app.coordination import TradingCoordinationStateError
 from app.core.config import Settings
 from app.exchange_execution import KillSwitchState
@@ -38,6 +37,7 @@ from app.paper.exceptions import PaperTradingConfigurationError
 from app.persistence import SQLiteExchangePersistence, SQLitePersistenceConfig
 from app.persistence.exceptions import PersistenceWriterConflictError
 from app.persistence.models import ACTIVE_MVP_EXCHANGE_SCHEMA_VERSION
+from app.runtime.application import build_application, run_application
 
 OPEN_TIME_MS = 1_700_000_000_000
 

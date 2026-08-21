@@ -364,7 +364,7 @@ def test_phase1_module_has_no_submission_or_trader_imports_or_calls() -> None:
     assert not forbidden & (names | attrs)
     source = path.read_text(encoding="utf-8")
     assert "app.main" not in source
-    assert "app.application" not in source
+    assert "app.runtime.application" not in source
     assert "app.exchange_runtime" not in source
     assert "app.persistence" not in source
 
