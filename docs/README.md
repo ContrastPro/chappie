@@ -8,6 +8,15 @@
 - [Vision](../VISION.md)
 - [Architecture decisions](../DECISIONS.md)
 
+## Architecture governance
+
+- [Chappie Clean Architecture](architecture/CLEAN_ARCHITECTURE.md)
+- [Package boundaries](architecture/PACKAGE_BOUNDARIES.md)
+- [Dependency rules](architecture/DEPENDENCY_RULES.md)
+- [Feature implementation rules](architecture/FEATURE_IMPLEMENTATION_RULES.md)
+- [Refactor architecture decisions](architecture/ARCHITECTURE_DECISIONS.md)
+- [Final refactor report](architecture/REFACTOR_FINAL_REPORT.md)
+
 ## Core
 
 These are the current authoritative design references:

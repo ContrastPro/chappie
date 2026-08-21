@@ -1,8 +1,9 @@
 # Package boundaries
 
-This document freezes the repository boundary contract before the namespace
-refactor. It describes current and target ownership; it does not itself change
-runtime behavior or authorize a module move.
+This document records the stable path and package boundary baseline after the
+namespace refactor. The authoritative layer model and future implementation
+rules are in `CLEAN_ARCHITECTURE.md`, `DEPENDENCY_RULES.md`, and
+`FEATURE_IMPLEMENTATION_RULES.md`.
 
 ## Stable paths
 
@@ -19,7 +20,7 @@ move into the target packages. Historical `app.tools` module entry points are
 evaluated individually; documented command surfaces receive a temporary wrapper
 only when a direct migration would break an operator contract.
 
-## Target package tree
+## Current package tree
 
 ```text
 app/
@@ -84,12 +85,13 @@ app/
 9. `app.cli` and `app.main` remain thin stable adapters.
 10. Historical modules are not active production contracts.
 
-## Migration policy
+## Permanent root and migration policy
 
-Direct root-level production modules are temporarily allowlisted in
-`tests/test_architecture_boundaries.py`. The allowlist may only shrink. A new
-root module requires an explicit architecture decision rather than silently
-becoming part of the pre-refactor namespace.
+Direct root-level production modules are permanently allowlisted in
+`tests/test_architecture_boundaries.py`. The feature-code allowlist contains only
+`research_methodology.py`; `cli.py` and `main.py` are stable adapters. The
+allowlist may only shrink unless an explicit architecture decision and written
+justification approve a new root surface.
 
 Compatibility wrappers are selective, time-bounded compatibility surfaces; they
 are not automatic for every move. Every wrapper needs an owner and a removal

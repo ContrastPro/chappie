@@ -12,6 +12,7 @@ import hashlib
 import importlib.util
 import subprocess
 import tomllib
+from collections.abc import Iterable
 from pathlib import Path
 
 from app.ai.project_qa import PROJECT_QA_IDENTITY
@@ -243,6 +244,224 @@ ALLOWED_TRACKED_DISTRIBUTION_ARTIFACTS = frozenset(
 )
 ALLOWED_TRACKED_SQLITE_FIXTURES = frozenset({"tests/fixtures/m4_10_recovery_proof_v6.sqlite3"})
 
+# Machine-readable ownership policy. ``allowed`` contains top-level internal
+# dependency families; third-party and standard-library imports are outside
+# this map. Nested owners override their parent policy. ``app.tools`` is the
+# only intentionally open consumer because tools are leaf entry points.
+PACKAGE_OWNERSHIP = {
+    "app.ai": {
+        "responsibility": "Provider-neutral structured reasoning and read-only assistance",
+        "allowed": frozenset({"app.ai", "app.knowledge", "app.research"}),
+    },
+    "app.ai.research": {
+        "responsibility": "Research reasoning, RDE query, and evidence-review workflows",
+        "allowed": frozenset({"app.ai", "app.knowledge", "app.research"}),
+    },
+    "app.ai.evaluation": {
+        "responsibility": "Offline AI benchmarks and calibration",
+        "allowed": frozenset({"app.ai", "app.research"}),
+    },
+    "app.control_plane": {
+        "responsibility": "Read-only local application projection and loopback transport",
+        "allowed": frozenset({"app.ai", "app.control_plane", "app.knowledge", "app.platform"}),
+    },
+    "app.coordination": {
+        "responsibility": "Cross-service trading workflow coordination",
+        "allowed": frozenset(
+            {
+                "app.coordination",
+                "app.exchange_runtime",
+                "app.market",
+                "app.paper",
+                "app.shadow",
+                "app.trading",
+            }
+        ),
+    },
+    "app.exchange_execution": {
+        "responsibility": "Durable exchange execution lifecycle and reconciliation",
+        "allowed": frozenset({"app.exchange_execution", "app.market", "app.persistence"}),
+    },
+    "app.exchange_runtime": {
+        "responsibility": "Exchange-mode application services and composition",
+        "allowed": frozenset(
+            {
+                "app.exchange_execution",
+                "app.exchange_runtime",
+                "app.execution",
+                "app.foundation",
+                "app.infrastructure",
+                "app.market",
+                "app.persistence",
+                "app.portfolio",
+                "app.risk",
+                "app.trading",
+            }
+        ),
+    },
+    "app.execution": {
+        "responsibility": "Execution contracts, providers, and paper execution boundary",
+        "allowed": frozenset(
+            {"app.execution", "app.market", "app.portfolio", "app.risk", "app.trading"}
+        ),
+    },
+    "app.foundation": {
+        "responsibility": "Neutral configuration and logging primitives",
+        "allowed": frozenset({"app.foundation"}),
+    },
+    "app.infrastructure": {
+        "responsibility": "External-system adapters implementing bounded ports",
+        "allowed": frozenset({"app.exchange_execution", "app.infrastructure", "app.market"}),
+    },
+    "app.knowledge": {
+        "responsibility": "Clean-snapshot provenance store and deterministic retrieval",
+        "allowed": frozenset({"app.ai", "app.knowledge"}),
+    },
+    "app.market": {
+        "responsibility": "Market data contracts, validation, events, and provider ports",
+        "allowed": frozenset({"app.market"}),
+    },
+    "app.paper": {
+        "responsibility": "Paper-trading application service",
+        "allowed": frozenset(
+            {
+                "app.execution",
+                "app.paper",
+                "app.persistence",
+                "app.portfolio",
+                "app.risk",
+                "app.trading",
+            }
+        ),
+    },
+    "app.persistence": {
+        "responsibility": "Durable repositories, recovery, and migration resources",
+        "allowed": frozenset(
+            {
+                "app.exchange_execution",
+                "app.execution",
+                "app.market",
+                "app.persistence",
+                "app.portfolio",
+                "app.trading",
+            }
+        ),
+    },
+    "app.platform": {
+        "responsibility": "Host setup, provider installation, and workstation integration",
+        "allowed": frozenset({"app.ai", "app.knowledge", "app.platform"}),
+    },
+    "app.platform.ollama": {
+        "responsibility": "Shared and OS-specific Ollama adapters",
+        "allowed": frozenset({"app.ai", "app.platform"}),
+    },
+    "app.platform.setup": {
+        "responsibility": "Setup orchestration and bounded verification smokes",
+        "allowed": frozenset({"app.ai", "app.knowledge", "app.platform"}),
+    },
+    "app.portfolio": {
+        "responsibility": "Portfolio state and accounting domain",
+        "allowed": frozenset({"app.execution", "app.market", "app.portfolio", "app.trading"}),
+    },
+    "app.research": {
+        "responsibility": "Offline reproducible research and canonical data paths",
+        "allowed": frozenset(
+            {
+                "app.ai",
+                "app.market",
+                "app.research",
+                "app.research_methodology",
+                "app.strategies",
+                "app.trading",
+            }
+        ),
+    },
+    "app.research.data": {
+        "responsibility": "Research storage, alignment, outcomes, and provenance identities",
+        "allowed": frozenset({"app.ai", "app.market", "app.research", "app.research_methodology"}),
+    },
+    "app.research.intelligence": {
+        "responsibility": "Offline market, flow, event, and behavioral intelligence studies",
+        "allowed": frozenset(
+            {
+                "app.ai",
+                "app.market",
+                "app.research",
+                "app.research_methodology",
+                "app.strategies",
+                "app.trading",
+            }
+        ),
+    },
+    "app.research.strategy": {
+        "responsibility": "Offline strategy history, lab, and walk-forward evaluation",
+        "allowed": frozenset({"app.market", "app.research", "app.strategies", "app.trading"}),
+    },
+    "app.risk": {
+        "responsibility": "Deterministic risk decisions and limits",
+        "allowed": frozenset(
+            {"app.exchange_execution", "app.market", "app.portfolio", "app.risk", "app.trading"}
+        ),
+    },
+    "app.runtime": {
+        "responsibility": "Application composition, process lifecycle, and status",
+        "allowed": frozenset(
+            {
+                "app.coordination",
+                "app.exchange_runtime",
+                "app.execution",
+                "app.foundation",
+                "app.infrastructure",
+                "app.market",
+                "app.paper",
+                "app.persistence",
+                "app.portfolio",
+                "app.risk",
+                "app.runtime",
+                "app.shadow",
+                "app.strategies",
+                "app.trading",
+            }
+        ),
+    },
+    "app.shadow": {
+        "responsibility": "Read-only shadow observation and comparison services",
+        "allowed": frozenset({"app.market", "app.shadow", "app.trading"}),
+    },
+    "app.strategies": {
+        "responsibility": "Advisory strategy implementations",
+        "allowed": frozenset({"app.market", "app.strategies", "app.trading"}),
+    },
+    "app.trading": {
+        "responsibility": "Trading intent, snapshots, pipeline, and strategy ports",
+        "allowed": frozenset({"app.market", "app.trading"}),
+    },
+    "app.tools": {
+        "responsibility": "Leaf operator and offline command entry points",
+        "allowed": frozenset({"app.*"}),
+    },
+    "app.cli": {
+        "responsibility": "Stable command-line composition adapter",
+        "allowed": frozenset({"app.cli", "app.control_plane", "app.platform"}),
+    },
+    "app.main": {
+        "responsibility": "Stable runtime process adapter",
+        "allowed": frozenset({"app.foundation", "app.main", "app.runtime"}),
+    },
+    "app.research_methodology": {
+        "responsibility": "Stable frozen research methodology contract",
+        "allowed": frozenset({"app.research", "app.research_methodology"}),
+    },
+}
+INTERNAL_DEPENDENCY_FAMILIES = frozenset(
+    ".".join(owner.split(".")[:2]) for owner in PACKAGE_OWNERSHIP
+)
+for _policy in PACKAGE_OWNERSHIP.values():
+    allowed = _policy["allowed"]
+    _policy["forbidden"] = (
+        frozenset() if "app.*" in allowed else INTERNAL_DEPENDENCY_FAMILIES - allowed
+    )
+
 
 def _module_name(path: Path) -> str:
     relative = path.relative_to(ROOT).with_suffix("")
@@ -275,10 +494,138 @@ def _tracked_files() -> frozenset[str]:
     return frozenset(line for line in result.stdout.splitlines() if line)
 
 
+def _owner_for_module(module: str) -> str | None:
+    matches = [
+        owner for owner in PACKAGE_OWNERSHIP if module == owner or module.startswith(f"{owner}.")
+    ]
+    return max(matches, key=len, default=None)
+
+
+def _dependency_family(module: str) -> str:
+    parts = module.split(".")
+    return ".".join(parts[:2])
+
+
+def _importable_module_name(path: Path) -> str:
+    parts = list(path.relative_to(ROOT).with_suffix("").parts)
+    if parts[-1] == "__init__":
+        parts.pop()
+    return ".".join(parts)
+
+
+def _resolved_internal_imports(path: Path, available: frozenset[str]) -> frozenset[str]:
+    source_module = _importable_module_name(path)
+    package = source_module if path.name == "__init__.py" else source_module.rpartition(".")[0]
+    resolved: set[str] = set()
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    for node in ast.walk(tree):
+        candidates: Iterable[str]
+        if isinstance(node, ast.Import):
+            candidates = (alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                package_parts = package.split(".")
+                keep = len(package_parts) - (node.level - 1)
+                base_parts = package_parts[:keep]
+                if node.module:
+                    base_parts.extend(node.module.split("."))
+                base = ".".join(base_parts)
+            else:
+                base = node.module or ""
+            expanded = [f"{base}.{alias.name}" for alias in node.names if base]
+            candidates = (*expanded, base)
+        else:
+            continue
+        for candidate in candidates:
+            if candidate in available:
+                resolved.add(candidate)
+    return frozenset(resolved)
+
+
+def _strongly_connected_components(
+    graph: dict[str, frozenset[str]],
+) -> tuple[tuple[str, ...], ...]:
+    next_index = 0
+    indices: dict[str, int] = {}
+    lowlinks: dict[str, int] = {}
+    stack: list[str] = []
+    on_stack: set[str] = set()
+    components: list[tuple[str, ...]] = []
+
+    def visit(node: str) -> None:
+        nonlocal next_index
+        indices[node] = lowlinks[node] = next_index
+        next_index += 1
+        stack.append(node)
+        on_stack.add(node)
+        for target in graph[node]:
+            if target not in indices:
+                visit(target)
+                lowlinks[node] = min(lowlinks[node], lowlinks[target])
+            elif target in on_stack:
+                lowlinks[node] = min(lowlinks[node], indices[target])
+        if lowlinks[node] != indices[node]:
+            return
+        component: list[str] = []
+        while True:
+            target = stack.pop()
+            on_stack.remove(target)
+            component.append(target)
+            if target == node:
+                break
+        if len(component) > 1:
+            components.append(tuple(sorted(component)))
+
+    for node in graph:
+        if node not in indices:
+            visit(node)
+    return tuple(sorted(components))
+
+
 def test_root_module_allowlist_can_only_shrink() -> None:
     direct_modules = {path.name for path in APP.glob("*.py")}
     approved = ROOT_MODULE_ALLOWLIST | STABLE_ROOT_ADAPTERS | {"__init__.py"}
     assert direct_modules <= approved, sorted(direct_modules - approved)
+
+
+def test_package_ownership_map_covers_every_production_package() -> None:
+    package_modules = {
+        _importable_module_name(path)
+        for path in APP.rglob("__init__.py")
+        if "tools" not in path.parts and path != APP / "__init__.py"
+    }
+    assert all(_owner_for_module(module) is not None for module in package_modules)
+    assert all(policy["responsibility"] for policy in PACKAGE_OWNERSHIP.values())
+    assert all(policy["allowed"] for policy in PACKAGE_OWNERSHIP.values())
+    assert all("forbidden" in policy for policy in PACKAGE_OWNERSHIP.values())
+
+
+def test_internal_imports_follow_package_ownership_map() -> None:
+    violations: dict[str, set[str]] = {}
+    for path in _production_sources():
+        module = _module_name(path)
+        owner = _owner_for_module(module)
+        if owner is None:
+            continue
+        allowed = PACKAGE_OWNERSHIP[owner]["allowed"]
+        if "app.*" in allowed:
+            continue
+        for imported in _imports(path):
+            if not imported.startswith("app."):
+                continue
+            family = _dependency_family(imported)
+            if family not in allowed:
+                violations.setdefault(module, set()).add(imported)
+    assert violations == {}
+
+
+def test_production_module_import_graph_has_no_cycles() -> None:
+    sources = _production_sources()
+    modules = frozenset(_importable_module_name(path) for path in sources)
+    graph = {
+        _importable_module_name(path): _resolved_internal_imports(path, modules) for path in sources
+    }
+    assert _strongly_connected_components(graph) == ()
 
 
 def test_completed_direct_migrations_have_only_canonical_paths() -> None:
@@ -711,3 +1058,43 @@ def test_boundary_document_records_stable_paths_and_shrinking_policy() -> None:
         "may only shrink",
     ):
         assert required in document
+
+
+def test_final_architecture_governance_documents_are_present_and_actionable() -> None:
+    required_sections = {
+        "CLEAN_ARCHITECTURE.md": (
+            "Package ownership",
+            "Composition roots and state ownership",
+            "Provenance and authority",
+            "VS Code boundary",
+        ),
+        "DEPENDENCY_RULES.md": (
+            "Package matrix",
+            "Permanent prohibitions",
+            "Root and composition policy",
+            "Versioned and provenance-sensitive changes",
+        ),
+        "FEATURE_IMPLEMENTATION_RULES.md": (
+            "Placement decision tree",
+            "Chappie OOP rules",
+            "Testing requirements",
+            "Automated coding-agent contract",
+        ),
+        "ARCHITECTURE_DECISIONS.md": (
+            "Restricted application root",
+            "Stable Knowledge and Control Plane APIs",
+            "Lazy AI exports",
+            "Compatibility wrappers are exceptional",
+        ),
+        "REFACTOR_FINAL_REPORT.md": (
+            "Quantitative comparison",
+            "Permanent guards",
+            "Intentionally deferred",
+            "Final validation",
+        ),
+    }
+    architecture_docs = ROOT / "docs" / "architecture"
+    for filename, headings in required_sections.items():
+        document = (architecture_docs / filename).read_text(encoding="utf-8")
+        for heading in headings:
+            assert f"## {heading}" in document
