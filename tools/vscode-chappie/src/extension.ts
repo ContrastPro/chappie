@@ -11,6 +11,8 @@ import {
 import { ChappieControlPlaneClient, ControlPlaneClientError, ControlPlaneDependencyError, ControlPlaneIncompatibleError } from "./api/client";
 import { appendTurn, ChatTurnV1, renderTurns } from "./ui/chat";
 import { capabilitySummary, contextPreview, humanState, projectChatAvailability, projectQaFailureMessage, setupActionLabel } from "./ui/presentation";
+import { ChappieStatusTreeV1 } from "./ui/status";
+import { ChappieWorkbenchV1 } from "./ui/workbench";
 import { WorkspaceContextCollector } from "./workspace/context";
 import { collectGitMetadata } from "./workspace/git_metadata";
 import { ChappieSetupTerminalV1, isChappieWorkspace, localWorkspaceState, OwnedControlPlaneProcess, readSetupFailureSummary, resolveChappieExecutable, resolveChappieSetupCommand, setupBootstrapRemediation, shouldAutoStartControlPlane } from "./workspace/workspace";
@@ -127,10 +129,11 @@ function componentState(status: ControlPlaneStatusV1 | undefined, component: str
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const output = vscode.window.createOutputChannel("Chappie");
   const bar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-  const tree = new ChappieTree();
+  const tree = new ChappieStatusTreeV1();
   const ownedProcess = new OwnedControlPlaneProcess();
   const setupTerminal = new ChappieSetupTerminalV1();
   const setupResultPath = path.join(context.globalStorageUri.fsPath, "setup-result.json");
+  let workbench: ChappieWorkbenchV1 | undefined;
   const configuredPort = (): number => vscode.workspace.getConfiguration("chappie").get<number>("controlPlane.port", 8765);
   const platform = globalThis.process.platform as "win32" | "darwin" | "linux";
   const localState = (): "UNCONFIGURED" | "DEGRADED" | "READY" => {
@@ -151,24 +154,30 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       tree.update("CONNECTED", { status, ai, capabilities });
       const projectQa = capabilities.capabilities.find((item) => item.capability_id === "project.qa");
       const knowledge = componentState(status, "KNOWLEDGE");
+      const availability = projectChatAvailability("CONNECTED", projectQa?.status, ai.provider_state, knowledge, localState());
+      const setupAction = setupActionLabel("CONNECTED", projectQa?.status, ai.provider_state, knowledge, localState());
       chat.update(
         "CONNECTED",
         ai.model,
-        projectChatAvailability("CONNECTED", projectQa?.status, ai.provider_state, knowledge, localState()),
-        setupActionLabel("CONNECTED", projectQa?.status, ai.provider_state, knowledge, localState()),
+        availability,
+        setupAction,
       );
+      workbench?.updateConnection({ state: "CONNECTED", model: ai.model, knowledge, availability, setupAction });
       renderStatus(bar, "CONNECTED");
       output.appendLine("Control Plane connected.");
       return "CONNECTED";
     } catch (error) {
       const state: ConnectionState = error instanceof ControlPlaneIncompatibleError ? "INCOMPATIBLE" : "DISCONNECTED";
       tree.update(state);
+      const availability = projectChatAvailability(state, undefined, undefined, "UNKNOWN", localState());
+      const setupAction = setupActionLabel(state, undefined, undefined, "UNKNOWN", localState());
       chat.update(
         state,
         null,
-        projectChatAvailability(state, undefined, undefined, "UNKNOWN", localState()),
-        setupActionLabel(state, undefined, undefined, "UNKNOWN", localState()),
+        availability,
+        setupAction,
       );
+      workbench?.updateConnection({ state, model: null, knowledge: "UNKNOWN", availability, setupAction });
       renderStatus(bar, state);
       const message = error instanceof Error ? error.message : "Control Plane request failed";
       output.appendLine(`${state}: ${message}`);
@@ -268,6 +277,23 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     output.appendLine(`Started canonical interactive setup in ${command.command}.`);
   };
 
+  workbench = new ChappieWorkbenchV1({
+    askProject: (question, options) => new ChappieControlPlaneClient(configuredPort()).askProject(question, collectWorkspaceContext(options)),
+    previewContext: (options) => contextPreviewFor(options),
+    runAction: async (action) => {
+      if (action === "diagnostics") {
+        await vscode.commands.executeCommand("chappie.showDoctor");
+      } else if (action === "reconnect") {
+        await startOwned();
+      } else {
+        runSetup();
+      }
+    },
+    workspaceName: () => vscode.workspace.workspaceFolders?.find((folder) => folder.uri.fsPath === workspaceRoot())?.name,
+    errorMessage: chatError,
+  });
+  context.subscriptions.push(workbench);
+
   context.subscriptions.push(vscode.window.onDidCloseTerminal((terminal) => {
     setupTerminal.closed(
       terminal,
@@ -287,6 +313,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   context.subscriptions.push(
     vscode.commands.registerCommand("chappie.refresh", connect),
+    vscode.commands.registerCommand("chappie.openWorkbench", () => workbench?.open()),
     vscode.commands.registerCommand("chappie.openView", () => vscode.commands.executeCommand("workbench.view.extension.chappie")),
     vscode.commands.registerCommand("chappie.showDoctor", async () => {
       const client = new ChappieControlPlaneClient(configuredPort());
@@ -320,7 +347,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   output.appendLine("Chappie extension activated.");
   const root = workspaceRoot();
   if (!root) {
-    tree.update("DISCONNECTED"); chat.update("DISCONNECTED", null, projectChatAvailability("DISCONNECTED", undefined, undefined, "UNKNOWN", "UNCONFIGURED"), "Set up"); renderStatus(bar, "DISCONNECTED");
+    const availability = projectChatAvailability("DISCONNECTED", undefined, undefined, "UNKNOWN", "UNCONFIGURED");
+    tree.update("DISCONNECTED"); chat.update("DISCONNECTED", null, availability, "Set up"); workbench.updateConnection({ state: "DISCONNECTED", model: null, knowledge: "UNKNOWN", availability, setupAction: "Set up" }); renderStatus(bar, "DISCONNECTED");
     output.appendLine("No recognized Chappie workspace is open.");
   } else if (vscode.workspace.getConfiguration("chappie").get<boolean>("autoConnect", true)) {
     output.appendLine(`Recognized Chappie workspace: ${root}`);
@@ -328,7 +356,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     if (shouldAutoStartControlPlane(true, vscode.workspace.getConfiguration("chappie").get<boolean>("autoStartControlPlane", true), connection) && !ownedProcess.running) {
       await startOwned();
     }
-  } else { tree.update("DISCONNECTED"); chat.update("DISCONNECTED", null, projectChatAvailability("DISCONNECTED", undefined, undefined, "UNKNOWN", localState()), setupActionLabel("DISCONNECTED", undefined, undefined, "UNKNOWN", localState())); renderStatus(bar, "DISCONNECTED"); }
+  } else {
+    const availability = projectChatAvailability("DISCONNECTED", undefined, undefined, "UNKNOWN", localState());
+    const setupAction = setupActionLabel("DISCONNECTED", undefined, undefined, "UNKNOWN", localState());
+    tree.update("DISCONNECTED"); chat.update("DISCONNECTED", null, availability, setupAction); workbench.updateConnection({ state: "DISCONNECTED", model: null, knowledge: "UNKNOWN", availability, setupAction }); renderStatus(bar, "DISCONNECTED");
+  }
 }
 
 function workspaceRoot(): string | undefined {

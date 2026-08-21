@@ -274,6 +274,14 @@ test("extension internal layers keep one-way import boundaries", () => {
   const workspace = `${source("workspace/workspace.ts")}\n${source("workspace/context.ts")}\n${source("workspace/git_metadata.ts")}`;
   const contracts = source("api/contracts.ts");
   const extension = source("extension.ts");
+  const workbenchUi = [
+    "ui/workbench.ts",
+    "ui/workbench_html.ts",
+    "ui/workbench_protocol.ts",
+    "ui/workbench_render.ts",
+    "ui/workbench_state.ts",
+    "ui/status.ts",
+  ].map(source).join("\n");
 
   assert.doesNotMatch(api, /from ["']\.\.\/ui\//);
   assert.doesNotMatch(workspace, /from ["']\.\.\/ui\//);
@@ -286,14 +294,18 @@ test("extension internal layers keep one-way import boundaries", () => {
     "./workspace/git_metadata",
     "./ui/presentation",
     "./ui/chat",
+    "./ui/status",
+    "./ui/workbench",
   ]) {
     assert.match(extension, new RegExp(`from ["']${dependency}`));
   }
+  assert.doesNotMatch(workbenchUi, /node:child_process|new ChappieControlPlaneClient/);
 });
 
 test("setup action launches canonical CLI only and detailed capabilities remain explicit", () => {
   const manifest = JSON.parse(readFileSync("package.json", "utf8")) as { contributes: { commands: Array<{ command: string }> } };
   assert.ok(manifest.contributes.commands.some((item) => item.command === "chappie.runSetup"));
+  assert.ok(manifest.contributes.commands.some((item) => item.command === "chappie.openWorkbench"));
   const source = readFileSync("src/extension.ts", "utf8");
   assert.match(source, /resolveChappieSetupCommand/);
   assert.match(source, /createTerminal\(options\)/);

@@ -24,7 +24,8 @@
     "onCommand:chappie.showDoctor",
     "onCommand:chappie.showCapabilities",
     "onCommand:chappie.runSetup",
-    "onCommand:chappie.openView"
+    "onCommand:chappie.openView",
+    "onCommand:chappie.openWorkbench"
   ],
   "main": "./out/extension.js",
   "files": [
@@ -66,6 +67,10 @@
       {
         "command": "chappie.openView",
         "title": "Chappie: Open View"
+      },
+      {
+        "command": "chappie.openWorkbench",
+        "title": "Chappie: Open Workbench"
       }
     ],
     "configuration": {
