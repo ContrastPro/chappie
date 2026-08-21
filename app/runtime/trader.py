@@ -1,7 +1,7 @@
 import logging
 from typing import Protocol
 
-from app.core.config import Settings
+from app.foundation.config import Settings
 
 
 class PollingEngine(Protocol):

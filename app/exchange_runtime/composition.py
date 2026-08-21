@@ -5,7 +5,6 @@ from uuid import uuid4
 
 import httpx
 
-from app.core.config import Settings
 from app.exchange_execution import (
     DurableExchangeOrderLifecycle,
     ExchangeInstrumentRules,
@@ -25,6 +24,7 @@ from app.exchange_runtime.models import (
 from app.exchange_runtime.runtime import TestnetRuntimeStartup
 from app.exchange_runtime.settlement import SQLiteExchangeSettlement
 from app.exchange_runtime.submission import TestnetPreSubmitGate
+from app.foundation.config import Settings
 from app.infrastructure.binance import (
     BinanceSpotTestnetAdapter,
     BinanceSpotTestnetConfig,

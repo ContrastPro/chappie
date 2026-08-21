@@ -21,11 +21,11 @@ from uuid import uuid4
 
 import httpx
 
-from app.core.logger import suppress_private_transport_logging
 from app.exchange_execution import ExchangeOrderSide, ExchangeOrderStatus
 from app.exchange_execution.models import QueryResultKind
 from app.exchange_runtime.identity import SQLiteOrderIdentityResolver
 from app.exchange_runtime.settlement import SQLiteExchangeSettlement
+from app.foundation.logging import suppress_private_transport_logging
 from app.infrastructure.binance import BinanceSpotTestnetAdapter, BinanceSpotTestnetConfig
 from app.persistence.canonical import canonical_sha256, deserialize_decimal
 from app.persistence.exchange import SQLiteExchangePersistence

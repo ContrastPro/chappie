@@ -1488,7 +1488,7 @@ def test_order_test_error_taxonomy_is_safe_and_never_retries(
         config_value=config(api_key=LEAK_API_KEY, api_secret=LEAK_SECRET),
     )
     with caplog.at_level(logging.DEBUG):
-        from app.core.logger import suppress_private_transport_logging
+        from app.foundation.logging import suppress_private_transport_logging
 
         suppress_private_transport_logging()
         try:
@@ -1615,7 +1615,7 @@ def test_signed_get_and_post_never_leak_under_global_debug(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     del tmp_path
-    from app.core.logger import suppress_private_transport_logging
+    from app.foundation.logging import suppress_private_transport_logging
 
     synthetic_signature = sign_hmac_sha256("synthetic", LEAK_SECRET)
     sensitive_response = {

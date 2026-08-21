@@ -113,6 +113,8 @@ COMPLETED_DIRECT_MIGRATIONS = {
     "app.research.intelligence.multi_asset_flow": "COMPLETED_DIRECT_MIGRATION",
     "app.research.intelligence.news_events": "COMPLETED_DIRECT_MIGRATION",
     "app.research.intelligence.universe": "COMPLETED_DIRECT_MIGRATION",
+    "app.foundation.config": "COMPLETED_DIRECT_MIGRATION",
+    "app.foundation.logging": "COMPLETED_DIRECT_MIGRATION",
     "app.runtime.application": "COMPLETED_DIRECT_MIGRATION",
     "app.runtime.status": "COMPLETED_DIRECT_MIGRATION",
     "app.runtime.trader": "COMPLETED_DIRECT_MIGRATION",
@@ -297,6 +299,32 @@ def test_domain_subsystems_do_not_import_runtime_composition() -> None:
         for path in (APP / root).rglob("*.py")
         for imported in _imports(path)
         if imported == "app.runtime" or imported.startswith("app.runtime.")
+    }
+    assert violations == {}
+
+
+def test_foundation_does_not_import_upward_runtime_or_domain_packages() -> None:
+    upward_prefixes = (
+        "app.runtime",
+        "app.coordination",
+        "app.exchange_execution",
+        "app.exchange_runtime",
+        "app.execution",
+        "app.infrastructure",
+        "app.market",
+        "app.paper",
+        "app.persistence",
+        "app.portfolio",
+        "app.risk",
+        "app.shadow",
+        "app.strategies",
+        "app.trading",
+    )
+    violations = {
+        _module_name(path): imported
+        for path in (APP / "foundation").glob("*.py")
+        for imported in _imports(path)
+        if _matches(imported, upward_prefixes)
     }
     assert violations == {}
 

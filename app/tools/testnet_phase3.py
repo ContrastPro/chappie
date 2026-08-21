@@ -20,7 +20,6 @@ from uuid import uuid4
 
 import httpx
 
-from app.core.logger import suppress_private_transport_logging
 from app.exchange_execution import (
     DeterministicClientOrderIdFactory,
     DurableExchangeOrderLifecycle,
@@ -43,6 +42,7 @@ from app.exchange_execution.ports import (
 )
 from app.exchange_runtime.settlement import SQLiteExchangeSettlement
 from app.exchange_runtime.submission import TestnetPreSubmitGate
+from app.foundation.logging import suppress_private_transport_logging
 from app.infrastructure.binance import (
     AccountTradeObservation,
     BinanceOrderRejectedError,

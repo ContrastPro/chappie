@@ -11,7 +11,6 @@ import pytest
 import app.exchange_runtime.composition as production_composition
 import app.runtime.application as application_module
 from app.coordination import TradingCoordinationStateError
-from app.core.config import Settings
 from app.exchange_execution import KillSwitchState
 from app.exchange_runtime.composition import build_production_testnet_components
 from app.exchange_runtime.models import (
@@ -23,6 +22,7 @@ from app.exchange_runtime.models import (
 from app.exchange_runtime.models import (
     TestnetReadinessState as ReadinessState,
 )
+from app.foundation.config import Settings
 from app.market.cache import MarketStreamKey
 from app.market.events import (
     CandleClosed,

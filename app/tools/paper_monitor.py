@@ -12,7 +12,7 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
 
-from app.core.config import get_settings
+from app.foundation.config import get_settings
 
 NA = "N/A"
 

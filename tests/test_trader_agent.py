@@ -1,4 +1,4 @@
-from app.core.config import Settings
+from app.foundation.config import Settings
 from app.runtime.trader import TraderAgent
 
 

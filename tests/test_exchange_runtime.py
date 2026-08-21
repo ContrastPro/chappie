@@ -1146,7 +1146,7 @@ def test_readiness_is_fail_closed_and_capability_binds_lineage(tmp_path: Path) -
 
 
 def test_live_mode_is_structurally_rejected() -> None:
-    from app.core.config import Settings
+    from app.foundation.config import Settings
 
     with pytest.raises(ValueError, match="LIVE"):
         Settings(_env_file=None, trading_mode="live")

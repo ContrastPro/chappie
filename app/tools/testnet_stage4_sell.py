@@ -22,7 +22,6 @@ from uuid import uuid4
 
 import httpx
 
-from app.core.logger import suppress_private_transport_logging
 from app.exchange_execution import (
     DurableExchangeOrderLifecycle,
     ExchangeCommand,
@@ -40,6 +39,7 @@ from app.exchange_execution.ports import (
 )
 from app.exchange_execution.stage4_sell_recovery import Stage4SellRecoveryReason
 from app.exchange_runtime.submission import TestnetPreSubmitGate
+from app.foundation.logging import suppress_private_transport_logging
 from app.infrastructure.binance import (
     AccountTradeObservation,
     BinanceOrderRejectedError,

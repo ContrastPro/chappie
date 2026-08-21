@@ -5,7 +5,7 @@ from __future__ import annotations
 from configparser import ConfigParser
 from pathlib import Path
 
-from app.core.config import Settings
+from app.foundation.config import Settings
 
 ROOT = Path(__file__).parents[1]
 SERVICE_FILE = ROOT / "deploy/systemd/chappie.service"

@@ -5,7 +5,6 @@ from decimal import Decimal
 import httpx
 
 from app.coordination import TradingDecisionCoordinator, UUIDCoordinationIdFactory
-from app.core.config import Settings
 from app.exchange_runtime.composition import (
     ProductionTestnetComponents,
     build_production_testnet_components,
@@ -16,6 +15,7 @@ from app.execution import (
     UUIDExecutionIdFactory,
     UUIDFillIdFactory,
 )
+from app.foundation.config import Settings
 from app.infrastructure.binance import BinanceSpotTestnetAdapter
 from app.market.binance_provider import BinanceMarketProvider
 from app.market.cache import InMemoryMarketCache, MarketStreamKey

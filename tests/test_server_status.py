@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.core.config import Settings
+from app.foundation.config import Settings
 from app.market.models import CandleSnapshot
 from app.market.polling import PollingLifecycleState
 from app.runtime.application import StageOneStatusReport, run_application

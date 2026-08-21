@@ -5,8 +5,8 @@ from types import SimpleNamespace
 import pytest
 
 import app.main as main_module
-from app.core.config import Settings
-from app.core.logger import (
+from app.foundation.config import Settings
+from app.foundation.logging import (
     PRIVATE_TRANSPORT_LOG_LEVEL,
     PRIVATE_TRANSPORT_LOGGERS,
     configure_logging,
