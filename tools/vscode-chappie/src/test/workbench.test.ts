@@ -202,6 +202,9 @@ test("Workbench exposes real retry feedback and bounded Inspector metadata", () 
   assert.match(script, /type:'feedback'/);
   assert.match(script, /turn\.response\?\.authority/);
   assert.match(script, /turn\.response\?\.sources/);
+  assert.match(script, /const renderInspectorFailureAware=/);
+  assert.match(script, /FAILED/);
+  assert.match(script, /renderInspectorFailureAware\(\)/);
   assert.match(script, /No supported Chappie–Codex runtime integration is configured/);
   assert.doesNotMatch(script, /chain.of.thought|fake agent|fake market/i);
 });

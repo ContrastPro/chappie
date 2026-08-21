@@ -460,7 +460,9 @@ def _run_project_qa(
         )
     if not context.records:
         return _project_qa_error(
-            ProjectQAStateV1.KNOWLEDGE_UNAVAILABLE, question, "KNOWLEDGE_UNAVAILABLE"
+            ProjectQAStateV1.VALIDATION_ERROR,
+            question,
+            "PROJECT_QA_NO_RELEVANT_KNOWLEDGE",
         )
     ai = None
     try:

@@ -16,6 +16,7 @@ from app.control_plane import (
     ProjectQASourceV1,
     ProjectQAStateV1,
 )
+from app.knowledge import RepositorySnapshotV1, initial_records, manifest
 from app.platform.bootstrap import (
     ChappieDoctorReportV1,
     ChappieLocalConfigV1,
@@ -168,6 +169,29 @@ def test_project_qa_is_injected_read_only_and_validates_questions(tmp_path: Path
     assert too_large.error is not None
     assert too_large.error.reason_code == "PROJECT_QA_REQUEST_TOO_LARGE"
     assert calls == ["What owns evidence?"]
+
+
+def test_ready_knowledge_with_no_relevant_deep_records_is_not_reported_as_unconfigured(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from app.control_plane import service
+    from app.knowledge import store
+    from app.platform.setup import ai_smoke
+
+    snapshot = RepositorySnapshotV1("a" * 40, True)
+    records = initial_records(snapshot=snapshot)
+    monkeypatch.setattr(service, "load_local_config", lambda _paths: object())
+    monkeypatch.setattr(ai_smoke, "valid_setup_ai_config", lambda _config: True)
+    monkeypatch.setattr(store, "read_store", lambda _path: (records, manifest(records, snapshot)))
+
+    response = service._run_project_qa(
+        _paths(tmp_path),
+        "Design News and Event Intelligence architecture across ownership dependencies authority data contracts persistence failure model Workbench UX implementation sequence",
+    )
+
+    assert response.state == ProjectQAStateV1.VALIDATION_ERROR
+    assert response.error is not None
+    assert response.error.reason_code == "PROJECT_QA_NO_RELEVANT_KNOWLEDGE"
 
 
 def test_cli_ai_status_uses_control_plane_adapter(tmp_path: Path, monkeypatch, capsys) -> None:

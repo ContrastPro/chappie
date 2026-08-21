@@ -117,6 +117,7 @@ function projectQaRequestFailureMessage(code: string, fallback: string): string 
   if (code === "PROJECT_QA_REQUEST_TOO_LARGE") return `Question exceeds the ${PROJECT_QA_MAX_REQUEST_CHARACTERS}-character Project QA request limit.`;
   if (code === "REQUEST_BODY_TOO_LARGE") return "This request exceeds the Control Plane transport budget. Shorten the question or remove attached context.";
   if (code === "INVALID_PROJECT_QA_QUESTION") return "Project QA requires a non-empty question.";
+  if (code === "PROJECT_QA_NO_RELEVANT_KNOWLEDGE") return "Chappie could not find relevant canonical Knowledge for this question.";
   return fallback;
 }
 

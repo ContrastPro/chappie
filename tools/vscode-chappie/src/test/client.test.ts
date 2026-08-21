@@ -235,6 +235,21 @@ test("typed Project QA HTTP 400 reasons are preserved for the Workbench", async 
   );
 });
 
+test("empty canonical retrieval is not projected as missing Knowledge configuration", async () => {
+  const noMatch = JSON.stringify({
+    transport_contract: TRANSPORT_IDENTITY,
+    transport_contract_digest: TRANSPORT_DIGEST,
+    control_plane_contract: CONTROL_PLANE_IDENTITY,
+    control_plane_contract_digest: CONTROL_PLANE_DIGEST,
+    request_id: "a".repeat(32), status: "ERROR", data: null,
+    error: { code: "PROJECT_QA_NO_RELEVANT_KNOWLEDGE", message: "Project QA is unavailable" },
+  });
+  await assert.rejects(
+    () => new ChappieControlPlaneClient(8765, async () => new Response(noMatch, { status: 400, headers: { "content-type": "application/json" } })).askProject("Deep architecture request"),
+    (error: unknown) => error instanceof ControlPlaneRequestError && error.reasonCode === "PROJECT_QA_NO_RELEVANT_KNOWLEDGE" && error.message === "Chappie could not find relevant canonical Knowledge for this question.",
+  );
+});
+
 test("late status refreshes cannot overwrite the newest canonical snapshot", () => {
   const gate = new StatusRefreshGateV1();
   const older = gate.begin();
