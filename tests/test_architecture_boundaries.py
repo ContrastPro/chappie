@@ -33,6 +33,12 @@ from app.platform.setup.project_qa_smoke import PROJECT_QA_SETUP_SMOKE_IDENTITY
 ROOT = Path(__file__).parents[1]
 APP = ROOT / "app"
 
+
+def test_windows_timezone_database_is_a_declared_platform_dependency() -> None:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    assert "tzdata>=2025.2; sys_platform == 'win32'" in project["dependencies"]
+
+
 # This list is intentionally small and may only shrink. cli.py and main.py are
 # stable adapters, not debt.
 ROOT_MODULE_ALLOWLIST = frozenset(

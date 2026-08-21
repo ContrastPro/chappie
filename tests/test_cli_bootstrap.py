@@ -703,8 +703,14 @@ def test_overall_aggregation_has_stable_state_policy() -> None:
     assert aggregate_installation_state((unsupported,)) == InstallationStateV1.UNSUPPORTED
 
 
-def test_status_doctor_and_setup_plan_are_offline_and_read_only(tmp_path: Path) -> None:
+def test_status_doctor_and_setup_plan_are_offline_and_read_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     paths = _paths(tmp_path)
+    hardware = HardwareProfileV1(
+        "Windows", "fixture", "AMD64", "fixture", 16, 16 * 1024**3, (), None, None, 100 * 1024**3
+    )
+    monkeypatch.setattr("app.platform.bootstrap.detect_hardware", lambda _paths: hardware)
     status = collect_status(paths)
     assert status.installation_contract_digest == INSTALLATION_CONTRACT_DIGEST
     assert not paths.state_root.exists()

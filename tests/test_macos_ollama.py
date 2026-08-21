@@ -87,7 +87,7 @@ def test_current_user_dmg_install_uses_argv_and_discovers_app_cli(
     )
     assert calls[0][:4] == ["/usr/bin/hdiutil", "attach", "-nobrowse", "-readonly"]
     assert calls[-1][-1] == "--version"
-    assert calls[-1][0].endswith("Ollama.app/Contents/Resources/ollama")
+    assert Path(calls[-1][0]) == applications / "Ollama.app" / "Contents" / "Resources" / "ollama"
 
 
 def test_model_operations_are_exact_and_argv_only(

@@ -27,8 +27,19 @@ def test_setup_sh_runs_workspace_cli_from_its_own_root(tmp_path: Path) -> None:
     fake_python = tmp_path / "python3"
     _executable(fake_python, 'test "$1" = "-c"')
 
+    if os.name == "nt":
+        source = script.read_text(encoding="utf-8")
+        assert 'ROOT=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)' in source
+        assert 'cd "$ROOT"' in source
+        assert '"$ROOT/.venv/bin/python" -m pip install -e "$ROOT"' in source
+        assert '"$ROOT/.venv/bin/chappie" setup --yes --interactive "$@"' in source
+        powershell = Path("setup.ps1").read_text(encoding="utf-8")
+        assert "Push-Location $root" in powershell
+        assert "Join-Path $root '.venv\\Scripts\\chappie.exe'" in powershell
+        return
+
     subprocess.run(
-        [str(script)],
+        ["/bin/sh", str(script)],
         cwd=tmp_path,
         check=True,
         env={**os.environ, "PYTHON": str(fake_python), "ROOT": str(repository)},

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import errno
 import json
+import socket
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -40,6 +41,17 @@ class ControlPlaneTransportErrorV1(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+class _ExclusiveLoopbackHTTPServer(ThreadingHTTPServer):
+    """Prevent a second listener from sharing a Control Plane address on Windows."""
+
+    allow_reuse_address = False
+
+    def server_bind(self) -> None:
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
 
 
 def _envelope(
@@ -108,7 +120,7 @@ class ChappieControlPlaneServerV1:
                 """Transport logs no request details by default."""
 
         try:
-            self._httpd = ThreadingHTTPServer((self.host, self.port), Handler)
+            self._httpd = _ExclusiveLoopbackHTTPServer((self.host, self.port), Handler)
             self.port = int(self._httpd.server_address[1])
         except OSError as error:
             code = "PORT_IN_USE" if error.errno == errno.EADDRINUSE else "BIND_FAILED"
