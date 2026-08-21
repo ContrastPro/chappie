@@ -1,6 +1,6 @@
 import { ProjectQAResponseV1 } from "../api/contracts";
 
-export const WORKBENCH_PROTOCOL_VERSION = "chappie_workbench/1.2.0";
+export const WORKBENCH_PROTOCOL_VERSION = "chappie_workbench/1.3.0";
 /** Local editing capacity, intentionally independent of the request capacity. */
 export const MAX_WORKBENCH_DRAFT_CHARACTERS = 50_000;
 /** Conservative cap for a request to the supported 16K-context local models. */
@@ -40,7 +40,7 @@ export type WebviewMessageV1 =
   | { type: "runAction"; action: WorkbenchActionV1 };
 
 export type HostMessageV1 =
-  | { type: "initialize"; protocol: typeof WORKBENCH_PROTOCOL_VERSION; connection: WorkbenchConnectionSnapshotV1; session: readonly WorkbenchTurnV1[]; attachments: readonly WorkbenchContextAttachmentV1[] }
+  | { type: "initialize"; protocol: typeof WORKBENCH_PROTOCOL_VERSION; connection: WorkbenchConnectionSnapshotV1; session: readonly WorkbenchTurnV1[]; sessionRevision: number; attachments: readonly WorkbenchContextAttachmentV1[] }
   | { type: "connectionChanged"; connection: WorkbenchConnectionSnapshotV1 }
   | { type: "contextPreview"; preview: string }
   | { type: "attachmentsChanged"; attachments: readonly WorkbenchContextAttachmentV1[] }
@@ -48,7 +48,7 @@ export type HostMessageV1 =
   | { type: "runtimeTelemetry"; telemetry: RuntimeTelemetryV1 }
   | { type: "turnFeedback"; turn: WorkbenchTurnV1 }
   /** The sole host-owned lifecycle projection for conversation, Inspector and Activity. */
-  | { type: "replaceSession"; session: readonly WorkbenchTurnV1[] };
+  | { type: "replaceSession"; session: readonly WorkbenchTurnV1[]; sessionRevision: number };
 
 const contextKeys = new Set<WorkbenchContextKindV1>(["includeFile", "includeSelection", "includeGit"]);
 const actions = new Set<WorkbenchActionV1>(["setup", "repair", "reconnect", "diagnostics"]);

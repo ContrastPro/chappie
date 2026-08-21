@@ -2,7 +2,7 @@
 
 Status: approved UI implementation baseline
 Date: 2026-08-21
-Internal protocol: `chappie_workbench/1.2.0`
+Internal protocol: `chappie_workbench/1.3.0`
 
 ## Purpose and principles
 
@@ -59,7 +59,7 @@ The current production components are Header, Conversation, Turn, Safe Markdown,
 
 ## Versioning and packaging
 
-This material Workbench state-consistency change increments the extension install identity to 0.1.5. Distribution contains one active versioned VSIX plus `SHA256SUMS`. A same-version replacement is prohibited because VS Code can retain stale installed code and make acceptance ambiguous.
+This material Workbench lifecycle and composer change increments the extension install identity to 0.1.6. Distribution contains one active versioned VSIX plus `SHA256SUMS`. A same-version replacement is prohibited because VS Code can retain stale installed code and make acceptance ambiguous. The Host-to-Webview session snapshot carries a monotonic revision; Webview discards older snapshots, so a terminal answer cannot be overwritten by a delayed pending snapshot for the same turn.
 
 ## Acceptance gates
 

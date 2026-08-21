@@ -36,11 +36,11 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
   }
 
   public updateConnection(connection: WorkbenchConnectionSnapshotV1): void { this.connection = connection; this.post({ type: "connectionChanged", connection }); }
-  public newChat(): void { if (this.session.active) return; this.session.clear(); this.clearAttachments(); this.open(); this.post({ type: "replaceSession", session: this.session.snapshot() }); }
+  public newChat(): void { if (this.session.active) return; this.session.clear(); this.clearAttachments(); this.open(); this.post({ type: "replaceSession", session: this.session.snapshot(), sessionRevision: this.session.currentRevision }); }
   public focusComposer(): void { this.open(); this.post({ type: "notice", message: "Focus the composer to ask Chappie about this project." }); }
   public dispose(): void { this.panel?.dispose(); this.panel = undefined; }
 
-  private initialize(): void { void this.post({ type: "initialize", protocol: "chappie_workbench/1.2.0", connection: this.connection, session: this.session.snapshot(), attachments: this.attachmentSnapshot() }); }
+  private initialize(): void { void this.post({ type: "initialize", protocol: "chappie_workbench/1.3.0", connection: this.connection, session: this.session.snapshot(), sessionRevision: this.session.currentRevision, attachments: this.attachmentSnapshot() }); }
   private attachmentSnapshot(): readonly WorkbenchContextAttachmentV1[] { return [...this.attachments.values()].map((value) => ({ ...value })); }
   private clearAttachments(): void { this.attachments.clear(); this.dependencies.clearContexts(); this.post({ type: "attachmentsChanged", attachments: [] }); }
 
@@ -74,13 +74,13 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
     try {
       const response = await this.dependencies.askProject(turn.question, turn.context);
       if (response.state !== "OK" || !(response.answer ?? "").trim()) throw new Error(response.error?.message ?? "Project QA did not return a final answer.");
-      this.session.complete(turn.turnId, response);
+      if (!this.session.complete(turn.turnId, response)) throw new Error("Project QA completed after its Workbench turn was no longer pending.");
     } catch (error) { this.session.fail(turn.turnId, this.dependencies.errorMessage(error)); }
     finally { clearInterval(telemetry); await this.postSession(); }
   }
 
   private safePreview(kind: WorkbenchContextKindV1): string { try { return this.dependencies.previewContext(kind); } catch { return "Workspace context is unavailable."; } }
   private async publishTelemetry(): Promise<void> { try { this.post({ type: "runtimeTelemetry", telemetry: await this.dependencies.runtimeTelemetry() }); } catch { /* optional diagnostics never affect Project QA */ } }
-  private postSession(): Promise<void> { return this.post({ type: "replaceSession", session: this.session.snapshot() }); }
+  private postSession(): Promise<void> { return this.post({ type: "replaceSession", session: this.session.snapshot(), sessionRevision: this.session.currentRevision }); }
   private async post(message: HostMessageV1): Promise<void> { await this.panel?.webview.postMessage(message); }
 }
