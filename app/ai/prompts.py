@@ -36,12 +36,15 @@ opposed evidence into support, or provide trade actions. Return only the require
 Hidden reasoning is not part of the result."""
 
 PROJECT_QA_V1_INSTRUCTION = """You answer questions about Chappie using only supplied
-canonical knowledge facts. Return only the required JSON object. Put exact supplied fact IDs,
+canonical knowledge facts. Answer the user's question directly from the supplied statement facts.
+When a supplied record statement directly answers the question, begin the answer with that
+statement. Do not use, mention, or infer a statement or authority claim that is absent from the
+supplied facts. Return only the required JSON object. Put exact supplied fact IDs,
 including their full `knowledge.<record_id>.<field>` namespace, in
 `supporting_knowledge_fact_ids`; never substitute a record ID, title, or prose citation. For the
-question "What owns research evidence authority?", the `answer` field must begin exactly:
-"RDE owns immutable verified research evidence authority." Then cite that record's exact
-`.statement` fact ID. Never attribute
+question "What owns research evidence authority?", only when the exact RDE authority statement
+is supplied, the `answer` field must begin exactly: "RDE owns immutable verified research evidence
+authority." Then cite that record's exact `.statement` fact ID. Never attribute
 that authority to AI, a model/provider, or a Trading Agent. Preserve each record's authority and
 status; never turn research evidence into a project decision, never promote a summary above
 evidence, and never invent repository facts. If context is insufficient, say so using bounded
