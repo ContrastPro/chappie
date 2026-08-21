@@ -28,7 +28,7 @@ The composer auto-grows, submits with Ctrl/Cmd+Enter, and supports explicit File
 
 The local draft limit is 50,000 characters, while the explicit Project QA request limit is 12,000 characters. The latter preserves headroom for supported 16K-context local models and the independently bounded 12,000-character workspace context; an oversized draft stays editable but is never silently truncated or sent. File opens the workspace file picker, Selection captures a non-empty active editor selection, and Git captures bounded local repository metadata.
 
-The Inspector is a floating secondary surface at wide and medium widths: it is rounded like the composer, uses the same theme-aware elevated background and subtle border, and has visible right/top/bottom outer spacing. Its content scrolls independently. Closing it collapses the grid slot instead of leaving an empty right margin. At narrow widths it remains the existing responsive drawer, inset from the Webview edges; it must not collide with a native Codex panel. This presentation change does not alter Inspector data, selection, lifecycle, or authority.
+The Inspector is a floating secondary surface at wide and medium widths: it is rounded like the composer, uses the same theme-aware elevated background and subtle border, and has visible right/top/bottom outer spacing. Its content scrolls independently. Closing it applies an explicit scoped hidden-display rule and collapses the grid slot instead of leaving an empty right margin or reflowing the Inspector below the conversation. At narrow widths it remains the existing responsive drawer, inset from the Webview edges; it must not collide with a native Codex panel. This presentation change does not alter Inspector data, selection, lifecycle, or authority.
 
 The Inspector has four tabs:
 
@@ -41,7 +41,7 @@ Inspector selection and disclosure state are UI-local. Handler failures or prese
 
 ## Sources and safe rendering
 
-Sources are keyboard-operable disclosures with titles, authority, status, and typed supporting fact identifiers when present. All AI and source content is inserted with DOM `textContent`. The Markdown subset supports headings, emphasis, lists, quotes, dividers, inline code, fenced code blocks, and copy actions. Raw HTML, remote resources, arbitrary commands, `innerHTML`, `eval`, and script injection are prohibited. The Webview CSP uses `default-src 'none'` and nonce-scoped scripts.
+Sources are keyboard-operable disclosures with titles, authority, status, and typed supporting fact identifiers when present. Each completed turn starts collapsed, and its source-list `hidden` state is explicitly enforced so CSS grid layout cannot reveal cards while `aria-expanded="false"`. All AI and source content is inserted with DOM `textContent`. The Markdown subset supports headings, emphasis, lists, quotes, dividers, inline code, fenced code blocks, and copy actions. Raw HTML, remote resources, arbitrary commands, `innerHTML`, `eval`, and script injection are prohibited. The Webview CSP uses `default-src 'none'` and nonce-scoped scripts.
 
 ## State and lifecycle
 
@@ -61,7 +61,7 @@ The current production components are Header, Conversation, Turn, Safe Markdown,
 
 ## Versioning and packaging
 
-UX-A incremented the extension install identity to 0.1.10 with compact keyboard-accessible per-message actions, local Copy feedback, edit-to-draft without historical mutation, per-turn Sources disclosure, and near-bottom scroll anchoring with a Jump to latest control. The Inspector visual follow-up increments it to 0.1.11. Distribution contains one active versioned VSIX plus `SHA256SUMS`. A same-version replacement is prohibited because VS Code can retain stale installed code and make acceptance ambiguous. The Host-to-Webview session snapshot carries a monotonic revision; Webview discards older snapshots, so a terminal answer cannot be overwritten by a delayed pending snapshot for the same turn.
+UX-A incremented the extension install identity to 0.1.10 with compact keyboard-accessible per-message actions, local Copy feedback, edit-to-draft without historical mutation, per-turn Sources disclosure, and near-bottom scroll anchoring with a Jump to latest control. The Inspector visual follow-up incremented it to 0.1.11. The Sources/Inspector hidden-state hotfix increments it to 0.1.12. Distribution contains one active versioned VSIX plus `SHA256SUMS`. A same-version replacement is prohibited because VS Code can retain stale installed code and make acceptance ambiguous. The Host-to-Webview session snapshot carries a monotonic revision; Webview discards older snapshots, so a terminal answer cannot be overwritten by a delayed pending snapshot for the same turn.
 
 ## Acceptance gates
 

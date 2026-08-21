@@ -176,6 +176,7 @@ test("Inspector is a floating responsive surface and close collapses its grid sl
   assert.match(source, /column-gap:var\(--chappie-workbench-gap\)/);
   assert.match(source, /padding-right:var\(--chappie-workbench-gap\)/);
   assert.match(source, /\.shell:has\(\.inspector\[hidden\]\)/);
+  assert.match(source, /\.shell \.inspector\[hidden\]\{display:none\}/);
   assert.match(source, /border-radius:var\(--chappie-surface-radius\)/);
   assert.match(source, /\.inspector-body\{flex:1;min-height:0/);
   assert.match(source, /@media\(max-width:1040px\)/);
@@ -201,10 +202,12 @@ test("completed Workbench turns call the Markdown renderer defined by the embedd
 
 test("Source disclosures remain DOM-local while canonical session snapshots are rendered", () => {
   const script = workbenchRendererScript();
+  const html = readFileSync("src/ui/workbench_html.ts", "utf8");
   assert.match(script, /expandedSources=new Set/);
   assert.match(script, /const sourceDisclosure=/);
   assert.match(script, /Sources · /);
   assert.match(script, /list\.hidden=!open/);
+  assert.match(html, /\.source-list\[hidden\]\{display:none\}/);
   assert.match(script, /turns\.replaceChildren\(\.\.\.session\.map\(turnNode\)\)/);
   assert.match(script, /const patchFeedback=turn/);
   assert.match(script, /const renderSession=\(next,revision\)/);
