@@ -1,5 +1,5 @@
-from app.ollama_readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
-from app.ollama_start import OllamaReadinessCoordinatorV1, OllamaRetryPolicyV1
+from app.platform.ollama.readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
+from app.platform.ollama.start import OllamaReadinessCoordinatorV1, OllamaRetryPolicyV1
 
 
 class P:

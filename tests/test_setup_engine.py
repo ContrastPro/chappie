@@ -17,7 +17,9 @@ from app.bootstrap import (
     SetupStepStateV1,
     load_local_config,
 )
-from app.ollama_readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
+from app.platform.ollama.contracts import ExternalActionResultV1, ExternalActionStatusV1
+from app.platform.ollama.readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
+from app.platform.ollama.windows import WindowsOllamaInstallerV1
 from app.project_qa_setup_smoke import (
     ProjectQAGroundingReasonV1,
     ProjectQASetupSmokeResultV1,
@@ -37,11 +39,6 @@ from app.setup_engine import (
     SetupRunStateV1,
     SetupStepResultV1,
     default_actions,
-)
-from app.windows_ollama import (
-    ExternalActionResultV1,
-    ExternalActionStatusV1,
-    WindowsOllamaInstallerV1,
 )
 
 
@@ -796,7 +793,7 @@ def test_actual_windows_installer_completes_missing_model_setup_path(
         installed_models.add("qwen3:8b")
         return subprocess.CompletedProcess(argv, 0, "", "")
 
-    monkeypatch.setattr("app.windows_ollama.shutil.which", lambda _: None)
+    monkeypatch.setattr("app.platform.ollama.windows.shutil.which", lambda _: None)
     events: list[str] = []
     engine = _AiSetupEngine(
         _paths(tmp_path / "actual-production"),

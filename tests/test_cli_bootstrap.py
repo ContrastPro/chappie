@@ -861,7 +861,7 @@ def test_windows_ready_ai_status_is_observational_and_fail_closed(
     """The real Windows setup result is reported without setup side effects."""
     from app import bootstrap
     from app.knowledge import KnowledgeManifestV1, RepositorySnapshotV1
-    from app.ollama_readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
+    from app.platform.ollama.readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
 
     paths = _paths(tmp_path)
     _write_balanced_ollama_config(paths)
@@ -917,8 +917,8 @@ def test_windows_ready_ai_status_is_observational_and_fail_closed(
     )
     monkeypatch.setattr("app.knowledge.read_store", lambda _path: ((), manifest))
     monkeypatch.setattr("app.knowledge.committed_snapshot", lambda _root: snapshot)
-    monkeypatch.setattr("app.ollama_readiness.OllamaReadinessProbe", Probe)
-    monkeypatch.setattr("app.windows_ollama.WindowsOllamaInstallerV1", Installer)
+    monkeypatch.setattr("app.platform.ollama.readiness.OllamaReadinessProbe", Probe)
+    monkeypatch.setattr("app.platform.ollama.windows.WindowsOllamaInstallerV1", Installer)
 
     status = collect_status(paths)
     assert _component(status, "KNOWLEDGE").state == ComponentStateV1.READY
@@ -959,7 +959,7 @@ def test_macos_ready_ai_status_uses_the_darwin_executor(
 ) -> None:
     from app import bootstrap
     from app.knowledge import KnowledgeManifestV1, RepositorySnapshotV1
-    from app.ollama_readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
+    from app.platform.ollama.readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
 
     paths = _paths(tmp_path)
     _write_balanced_ollama_config(paths)
@@ -994,8 +994,8 @@ def test_macos_ready_ai_status_uses_the_darwin_executor(
     )
     monkeypatch.setattr("app.knowledge.read_store", lambda _path: ((), manifest))
     monkeypatch.setattr("app.knowledge.committed_snapshot", lambda _root: snapshot)
-    monkeypatch.setattr("app.ollama_readiness.OllamaReadinessProbe", Probe)
-    monkeypatch.setattr("app.macos_ollama.MacOllamaInstallerV1", Installer)
+    monkeypatch.setattr("app.platform.ollama.readiness.OllamaReadinessProbe", Probe)
+    monkeypatch.setattr("app.platform.ollama.macos.MacOllamaInstallerV1", Installer)
     status = collect_status(paths)
     assert _component(status, "AI_PROVIDER").state == ComponentStateV1.READY
     assert _component(status, "AI_MODEL").state == ComponentStateV1.READY
@@ -1007,7 +1007,7 @@ def test_status_provider_down_and_missing_model_get_current_remediation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from app import bootstrap
-    from app.ollama_readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
+    from app.platform.ollama.readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
 
     paths = _paths(tmp_path)
     _write_balanced_ollama_config(paths)
@@ -1038,8 +1038,8 @@ def test_status_provider_down_and_missing_model_get_current_remediation(
         def model_available(self, _model: str) -> bool:
             raise AssertionError("model check while down")
 
-    monkeypatch.setattr("app.ollama_readiness.OllamaReadinessProbe", Probe)
-    monkeypatch.setattr("app.windows_ollama.WindowsOllamaInstallerV1", Installer)
+    monkeypatch.setattr("app.platform.ollama.readiness.OllamaReadinessProbe", Probe)
+    monkeypatch.setattr("app.platform.ollama.windows.WindowsOllamaInstallerV1", Installer)
     status = collect_status(paths)
     assert _component(status, "AI_PROVIDER").state == ComponentStateV1.DEGRADED
     assert status.overall_state != InstallationStateV1.READY
@@ -1048,7 +1048,7 @@ def test_status_provider_down_and_missing_model_get_current_remediation(
     }
 
     monkeypatch.setattr(
-        "app.ollama_readiness.OllamaReadinessProbe",
+        "app.platform.ollama.readiness.OllamaReadinessProbe",
         lambda: type(
             "Probe",
             (),

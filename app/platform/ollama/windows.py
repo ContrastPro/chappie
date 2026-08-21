@@ -3,19 +3,21 @@
 from __future__ import annotations
 
 import os
-import re
 import shutil
 import ssl
 import subprocess
 import tempfile
 import time
 import urllib.request
-from dataclasses import dataclass
-from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
 from app.ai.schemas import digest
+from app.platform.ollama.contracts import (
+    MODEL_RE,
+    ExternalActionResultV1,
+    ExternalActionStatusV1,
+)
 
 WINDOWS_OLLAMA_POLICY_IDENTITY = "ollama_windows_install_policy/1.0.0"
 WINDOWS_OLLAMA_SETUP_URL = "https://ollama.com/download/OllamaSetup.exe"
@@ -28,28 +30,6 @@ WINDOWS_OLLAMA_POLICY_DIGEST = digest(
         "integrity": "OFFICIAL_SOURCE_TLS_ONLY",
     }
 )
-MODEL_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*(?::[a-z0-9][a-z0-9._-]*)?$")
-
-
-class ExternalActionStatusV1(StrEnum):
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
-    CANCELLED = "CANCELLED"
-    MANUAL_FOLLOWUP = "MANUAL_FOLLOWUP"
-
-
-@dataclass(frozen=True, slots=True)
-class ExternalActionResultV1:
-    action: str
-    status: ExternalActionStatusV1
-    platform: str
-    source: str
-    version: str | None = None
-    duration_ms: int = 0
-    requires_restart: bool = False
-    requires_relogin: bool = False
-    requires_manual_followup: bool = False
-    error_code: str | None = None
 
 
 class CommandRunner(Protocol):

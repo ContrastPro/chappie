@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import shutil
 import subprocess
 import tempfile
@@ -12,7 +11,11 @@ from pathlib import Path
 import httpx
 
 from app.ai.schemas import digest
-from app.windows_ollama import ExternalActionResultV1, ExternalActionStatusV1
+from app.platform.ollama.contracts import (
+    MODEL_RE,
+    ExternalActionResultV1,
+    ExternalActionStatusV1,
+)
 
 MACOS_OLLAMA_POLICY_IDENTITY = "ollama_macos_install_policy/1.0.0"
 MACOS_OLLAMA_DMG_URL = "https://ollama.com/download/Ollama.dmg"
@@ -25,7 +28,6 @@ MACOS_OLLAMA_POLICY_DIGEST = digest(
         "integrity": "OFFICIAL_SOURCE_TLS_ONLY",
     }
 )
-MODEL_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*(?::[a-z0-9][a-z0-9._-]*)?$")
 
 
 class MacOllamaInstallError(RuntimeError):

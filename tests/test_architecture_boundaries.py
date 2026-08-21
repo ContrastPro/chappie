@@ -24,10 +24,10 @@ from app.control_plane_transport import (
 )
 from app.knowledge import KNOWLEDGE_CONTRACT_DIGEST, KNOWLEDGE_IDENTITY, SOURCE_ALLOWLIST
 from app.knowledge_retrieval import RETRIEVAL_CONTRACT_DIGEST, RETRIEVAL_IDENTITY
-from app.macos_ollama import MACOS_OLLAMA_POLICY_DIGEST, MACOS_OLLAMA_POLICY_IDENTITY
+from app.platform.ollama.macos import MACOS_OLLAMA_POLICY_DIGEST, MACOS_OLLAMA_POLICY_IDENTITY
+from app.platform.ollama.windows import WINDOWS_OLLAMA_POLICY_DIGEST, WINDOWS_OLLAMA_POLICY_IDENTITY
 from app.project_qa_setup_smoke import PROJECT_QA_SETUP_SMOKE_IDENTITY
 from app.setup_engine import SETUP_ENGINE_DIGEST, SETUP_ENGINE_IDENTITY
-from app.windows_ollama import WINDOWS_OLLAMA_POLICY_DIGEST, WINDOWS_OLLAMA_POLICY_IDENTITY
 
 ROOT = Path(__file__).parents[1]
 APP = ROOT / "app"
@@ -42,14 +42,10 @@ ROOT_MODULE_ALLOWLIST = frozenset(
         "control_plane_transport.py",
         "knowledge.py",
         "knowledge_retrieval.py",
-        "macos_ollama.py",
-        "ollama_readiness.py",
-        "ollama_start.py",
         "project_qa_setup_smoke.py",
         "research_methodology.py",
         "setup_engine.py",
         "vscode_integration.py",
-        "windows_ollama.py",
         "workspace_context.py",
     }
 )
@@ -115,6 +111,10 @@ COMPLETED_DIRECT_MIGRATIONS = {
     "app.research.intelligence.universe": "COMPLETED_DIRECT_MIGRATION",
     "app.foundation.config": "COMPLETED_DIRECT_MIGRATION",
     "app.foundation.logging": "COMPLETED_DIRECT_MIGRATION",
+    "app.platform.ollama.macos": "COMPLETED_DIRECT_MIGRATION",
+    "app.platform.ollama.readiness": "COMPLETED_DIRECT_MIGRATION",
+    "app.platform.ollama.start": "COMPLETED_DIRECT_MIGRATION",
+    "app.platform.ollama.windows": "COMPLETED_DIRECT_MIGRATION",
     "app.runtime.application": "COMPLETED_DIRECT_MIGRATION",
     "app.runtime.status": "COMPLETED_DIRECT_MIGRATION",
     "app.runtime.trader": "COMPLETED_DIRECT_MIGRATION",
@@ -251,7 +251,11 @@ def test_completed_direct_migrations_have_only_canonical_paths() -> None:
     assert not (APP / "strategy_long_history.py").exists()
     assert not (APP / "strategy_walk_forward.py").exists()
     assert not (APP / "application.py").exists()
+    assert not (APP / "macos_ollama.py").exists()
+    assert not (APP / "ollama_readiness.py").exists()
+    assert not (APP / "ollama_start.py").exists()
     assert not (APP / "server_status.py").exists()
+    assert not (APP / "windows_ollama.py").exists()
     for module in COMPLETED_DIRECT_MIGRATIONS:
         assert importlib.util.find_spec(module) is not None
 
@@ -325,6 +329,35 @@ def test_foundation_does_not_import_upward_runtime_or_domain_packages() -> None:
         for path in (APP / "foundation").glob("*.py")
         for imported in _imports(path)
         if _matches(imported, upward_prefixes)
+    }
+    assert violations == {}
+
+
+def test_platform_ollama_does_not_import_runtime_or_authority_packages() -> None:
+    forbidden_prefixes = (
+        "app.runtime",
+        "app.control_plane",
+        "app.coordination",
+        "app.exchange_execution",
+        "app.exchange_runtime",
+        "app.execution",
+        "app.infrastructure",
+        "app.market",
+        "app.paper",
+        "app.persistence",
+        "app.portfolio",
+        "app.research",
+        "app.risk",
+        "app.shadow",
+        "app.strategies",
+        "app.tools",
+        "app.trading",
+    )
+    violations = {
+        _module_name(path): imported
+        for path in (APP / "platform" / "ollama").rglob("*.py")
+        for imported in _imports(path)
+        if _matches(imported, forbidden_prefixes)
     }
     assert violations == {}
 

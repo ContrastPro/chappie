@@ -2,7 +2,7 @@ import subprocess
 
 import pytest
 
-from app.windows_ollama import (
+from app.platform.ollama.windows import (
     WINDOWS_OLLAMA_POLICY_DIGEST,
     WINDOWS_OLLAMA_POLICY_IDENTITY,
     WindowsOllamaInstallerV1,
@@ -27,7 +27,7 @@ def test_policy_and_external_denial(tmp_path):
 
 
 def test_installer_and_model_commands_use_argv(tmp_path, monkeypatch):
-    monkeypatch.setattr("app.windows_ollama.shutil.which", lambda _: None)
+    monkeypatch.setattr("app.platform.ollama.windows.shutil.which", lambda _: None)
     executable = tmp_path / "Programs" / "Ollama" / "ollama.exe"
     executable.parent.mkdir(parents=True)
     executable.touch()
@@ -40,7 +40,7 @@ def test_installer_and_model_commands_use_argv(tmp_path, monkeypatch):
 
 
 def test_streamed_model_pull_finishes_with_a_clean_newline(tmp_path, monkeypatch, capsys):
-    monkeypatch.setattr("app.windows_ollama.shutil.which", lambda _: None)
+    monkeypatch.setattr("app.platform.ollama.windows.shutil.which", lambda _: None)
     executable = tmp_path / "Programs" / "Ollama" / "ollama.exe"
     executable.parent.mkdir(parents=True)
     executable.touch()
@@ -55,7 +55,7 @@ def test_streamed_model_pull_finishes_with_a_clean_newline(tmp_path, monkeypatch
 
 
 def test_non_interactive_model_pull_captures_output_for_machine_mode(tmp_path, monkeypatch):
-    monkeypatch.setattr("app.windows_ollama.shutil.which", lambda _: None)
+    monkeypatch.setattr("app.platform.ollama.windows.shutil.which", lambda _: None)
     executable = tmp_path / "Programs" / "Ollama" / "ollama.exe"
     executable.parent.mkdir(parents=True)
     executable.touch()
@@ -87,7 +87,7 @@ def test_non_interactive_installer_launch_captures_console_output(tmp_path):
 
 
 def test_model_availability_requires_exact_identity(tmp_path, monkeypatch):
-    monkeypatch.setattr("app.windows_ollama.shutil.which", lambda _: None)
+    monkeypatch.setattr("app.platform.ollama.windows.shutil.which", lambda _: None)
     executable = tmp_path / "Programs" / "Ollama" / "ollama.exe"
     executable.parent.mkdir(parents=True)
     executable.touch()

@@ -6,13 +6,14 @@ from pathlib import Path
 import pytest
 
 from app.bootstrap import ChappiePaths
-from app.macos_ollama import (
+from app.platform.ollama.contracts import ExternalActionResultV1, ExternalActionStatusV1
+from app.platform.ollama.macos import (
     MACOS_OLLAMA_DMG_URL,
     MACOS_OLLAMA_POLICY_DIGEST,
     MACOS_OLLAMA_POLICY_IDENTITY,
     MacOllamaInstallerV1,
 )
-from app.ollama_readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
+from app.platform.ollama.readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
 from app.setup_engine import (
     ActionSafetyV1,
     SetupActionCodeV1,
@@ -20,7 +21,6 @@ from app.setup_engine import (
     SetupApprovalV1,
     SetupEngineV1,
 )
-from app.windows_ollama import ExternalActionResultV1, ExternalActionStatusV1
 
 
 def _runner(calls: list[list[str]], mount: Path | None = None):
@@ -54,7 +54,7 @@ def test_policy_is_fixed_tls_only_and_external_denial_is_safe(tmp_path: Path) ->
 def test_current_user_dmg_install_uses_argv_and_discovers_app_cli(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("app.macos_ollama.shutil.which", lambda _: None)
+    monkeypatch.setattr("app.platform.ollama.macos.shutil.which", lambda _: None)
     applications = tmp_path / "Applications"
     calls: list[list[str]] = []
 
@@ -93,7 +93,7 @@ def test_current_user_dmg_install_uses_argv_and_discovers_app_cli(
 def test_model_operations_are_exact_and_argv_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("app.macos_ollama.shutil.which", lambda _: None)
+    monkeypatch.setattr("app.platform.ollama.macos.shutil.which", lambda _: None)
     executable = tmp_path / "Applications" / "Ollama.app" / "Contents" / "Resources" / "ollama"
     executable.parent.mkdir(parents=True)
     executable.touch()
@@ -165,7 +165,7 @@ def test_engine_rejects_macos_installer_claim_without_durable_app(tmp_path: Path
 def test_engine_rejects_durable_macos_provider_when_runtime_is_down(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr("app.macos_ollama.shutil.which", lambda _: None)
+    monkeypatch.setattr("app.platform.ollama.macos.shutil.which", lambda _: None)
     executable = tmp_path / "Applications/Ollama.app/Contents/Resources/ollama"
     executable.parent.mkdir(parents=True)
     executable.touch()
@@ -188,7 +188,7 @@ def test_engine_preserves_delayed_macos_first_launch_as_readiness_timeout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """A durable fresh install that needs longer than polling bound fails closed by stage."""
-    monkeypatch.setattr("app.macos_ollama.shutil.which", lambda _: None)
+    monkeypatch.setattr("app.platform.ollama.macos.shutil.which", lambda _: None)
     executable = tmp_path / "Applications/Ollama.app/Contents/Resources/ollama"
 
     class Installer(MacOllamaInstallerV1):
@@ -243,7 +243,7 @@ def test_engine_preserves_delayed_macos_first_launch_as_readiness_timeout(
 def test_installation_pipeline_returns_bounded_failure_reason(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str, expected: str
 ) -> None:
-    monkeypatch.setattr("app.macos_ollama.shutil.which", lambda _: None)
+    monkeypatch.setattr("app.platform.ollama.macos.shutil.which", lambda _: None)
     calls: list[list[str]] = []
 
     def downloader(_url: str, destination: Path) -> None:

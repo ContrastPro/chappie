@@ -31,9 +31,10 @@ from app.control_plane_transport import (
     ChappieControlPlaneServerV1,
     ControlPlaneTransportErrorV1,
 )
-from app.macos_ollama import MacOllamaInstallerV1
-from app.ollama_readiness import OllamaReadinessProbe
-from app.ollama_start import OllamaReadinessCoordinatorV1, OllamaRetryPolicyV1
+from app.platform.ollama.macos import MacOllamaInstallerV1
+from app.platform.ollama.readiness import OllamaReadinessProbe
+from app.platform.ollama.start import OllamaReadinessCoordinatorV1, OllamaRetryPolicyV1
+from app.platform.ollama.windows import WindowsOllamaInstallerV1
 from app.project_qa_setup_smoke import ProjectQASetupSmokeV1
 from app.setup_engine import (
     KNOWLEDGE_BUILD_BLOCKED_DIRTY_REPOSITORY,
@@ -45,7 +46,6 @@ from app.setup_engine import (
     SetupEngineV1,
 )
 from app.vscode_integration import VscodeExtensionInstallerV1
-from app.windows_ollama import WindowsOllamaInstallerV1
 
 
 def _launch_current_user_ollama(argv: list[str]) -> None:

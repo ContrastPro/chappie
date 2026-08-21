@@ -1,6 +1,6 @@
 import httpx
 
-from app.ollama_readiness import OllamaReadinessProbe, OllamaReadinessStateV1
+from app.platform.ollama.readiness import OllamaReadinessProbe, OllamaReadinessStateV1
 
 
 def test_ready():

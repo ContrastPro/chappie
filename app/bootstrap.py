@@ -861,7 +861,7 @@ def _ai_provider_status(
             "provider configured; readiness probe unavailable",
             detected=config.provider,
         )
-    from app.ollama_readiness import OllamaReadinessProbe, OllamaReadinessStateV1
+    from app.platform.ollama.readiness import OllamaReadinessProbe, OllamaReadinessStateV1
 
     installer = _ollama_installer(platform_name)
     if installer is None:
@@ -917,11 +917,11 @@ def _ai_provider_status(
 def _ollama_installer(platform_name: str | None = None):
     """Return the current platform's local Ollama inspector, never an installer action."""
     if (platform_name or platform.system()) == "Windows":
-        from app.windows_ollama import WindowsOllamaInstallerV1
+        from app.platform.ollama.windows import WindowsOllamaInstallerV1
 
         return WindowsOllamaInstallerV1(interactive_output=False)
     if (platform_name or platform.system()) == "Darwin":
-        from app.macos_ollama import MacOllamaInstallerV1
+        from app.platform.ollama.macos import MacOllamaInstallerV1
 
         return MacOllamaInstallerV1(interactive_output=False)
     return None

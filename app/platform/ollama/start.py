@@ -6,7 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
-from app.ollama_readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
+from app.platform.ollama.readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
 
 
 @dataclass(frozen=True, slots=True)

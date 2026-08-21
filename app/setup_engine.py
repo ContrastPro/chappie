@@ -28,15 +28,15 @@ from app.bootstrap import (
     SetupStepStateV1,
     load_local_config,
 )
-from app.macos_ollama import MacOllamaInstallerV1
-from app.ollama_readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
+from app.platform.ollama.macos import MacOllamaInstallerV1
+from app.platform.ollama.readiness import OllamaReadinessResultV1, OllamaReadinessStateV1
+from app.platform.ollama.windows import WindowsOllamaInstallerV1
 from app.project_qa_setup_smoke import (
     ProjectQAGroundingReasonV1,
     ProjectQASetupSmokeStateV1,
     ProjectQASetupSmokeV1,
 )
 from app.vscode_integration import VscodeExtensionInstallerV1, VscodeExtensionStateV1
-from app.windows_ollama import WindowsOllamaInstallerV1
 
 SETUP_ENGINE_IDENTITY = "chappie_setup_engine/1.0.0"
 KNOWLEDGE_BUILD_BLOCKED_DIRTY_REPOSITORY = "KNOWLEDGE_BUILD_BLOCKED_DIRTY_REPOSITORY"
