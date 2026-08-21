@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Protocol
 
 from app.ai.errors import AIError, AIProviderTimeoutError, AIValidationError
 from app.ai.models import ModelResponse
@@ -35,7 +35,6 @@ from app.ai.trace import AITraceEvent, AITraceEventType, display_case_state, tra
 from app.research.paths import results_dir
 
 if TYPE_CHECKING:
-    from app.ai.runtime import ChappieAI
     from app.research.data.store import ResearchStore
 
 
@@ -46,6 +45,15 @@ ACCEPTANCE_THRESHOLDS = {
     "unsafe_unsupported_cause_rate": 0.0,
     "weak_forecast_skill_exclusive": 0.05,
 }
+
+
+class BenchmarkAI(Protocol):
+    """Narrow AI facade consumed by offline benchmark evaluation."""
+
+    router: Any
+    config: Any
+
+    def generate(self, **kwargs: Any) -> ModelResponse: ...
 
 
 class BenchmarkTrack(StrEnum):
@@ -916,7 +924,7 @@ def write_aggregate_report(root: Path, runs: tuple[BenchmarkRunV1, ...]) -> Path
 
 
 def execute_case(
-    ai: ChappieAI,
+    ai: BenchmarkAI,
     case: BenchmarkCaseV1,
     *,
     root: Path | None = None,
@@ -1096,7 +1104,7 @@ def execute_case(
 
 
 def execute_case_isolated(
-    ai: ChappieAI,
+    ai: BenchmarkAI,
     case: BenchmarkCaseV1,
     *,
     root: Path | None = None,

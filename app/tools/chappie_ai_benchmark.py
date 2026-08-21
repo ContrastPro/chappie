@@ -7,7 +7,7 @@ import json
 import sys
 from pathlib import Path
 
-from app.ai.benchmark import (
+from app.ai.evaluation.benchmark import (
     BenchmarkTrack,
     TemporalSplit,
     benchmark_root,

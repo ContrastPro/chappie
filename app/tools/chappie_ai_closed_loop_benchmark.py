@@ -9,7 +9,8 @@ import time
 from collections.abc import Sequence
 from pathlib import Path
 
-from app.ai.closed_loop_calibration import (
+from app.ai.errors import AIError
+from app.ai.evaluation.closed_loop_calibration import (
     CALIBRATION_BENCHMARK_IDENTITY,
     aggregate_calibration_scores,
     calibration_attempt,
@@ -24,7 +25,6 @@ from app.ai.closed_loop_calibration import (
     write_run,
     write_v11_run,
 )
-from app.ai.errors import AIError
 from app.ai.providers import OllamaProvider
 from app.ai.router import ModelRouter
 from app.ai.runtime import AIConfig, ChappieAI

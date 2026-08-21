@@ -7,7 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from app.ai.benchmark import (
+from app.ai.errors import AIProviderError
+from app.ai.evaluation.benchmark import (
     BENCHMARK_IDENTITY,
     BenchmarkCaseV1,
     BenchmarkResultClass,
@@ -34,7 +35,6 @@ from app.ai.benchmark import (
     write_aggregate_report,
     write_case_manifest,
 )
-from app.ai.errors import AIProviderError
 from app.ai.providers import MockMode, MockProvider
 from app.ai.research.reasoning import parse_research_reasoning_output
 from app.ai.router import ModelRouter

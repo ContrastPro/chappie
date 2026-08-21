@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from app.ai.closed_loop_calibration import (
+from app.ai.errors import AIValidationError
+from app.ai.evaluation.closed_loop_calibration import (
     CALIBRATION_BENCHMARK_IDENTITY,
     CALIBRATION_V11_BENCHMARK_IDENTITY,
     V10_AGGREGATE_SCORE_KEYS,
@@ -31,7 +32,6 @@ from app.ai.closed_loop_calibration import (
     write_run,
     write_v11_run,
 )
-from app.ai.errors import AIValidationError
 from app.ai.prompts import prompt_digest
 from app.ai.providers.mock import MockProvider
 from app.ai.research.evidence_review import EvidenceAssessmentV1, parse_research_evidence_critique

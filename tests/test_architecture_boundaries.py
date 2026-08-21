@@ -90,6 +90,26 @@ AI_RESEARCH_FORBIDDEN_PREFIXES = (
     "app.tools",
     "app.trading",
 )
+AI_EVALUATION_FORBIDDEN_PREFIXES = (
+    "app.ai.runtime",
+    "app.platform",
+    "app.control_plane",
+    "app.runtime",
+    "app.coordination",
+    "app.exchange_execution",
+    "app.exchange_runtime",
+    "app.execution",
+    "app.infrastructure",
+    "app.market",
+    "app.paper",
+    "app.persistence",
+    "app.portfolio",
+    "app.risk",
+    "app.shadow",
+    "app.strategies",
+    "app.tools",
+    "app.trading",
+)
 
 # Future moves are intentionally classified before wrappers are created.
 COMPATIBILITY_MAP = {
@@ -151,6 +171,8 @@ COMPLETED_DIRECT_MIGRATIONS = {
     "app.ai.research.query_compiler": "COMPLETED_DIRECT_MIGRATION",
     "app.ai.research.query_executor": "COMPLETED_DIRECT_MIGRATION",
     "app.ai.research.reasoning": "COMPLETED_DIRECT_MIGRATION",
+    "app.ai.evaluation.benchmark": "COMPLETED_DIRECT_MIGRATION",
+    "app.ai.evaluation.closed_loop_calibration": "COMPLETED_DIRECT_MIGRATION",
     "app.research.strategy.history": "COMPLETED_DIRECT_MIGRATION",
     "app.research.strategy.lab": "COMPLETED_DIRECT_MIGRATION",
     "app.research.strategy.long_history": "COMPLETED_DIRECT_MIGRATION",
@@ -306,6 +328,8 @@ def test_completed_direct_migrations_have_only_canonical_paths() -> None:
     assert not (APP / "ai" / "rde_execution_cache.py").exists()
     assert not (APP / "ai" / "rde_execution_contracts.py").exists()
     assert not (APP / "ai" / "rde_query_executor.py").exists()
+    assert not (APP / "ai" / "benchmark.py").exists()
+    assert not (APP / "ai" / "closed_loop_calibration.py").exists()
     for module in COMPLETED_DIRECT_MIGRATIONS:
         assert importlib.util.find_spec(module) is not None
 
@@ -544,6 +568,16 @@ def test_ai_research_does_not_import_platform_or_authority_packages() -> None:
         for path in (APP / "ai" / "research").rglob("*.py")
         for imported in _imports(path)
         if _matches(imported, AI_RESEARCH_FORBIDDEN_PREFIXES)
+    }
+    assert violations == {}
+
+
+def test_ai_evaluation_does_not_import_platform_or_authority_packages() -> None:
+    violations = {
+        _module_name(path): imported
+        for path in (APP / "ai" / "evaluation").rglob("*.py")
+        for imported in _imports(path)
+        if _matches(imported, AI_EVALUATION_FORBIDDEN_PREFIXES)
     }
     assert violations == {}
 
