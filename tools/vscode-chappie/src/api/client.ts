@@ -19,6 +19,9 @@ export class ControlPlaneIncompatibleError extends ControlPlaneClientError {}
 export class ControlPlaneDependencyError extends ControlPlaneClientError {
   public constructor(public readonly reasonCode: string) { super(reasonCode); }
 }
+export class ControlPlaneRequestError extends ControlPlaneClientError {
+  public constructor(public readonly reasonCode: string, message: string) { super(message); }
+}
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -93,6 +96,9 @@ export class ChappieControlPlaneClient {
         if (response.status === 503 && isRecord(error) && typeof error.code === "string") {
           throw new ControlPlaneDependencyError(error.code);
         }
+        if (response.status === 400 && isRecord(error) && typeof error.code === "string" && typeof error.message === "string") {
+          throw new ControlPlaneRequestError(error.code, projectQaRequestFailureMessage(error.code, error.message));
+        }
         throw new ControlPlaneClientError(`Control Plane returned HTTP ${response.status}`);
       }
       if (!isEnvelope(value)) { throw new ControlPlaneClientError("Control Plane returned a malformed envelope"); }
@@ -105,6 +111,13 @@ export class ChappieControlPlaneClient {
       clearTimeout(timer);
     }
   }
+}
+
+function projectQaRequestFailureMessage(code: string, fallback: string): string {
+  if (code === "PROJECT_QA_REQUEST_TOO_LARGE") return `Question exceeds the ${PROJECT_QA_MAX_REQUEST_CHARACTERS}-character Project QA request limit.`;
+  if (code === "REQUEST_BODY_TOO_LARGE") return "This request exceeds the Control Plane transport budget. Shorten the question or remove attached context.";
+  if (code === "INVALID_PROJECT_QA_QUESTION") return "Project QA requires a non-empty question.";
+  return fallback;
 }
 
 function parseProjectQA(value: unknown): ProjectQAResponseV1 {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import test from "node:test";
-import { ChappieControlPlaneClient, CONTROL_PLANE_HEALTH_TIMEOUT_MS, CONTROL_PLANE_REFRESH_TIMEOUT_MS, ControlPlaneClientError, ControlPlaneDependencyError, ControlPlaneIncompatibleError, PROJECT_QA_HTTP_TIMEOUT_MS } from "../api/client";
+import { ChappieControlPlaneClient, CONTROL_PLANE_HEALTH_TIMEOUT_MS, CONTROL_PLANE_REFRESH_TIMEOUT_MS, ControlPlaneClientError, ControlPlaneDependencyError, ControlPlaneIncompatibleError, ControlPlaneRequestError, PROJECT_QA_HTTP_TIMEOUT_MS, PROJECT_QA_MAX_REQUEST_CHARACTERS } from "../api/client";
 import { capabilitySummary, contextPreview, humanState, projectChatAvailability, projectQaFailureMessage, setupActionLabel } from "../ui/presentation";
 import { StatusRefreshGateV1 } from "../ui/status";
 import { CONTROL_PLANE_DIGEST, CONTROL_PLANE_IDENTITY, TRANSPORT_DIGEST, TRANSPORT_IDENTITY } from "../api/contracts";
@@ -201,6 +201,38 @@ test("compact presentation translates states and only renders selected safe cont
   assert.equal(humanState("READY"), "Ready");
   assert.equal(contextPreview({ active_file_relative_path: "app/control_plane.py", selected_text_range: { start_line: 119, end_line: 137 }, excerpt_range: null, git_branch: "main", git_dirty: true }), "app/control_plane.py · Lines 120–138\nGit · main · dirty");
   assert.equal(contextPreview(undefined), "");
+});
+
+test("Project QA preserves the public request boundary without truncation", async () => {
+  const requests: string[] = [];
+  const client = new ChappieControlPlaneClient(8765, async (_url, init) => {
+    requests.push(String(init?.body));
+    return envelope({ answer: "grounded", unknowns: [], supporting_records: [] });
+  });
+  await client.askProject("short request");
+  const exact = "q".repeat(PROJECT_QA_MAX_REQUEST_CHARACTERS);
+  await client.askProject(exact);
+  assert.equal(JSON.parse(requests[1]).question.length, PROJECT_QA_MAX_REQUEST_CHARACTERS);
+  await assert.rejects(
+    () => client.askProject("q".repeat(PROJECT_QA_MAX_REQUEST_CHARACTERS + 1)),
+    /Project question must be between 1 and 12000 characters/,
+  );
+  assert.equal(requests.length, 2);
+});
+
+test("typed Project QA HTTP 400 reasons are preserved for the Workbench", async () => {
+  const oversized = JSON.stringify({
+    transport_contract: TRANSPORT_IDENTITY,
+    transport_contract_digest: TRANSPORT_DIGEST,
+    control_plane_contract: CONTROL_PLANE_IDENTITY,
+    control_plane_contract_digest: CONTROL_PLANE_DIGEST,
+    request_id: "a".repeat(32), status: "ERROR", data: null,
+    error: { code: "REQUEST_BODY_TOO_LARGE", message: "Project QA request exceeds the Control Plane transport budget" },
+  });
+  await assert.rejects(
+    () => new ChappieControlPlaneClient(8765, async () => new Response(oversized, { status: 400, headers: { "content-type": "application/json" } })).askProject("Deep architecture request"),
+    (error: unknown) => error instanceof ControlPlaneRequestError && error.reasonCode === "REQUEST_BODY_TOO_LARGE" && error.message === "This request exceeds the Control Plane transport budget. Shorten the question or remove attached context.",
+  );
 });
 
 test("late status refreshes cannot overwrite the newest canonical snapshot", () => {

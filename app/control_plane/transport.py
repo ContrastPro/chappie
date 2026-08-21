@@ -15,6 +15,10 @@ from app.control_plane.service import CONTROL_PLANE_CONTRACT_DIGEST, CONTROL_PLA
 CONTROL_PLANE_TRANSPORT_IDENTITY = "chappie_control_plane_transport/1.2.0"
 LOOPBACK_HOST = "127.0.0.1"
 DEFAULT_CONTROL_PLANE_PORT = 8765
+# This bounds one complete JSON request, not the Project QA question itself.  It
+# covers the 12k-character question and the independently bounded optional
+# workspace context without making either value silently shorter at transport.
+PROJECT_QA_MAX_REQUEST_BODY_BYTES = 128 * 1024
 CONTROL_PLANE_TRANSPORT_DIGEST = digest(
     {
         "identity": CONTROL_PLANE_TRANSPORT_IDENTITY,
@@ -221,8 +225,37 @@ class ChappieControlPlaneServerV1:
             return
         try:
             content_length = int(handler.headers.get("Content-Length", ""))
-            if content_length < 1 or content_length > 2048:
-                raise ValueError
+        except ValueError:
+            self._write(
+                handler,
+                400,
+                _envelope(
+                    request_id=request_id,
+                    error=ControlPlaneTransportErrorV1(
+                        "INVALID_REQUEST", "Project QA request must contain one bounded question"
+                    ),
+                ),
+            )
+            return
+        if content_length < 1 or content_length > PROJECT_QA_MAX_REQUEST_BODY_BYTES:
+            # Drain a bounded near-limit body before replying so Windows clients can
+            # receive the typed envelope instead of a connection reset.  Never
+            # buffer an arbitrarily claimed body length.
+            if content_length <= PROJECT_QA_MAX_REQUEST_BODY_BYTES * 2:
+                handler.rfile.read(content_length)
+            self._write(
+                handler,
+                400,
+                _envelope(
+                    request_id=request_id,
+                    error=ControlPlaneTransportErrorV1(
+                        "REQUEST_BODY_TOO_LARGE",
+                        "Project QA request exceeds the Control Plane transport budget",
+                    ),
+                ),
+            )
+            return
+        try:
             value = json.loads(handler.rfile.read(content_length))
             if (
                 not isinstance(value, dict)

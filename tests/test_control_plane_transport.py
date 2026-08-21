@@ -21,6 +21,7 @@ from app.control_plane.transport import (
     CONTROL_PLANE_TRANSPORT_DIGEST,
     CONTROL_PLANE_TRANSPORT_IDENTITY,
     LOOPBACK_HOST,
+    PROJECT_QA_MAX_REQUEST_BODY_BYTES,
     ChappieControlPlaneServerV1,
     ControlPlaneTransportErrorV1,
 )
@@ -155,6 +156,24 @@ def test_project_qa_post_is_strict_and_serializes_grounded_response(server) -> N
     status, _headers, body = _request(server, "POST", "/v1/project/qa", "{")
     assert status == 400
     assert body["error"]["code"] == "INVALID_REQUEST"
+
+
+def test_project_qa_transport_accepts_the_canonical_deep_question_boundary(server) -> None:
+    body = json.dumps({"question": "architecture " * 1_000})
+    assert len(body.encode("utf-8")) > 2_048
+    status, _headers, response = _request(server, "POST", "/v1/project/qa", body)
+    assert status == 200
+    assert response["data"]["answer"] == "RDE owns evidence authority."
+
+
+def test_project_qa_transport_rejects_only_a_request_above_its_explicit_body_budget(server) -> None:
+    body = "x" * (PROJECT_QA_MAX_REQUEST_BODY_BYTES + 1)
+    status, _headers, response = _request(server, "POST", "/v1/project/qa", body)
+    assert status == 400
+    assert response["error"] == {
+        "code": "REQUEST_BODY_TOO_LARGE",
+        "message": "Project QA request exceeds the Control Plane transport budget",
+    }
     status, _headers, body = _request(
         server,
         "POST",
