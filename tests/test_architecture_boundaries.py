@@ -18,7 +18,7 @@ from app.ai.market_semantics import MARKET_SEMANTICS_IDENTITY
 from app.ai.project_qa import PROJECT_QA_IDENTITY
 from app.ai.research_reasoning import RESEARCH_REASONING_IDENTITY, RESEARCH_REASONING_V111_IDENTITY
 from app.control_plane import CONTROL_PLANE_CONTRACT_DIGEST, CONTROL_PLANE_IDENTITY
-from app.control_plane_transport import (
+from app.control_plane.transport import (
     CONTROL_PLANE_TRANSPORT_DIGEST,
     CONTROL_PLANE_TRANSPORT_IDENTITY,
 )
@@ -36,10 +36,7 @@ APP = ROOT / "app"
 # the approved package tree. cli.py and main.py are stable adapters, not debt.
 ROOT_MODULE_ALLOWLIST = frozenset(
     {
-        "control_plane.py",
-        "control_plane_transport.py",
         "research_methodology.py",
-        "workspace_context.py",
     }
 )
 STABLE_ROOT_ADAPTERS = frozenset({"cli.py", "main.py"})
@@ -83,7 +80,10 @@ COMPATIBILITY_MAP = {
     "app.knowledge": "STABLE_PACKAGE_API",
     "app.knowledge.store": "CANONICAL_IMPLEMENTATION",
     "app.knowledge.retrieval": "CANONICAL_IMPLEMENTATION",
-    "app.control_plane": "TEMPORARY_COMPATIBILITY_WRAPPER",
+    "app.control_plane": "STABLE_PACKAGE_API",
+    "app.control_plane.service": "CANONICAL_IMPLEMENTATION",
+    "app.control_plane.transport": "CANONICAL_IMPLEMENTATION",
+    "app.control_plane.workspace_context": "CANONICAL_IMPLEMENTATION",
     "app.tools.*": "TEMPORARY_COMPATIBILITY_WRAPPER",
 }
 COMPLETED_DIRECT_MIGRATIONS = {
@@ -106,6 +106,9 @@ COMPLETED_DIRECT_MIGRATIONS = {
     "app.research.intelligence.universe": "COMPLETED_DIRECT_MIGRATION",
     "app.foundation.config": "COMPLETED_DIRECT_MIGRATION",
     "app.foundation.logging": "COMPLETED_DIRECT_MIGRATION",
+    "app.control_plane.service": "COMPLETED_DIRECT_MIGRATION",
+    "app.control_plane.transport": "COMPLETED_DIRECT_MIGRATION",
+    "app.control_plane.workspace_context": "COMPLETED_DIRECT_MIGRATION",
     "app.knowledge.retrieval": "COMPLETED_DIRECT_MIGRATION",
     "app.knowledge.store": "COMPLETED_DIRECT_MIGRATION",
     "app.platform.ollama.macos": "COMPLETED_DIRECT_MIGRATION",
@@ -256,6 +259,7 @@ def test_completed_direct_migrations_have_only_canonical_paths() -> None:
     assert not (APP / "application.py").exists()
     assert not (APP / "ai_setup_smoke.py").exists()
     assert not (APP / "bootstrap.py").exists()
+    assert not (APP / "control_plane_transport.py").exists()
     assert not (APP / "macos_ollama.py").exists()
     assert not (APP / "ollama_readiness.py").exists()
     assert not (APP / "ollama_start.py").exists()
@@ -264,6 +268,7 @@ def test_completed_direct_migrations_have_only_canonical_paths() -> None:
     assert not (APP / "setup_engine.py").exists()
     assert not (APP / "vscode_integration.py").exists()
     assert not (APP / "windows_ollama.py").exists()
+    assert not (APP / "workspace_context.py").exists()
     for module in COMPLETED_DIRECT_MIGRATIONS:
         assert importlib.util.find_spec(module) is not None
 
@@ -452,6 +457,34 @@ def test_knowledge_does_not_import_platform_or_runtime_authority() -> None:
     violations = {
         _module_name(path): imported
         for path in (APP / "knowledge").rglob("*.py")
+        for imported in _imports(path)
+        if _matches(imported, forbidden_prefixes)
+    }
+    assert violations == {}
+
+
+def test_control_plane_does_not_import_runtime_or_execution_authority() -> None:
+    forbidden_prefixes = (
+        "app.runtime",
+        "app.coordination",
+        "app.exchange_execution",
+        "app.exchange_runtime",
+        "app.execution",
+        "app.infrastructure",
+        "app.market",
+        "app.paper",
+        "app.persistence",
+        "app.portfolio",
+        "app.research",
+        "app.risk",
+        "app.shadow",
+        "app.strategies",
+        "app.tools",
+        "app.trading",
+    )
+    violations = {
+        _module_name(path): imported
+        for path in (APP / "control_plane").rglob("*.py")
         for imported in _imports(path)
         if _matches(imported, forbidden_prefixes)
     }

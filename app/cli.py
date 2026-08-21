@@ -10,8 +10,8 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import ClassVar
 
-from app.control_plane import ChappieControlPlaneV1
-from app.control_plane_transport import (
+from app.control_plane.service import ChappieControlPlaneV1
+from app.control_plane.transport import (
     CONTROL_PLANE_TRANSPORT_IDENTITY,
     DEFAULT_CONTROL_PLANE_PORT,
     ChappieControlPlaneServerV1,

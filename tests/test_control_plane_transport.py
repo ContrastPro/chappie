@@ -17,7 +17,7 @@ from app.control_plane import (
     ProjectQASourceV1,
     ProjectQAStateV1,
 )
-from app.control_plane_transport import (
+from app.control_plane.transport import (
     CONTROL_PLANE_TRANSPORT_DIGEST,
     CONTROL_PLANE_TRANSPORT_IDENTITY,
     LOOPBACK_HOST,

@@ -9,7 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
 from app.ai.schemas import canonical_json, digest
-from app.control_plane import CONTROL_PLANE_CONTRACT_DIGEST, CONTROL_PLANE_IDENTITY
+from app.control_plane.service import CONTROL_PLANE_CONTRACT_DIGEST, CONTROL_PLANE_IDENTITY
 
 CONTROL_PLANE_TRANSPORT_IDENTITY = "chappie_control_plane_transport/1.2.0"
 LOOPBACK_HOST = "127.0.0.1"

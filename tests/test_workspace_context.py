@@ -2,7 +2,11 @@ from datetime import UTC, datetime
 
 import pytest
 
-from app.workspace_context import WorkspaceContextV1, WorkspaceRangeV1, parse_workspace_context
+from app.control_plane.workspace_context import (
+    WorkspaceContextV1,
+    WorkspaceRangeV1,
+    parse_workspace_context,
+)
 
 
 def _context() -> WorkspaceContextV1:

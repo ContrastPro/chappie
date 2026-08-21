@@ -417,7 +417,7 @@ class ChappieControlPlaneV1:
                 ),
             )
         try:
-            from app.workspace_context import parse_workspace_context
+            from app.control_plane.workspace_context import parse_workspace_context
 
             context = (
                 parse_workspace_context(workspace_context)
