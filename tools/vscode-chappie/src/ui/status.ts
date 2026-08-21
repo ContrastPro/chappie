@@ -2,56 +2,24 @@ import * as vscode from "vscode";
 import { ConnectionState, ControlPlaneAIStatusV1, ControlPlaneCapabilitiesV1, ControlPlaneStatusV1 } from "../api/contracts";
 import { capabilitySummary, humanState } from "./presentation";
 
-export interface StatusSnapshotV1 {
-  status?: ControlPlaneStatusV1;
-  ai?: ControlPlaneAIStatusV1;
-  capabilities?: ControlPlaneCapabilitiesV1;
-}
+export interface StatusSnapshotV1 { status?: ControlPlaneStatusV1; ai?: ControlPlaneAIStatusV1; capabilities?: ControlPlaneCapabilitiesV1; }
+type SidebarActionV1 = "newChat" | "openWorkbench" | "projectQa" | "refresh" | "diagnostics";
 
-export class ChappieStatusTreeV1 implements vscode.TreeDataProvider<vscode.TreeItem> {
-  private readonly changed = new vscode.EventEmitter<void>();
-  public readonly onDidChangeTreeData = this.changed.event;
+export class ChappieStatusSidebarV1 implements vscode.WebviewViewProvider {
+  private view: vscode.WebviewView | undefined;
   private state: ConnectionState = "DISCONNECTED";
   private snapshot: StatusSnapshotV1 = {};
-
-  public update(state: ConnectionState, snapshot: StatusSnapshotV1 = {}): void {
-    this.state = state;
-    this.snapshot = snapshot;
-    this.changed.fire();
+  public constructor(private readonly runAction: (action: SidebarActionV1) => void) {}
+  public resolveWebviewView(view: vscode.WebviewView): void {
+    this.view = view; view.webview.options = { enableScripts: true };
+    view.webview.html = sidebarHtml();
+    view.webview.onDidReceiveMessage((value: unknown) => { if (isAction(value)) this.runAction(value.action); });
+    this.render();
   }
-
-  public getTreeItem(item: vscode.TreeItem): vscode.TreeItem { return item; }
-
-  public getChildren(item?: vscode.TreeItem): vscode.TreeItem[] {
-    if (item) return [];
-    const rows = [
-      `* ${humanState(this.state)}`,
-      `System: ${humanState(String(this.snapshot.status?.status?.overall_state ?? "UNKNOWN"))}`,
-      `AI: ${this.snapshot.ai?.model ?? humanState(this.snapshot.ai?.provider_state)}`,
-      `Knowledge: ${componentState(this.snapshot.status, "KNOWLEDGE")}`,
-      `Capabilities: ${capabilitySummary(this.snapshot.capabilities?.capabilities ?? [])}`,
-      "New Chat",
-      "Open Chappie Workbench",
-      "Project QA",
-      "Health Check",
-      "Diagnostics",
-    ];
-    return rows.map((label) => {
-      const result = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
-      if (label.startsWith("Capabilities:")) result.command = { command: "chappie.showCapabilities", title: "Chappie: Show Capabilities" };
-      if (label === "Open Chappie Workbench") result.command = { command: "chappie.openWorkbench", title: "Chappie: Open Workbench" };
-      if (label === "New Chat") result.command = { command: "chappie.newChat", title: "Chappie: New Chat" };
-      if (label === "Project QA") result.command = { command: "chappie.openWorkbench", title: "Chappie: Project QA" };
-      if (label === "Health Check") result.command = { command: "chappie.refresh", title: "Chappie: Refresh" };
-      if (label === "Diagnostics") result.command = { command: "chappie.showDoctor", title: "Chappie: Show Doctor" };
-      if (label === "System: SETUP_REQUIRED") result.command = { command: "chappie.runSetup", title: "Chappie: Set Up" };
-      return result;
-    });
-  }
+  public update(state: ConnectionState, snapshot: StatusSnapshotV1 = {}): void { this.state = state; this.snapshot = snapshot; this.render(); }
+  private render(): void { void this.view?.webview.postMessage({ type: "render", state: humanState(this.state), ready: this.state === "CONNECTED", system: humanState(String(this.snapshot.status?.status?.overall_state ?? "UNKNOWN")), model: this.snapshot.ai?.model ?? humanState(this.snapshot.ai?.provider_state), knowledge: componentState(this.snapshot.status, "KNOWLEDGE"), capabilities: capabilitySummary(this.snapshot.capabilities?.capabilities ?? []) }); }
 }
 
-function componentState(status: ControlPlaneStatusV1 | undefined, component: string): string {
-  const components = Array.isArray(status?.status?.components) ? status.status.components : [];
-  const found = components.find((item) => typeof item === "object" && item !== null && (item as { component?: string }).component === component) as { state?: string } | undefined;
-  return humanState(found?.state);
-}
+function isAction(value: unknown): value is { type: "action"; action: SidebarActionV1 } { return typeof value === "object" && value !== null && (value as { type?: unknown }).type === "action" && ["newChat", "openWorkbench", "projectQa", "refresh", "diagnostics"].includes(String((value as { action?: unknown }).action)); }
+function componentState(status: ControlPlaneStatusV1 | undefined, component: string): string { const found = (Array.isArray(status?.status?.components) ? status.status.components : []).find((item) => typeof item === "object" && item !== null && (item as { component?: string }).component === component) as { state?: string } | undefined; return humanState(found?.state); }
+function sidebarHtml(): string { const nonce = Math.random().toString(36).slice(2); return `<!doctype html><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'nonce-${nonce}'"><style>:root{font:12px var(--vscode-font-family);color:var(--vscode-foreground)}body{margin:0;padding:12px;background:var(--vscode-sideBar-background)}button{width:100%;text-align:left;border:0;border-radius:5px;padding:8px;color:var(--vscode-foreground);background:transparent;cursor:pointer}button:hover{background:var(--vscode-list-hoverBackground)}.primary{background:var(--vscode-button-background);color:var(--vscode-button-foreground);text-align:center}.group{border-top:1px solid var(--vscode-panel-border);margin-top:14px;padding-top:10px}.title{font-size:11px;font-weight:700;letter-spacing:.04em;color:var(--vscode-descriptionForeground);margin:0 0 6px}.row{display:flex;justify-content:space-between;padding:4px 2px}.good{color:var(--vscode-testing-iconPassed)}.muted{color:var(--vscode-descriptionForeground)}</style><button class="primary" data-action="newChat">＋ New Chat</button><div class="group"><p class="title">CHATS</p><button data-action="openWorkbench">Open Chappie Workbench</button><button data-action="projectQa">Project QA</button></div><div class="group"><p class="title">SYSTEM STATUS</p><div class="row"><span>Chappie</span><strong id="connection">Disconnected</strong></div><div class="row"><span>System</span><strong id="system">Unknown</strong></div><div class="row"><span>AI Model</span><strong id="model">Unknown</strong></div><div class="row"><span>Knowledge</span><strong id="knowledge">Unknown</strong></div><div class="row"><span>Capabilities</span><strong id="capabilities">0/0</strong></div></div><div class="group"><p class="title">QUICK ACTIONS</p><button data-action="refresh">Health Check</button><button data-action="diagnostics">Diagnostics</button></div><script nonce="${nonce}">const v=acquireVsCodeApi();document.querySelectorAll('[data-action]').forEach(b=>b.onclick=()=>v.postMessage({type:'action',action:b.dataset.action}));window.addEventListener('message',e=>{const d=e.data;if(!d||d.type!=='render')return;for(const k of ['connection','system','model','knowledge','capabilities'])document.getElementById(k).textContent=d[k]||'Unknown';document.getElementById('connection').className=d.ready?'good':''})</script>`; }

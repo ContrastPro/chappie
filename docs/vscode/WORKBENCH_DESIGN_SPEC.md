@@ -2,7 +2,7 @@
 
 Status: approved UI implementation baseline
 Date: 2026-08-21
-Internal protocol: `chappie_workbench/1.1.0`
+Internal protocol: `chappie_workbench/1.2.0`
 
 ## Purpose and principles
 
@@ -25,6 +25,8 @@ Turns render as a document: user question, Chappie answer, safe Markdown, code b
 The composer auto-grows, submits with Ctrl/Cmd+Enter, and supports explicit File, Selection, and Git context through the existing bounded workspace collector. Context is opt-in, previewed without absolute paths or sensitive content, and never broadens the collector’s security boundary. Web search, Deep Research, autonomous Agent mode, attachments, and cancellation remain unavailable until backed by approved APIs.
 
 ## Inspector
+
+The local draft limit is 50,000 characters, while the explicit Project QA request limit is 12,000 characters. The latter preserves headroom for supported 16K-context local models and the independently bounded 12,000-character workspace context; an oversized draft stays editable but is never silently truncated or sent. File opens the workspace file picker, Selection captures a non-empty active editor selection, and Git captures bounded local repository metadata.
 
 The Inspector has four tabs:
 
@@ -55,7 +57,7 @@ The current production components are Header, Conversation, Turn, Safe Markdown,
 
 ## Versioning and packaging
 
-This material UI/protocol change increments the extension install identity from 0.1.1 to 0.1.2. Distribution contains one active versioned VSIX plus `SHA256SUMS`. A same-version replacement is prohibited because VS Code can retain stale installed code and make acceptance ambiguous.
+This material UI/protocol change increments the extension install identity to 0.1.3. Distribution contains one active versioned VSIX plus `SHA256SUMS`. A same-version replacement is prohibited because VS Code can retain stale installed code and make acceptance ambiguous.
 
 ## Acceptance gates
 

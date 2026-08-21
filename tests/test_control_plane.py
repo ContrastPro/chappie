@@ -163,7 +163,10 @@ def test_project_qa_is_injected_read_only_and_validates_questions(tmp_path: Path
     assert calls == ["What owns evidence?"]
     assert response.payload()["authority"] == "AI_WITH_KNOWLEDGE_READ_ONLY"
     assert plane.ask_project(" ").state == ProjectQAStateV1.VALIDATION_ERROR
-    assert plane.ask_project("x" * 1001).state == ProjectQAStateV1.VALIDATION_ERROR
+    too_large = plane.ask_project("x" * 12_001)
+    assert too_large.state == ProjectQAStateV1.VALIDATION_ERROR
+    assert too_large.error is not None
+    assert too_large.error.reason_code == "PROJECT_QA_REQUEST_TOO_LARGE"
     assert calls == ["What owns evidence?"]
 
 

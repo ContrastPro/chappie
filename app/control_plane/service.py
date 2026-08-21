@@ -24,7 +24,7 @@ from app.platform.bootstrap import (
 )
 
 CONTROL_PLANE_IDENTITY = "chappie_control_plane/1.2.0"
-PROJECT_QA_MAX_QUESTION_CHARACTERS = 1000
+PROJECT_QA_MAX_QUESTION_CHARACTERS = 12_000
 
 
 class ControlPlaneStateV1(StrEnum):
@@ -404,16 +404,20 @@ class ChappieControlPlaneV1:
     def ask_project(
         self, question: str, workspace_context: object | None = None
     ) -> ProjectQAControlPlaneResponseV1:
-        if (
-            not isinstance(question, str)
-            or not question.strip()
-            or len(question) > PROJECT_QA_MAX_QUESTION_CHARACTERS
-        ):
+        if not isinstance(question, str) or not question.strip():
             return ProjectQAControlPlaneResponseV1(
                 ProjectQAStateV1.VALIDATION_ERROR,
                 question if isinstance(question, str) else "",
                 error=ControlPlaneErrorV1(
                     ControlPlaneStateV1.UNAVAILABLE, "INVALID_PROJECT_QA_QUESTION"
+                ),
+            )
+        if len(question) > PROJECT_QA_MAX_QUESTION_CHARACTERS:
+            return ProjectQAControlPlaneResponseV1(
+                ProjectQAStateV1.VALIDATION_ERROR,
+                question,
+                error=ControlPlaneErrorV1(
+                    ControlPlaneStateV1.UNAVAILABLE, "PROJECT_QA_REQUEST_TOO_LARGE"
                 ),
             )
         try:

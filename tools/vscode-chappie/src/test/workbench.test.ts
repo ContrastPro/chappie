@@ -96,7 +96,7 @@ test("Workbench renderer uses incremental DOM-safe turn rendering", () => {
   assert.match(script, /source-list/);
   assert.match(script, /navigator\.clipboard/);
   assert.match(script, /scrollHeight-canvas\.scrollTop/);
-  assert.match(script, /context\[key\]/);
+  assert.match(script, /attachments\.some/);
 });
 
 test("Workbench Markdown subset builds inert DOM nodes for untrusted text", () => {
@@ -112,9 +112,10 @@ test("Workbench Markdown subset builds inert DOM nodes for untrusted text", () =
 
 test("Source disclosures remain DOM-local while unrelated turns are patched", () => {
   const script = workbenchRendererScript();
-  assert.match(script, /const toggle=button\('Sources/);
-  assert.match(script, /list\.hidden=!expanded/);
-  assert.match(script, /section\.replaceWith\(turnNode\(turn\)\)/);
+  assert.match(script, /const toggleSources=/);
+  assert.match(script, /list\.hidden=open/);
+  assert.match(script, /old\.replaceWith\(turnNode\(turn\)\)/);
+  assert.match(script, /const patchFeedback=turn/);
   assert.match(script, /const patchTurn=turn/);
 });
 
@@ -122,8 +123,8 @@ test("Workbench exposes real retry feedback and bounded Inspector metadata", () 
   const script = workbenchRendererScript();
   assert.match(script, /type:'retry'/);
   assert.match(script, /type:'feedback'/);
-  assert.match(script, /validation_status/);
-  assert.match(script, /supporting_records/);
+  assert.match(script, /turn\.response\?\.authority/);
+  assert.match(script, /turn\.response\?\.sources/);
   assert.match(script, /No supported Chappie–Codex runtime integration is configured/);
   assert.doesNotMatch(script, /chain.of.thought|fake agent|fake market/i);
 });

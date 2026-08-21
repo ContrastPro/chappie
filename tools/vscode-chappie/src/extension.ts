@@ -11,9 +11,9 @@ import {
 import { ChappieControlPlaneClient, ControlPlaneClientError, ControlPlaneDependencyError, ControlPlaneIncompatibleError } from "./api/client";
 import { appendTurn, ChatTurnV1, renderTurns } from "./ui/chat";
 import { capabilitySummary, contextPreview, humanState, projectChatAvailability, projectQaFailureMessage, setupActionLabel } from "./ui/presentation";
-import { ChappieStatusTreeV1 } from "./ui/status";
+import { ChappieStatusSidebarV1 } from "./ui/status";
 import { ChappieWorkbenchV1 } from "./ui/workbench";
-import { WorkspaceContextCollector } from "./workspace/context";
+import { EditorContextInputV1, WorkspaceContextCollector } from "./workspace/context";
 import { collectGitMetadata } from "./workspace/git_metadata";
 import { ChappieSetupTerminalV1, isChappieWorkspace, localWorkspaceState, OwnedControlPlaneProcess, readSetupFailureSummary, resolveChappieExecutable, resolveChappieSetupCommand, setupBootstrapRemediation, shouldAutoStartControlPlane } from "./workspace/workspace";
 
@@ -129,11 +129,19 @@ function componentState(status: ControlPlaneStatusV1 | undefined, component: str
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
   const output = vscode.window.createOutputChannel("Chappie");
   const bar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
-  const tree = new ChappieStatusTreeV1();
+  const tree = new ChappieStatusSidebarV1((action) => {
+    if (action === "newChat") { void vscode.commands.executeCommand("chappie.newChat"); }
+    else if (action === "openWorkbench") { void vscode.commands.executeCommand("chappie.openWorkbench"); }
+    else if (action === "projectQa") { workbench?.focusComposer(); }
+    else if (action === "refresh") { void vscode.commands.executeCommand("chappie.refresh"); }
+    else { void vscode.commands.executeCommand("chappie.showDoctor"); }
+  });
   const ownedProcess = new OwnedControlPlaneProcess();
   const setupTerminal = new ChappieSetupTerminalV1();
   const setupResultPath = path.join(context.globalStorageUri.fsPath, "setup-result.json");
   let workbench: ChappieWorkbenchV1 | undefined;
+  const workbenchContext = new Set<"includeFile" | "includeSelection" | "includeGit">();
+  const workbenchInputs = new Map<"includeFile" | "includeSelection" | "includeGit", EditorContextInputV1>();
   const configuredPort = (): number => vscode.workspace.getConfiguration("chappie").get<number>("controlPlane.port", 8765);
   const platform = globalThis.process.platform as "win32" | "darwin" | "linux";
   const localState = (): "UNCONFIGURED" | "DEGRADED" | "READY" => {
@@ -141,7 +149,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return root ? localWorkspaceState(root, platform, fs.existsSync) : "UNCONFIGURED";
   };
   const chat = new ChappieChatView(() => new ChappieControlPlaneClient(configuredPort()));
-  context.subscriptions.push(output, bar, vscode.window.registerTreeDataProvider("chappie.status", tree), { dispose: () => { ownedProcess.stop(); } });
+  context.subscriptions.push(output, bar, vscode.window.registerWebviewViewProvider("chappie.status", tree), { dispose: () => { ownedProcess.stop(); } });
   bar.command = "chappie.openView";
 
   const connect = async (): Promise<ConnectionState> => {
@@ -278,8 +286,36 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   };
 
   workbench = new ChappieWorkbenchV1({
-    askProject: (question, options) => new ChappieControlPlaneClient(configuredPort()).askProject(question, collectWorkspaceContext(options)),
-    previewContext: (options) => contextPreviewFor(options),
+    askProject: (question, options) => new ChappieControlPlaneClient(configuredPort()).askProject(question, collectAttachedWorkbenchContext(options, workbenchContext, workbenchInputs)),
+    attachContext: async (kind) => {
+      let editor = vscode.window.activeTextEditor;
+      if (kind === "includeFile") {
+        const root = workspaceRoot();
+        const picked = root ? await vscode.window.showOpenDialog({ canSelectFiles: true, canSelectFolders: false, canSelectMany: false, defaultUri: vscode.Uri.file(root), title: "Attach workspace file to Chappie" }) : undefined;
+        if (!picked?.[0]) throw new Error("No workspace file was selected.");
+        const document = await vscode.workspace.openTextDocument(picked[0]);
+        const folder = vscode.workspace.getWorkspaceFolder(document.uri);
+        if (!folder || document.isUntitled || document.uri.scheme !== "file") throw new Error("Select a file inside the current workspace.");
+        workbenchInputs.set(kind, editorInputFor(document, folder, undefined));
+      } else {
+        if (kind === "includeSelection" && (!editor || editor.selection.isEmpty)) throw new Error("Select text in a workspace file before attaching it.");
+        if (kind !== "includeGit" && (!editor || editor.document.isUntitled || editor.document.uri.scheme !== "file" || !vscode.workspace.getWorkspaceFolder(editor.document.uri))) throw new Error("Open a workspace file before attaching context.");
+        if (kind === "includeGit") {
+          const root = workspaceRoot(); if (!root) throw new Error("Open a recognized workspace before attaching Git context.");
+          const folder = vscode.workspace.workspaceFolders?.find((item) => item.uri.fsPath === root); if (!folder) throw new Error("Workspace context is unavailable.");
+          workbenchInputs.set(kind, { workspaceRoot: root, workspaceName: folder.name, git: collectGitMetadata(root, gitExec) ?? undefined });
+        } else { workbenchInputs.set(kind, editorInputFor(editor!.document, vscode.workspace.getWorkspaceFolder(editor!.document.uri)!, kind === "includeSelection" ? editor!.selection : undefined)); }
+      }
+      const options = { includeFile: kind === "includeFile", includeSelection: kind === "includeSelection", includeGit: kind === "includeGit" };
+      const preview = contextPreview(new WorkspaceContextCollector().collect(workbenchInputs.get(kind)!, options));
+      if (preview.includes("Sensitive file blocked")) throw new Error("Sensitive files cannot be attached as context.");
+      workbenchContext.add(kind);
+      const label = kind === "includeFile" ? `File · ${path.basename(workbenchInputs.get(kind)!.filePath!)}` : kind === "includeSelection" ? `Selection · ${editor!.selection.end.line - editor!.selection.start.line + 1} lines` : "Git · workspace metadata";
+      return { kind, label, detail: preview || "Bounded workspace context" };
+    },
+    removeContext: (kind) => { workbenchContext.delete(kind); workbenchInputs.delete(kind); },
+    clearContexts: () => { workbenchContext.clear(); workbenchInputs.clear(); },
+    previewContext: (kind) => contextPreview(new WorkspaceContextCollector().collect(workbenchInputs.get(kind)!, { includeFile: kind === "includeFile", includeSelection: kind === "includeSelection", includeGit: kind === "includeGit" })),
     runAction: async (action) => {
       if (action === "diagnostics") {
         await vscode.commands.executeCommand("chappie.showDoctor");
@@ -417,6 +453,27 @@ function contextPreviewFor(message: { includeFile?: boolean; includeSelection?: 
       ? "Sensitive file blocked. Context was not sent."
       : "Workspace context is unavailable for the active editor.";
   }
+}
+
+function gitExec(args: readonly string[], cwd: string): string {
+  return childProcess.execFileSync("git", [...args], { cwd, shell: false, timeout: 1500, maxBuffer: 4096, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+}
+
+function editorInputFor(document: vscode.TextDocument, folder: vscode.WorkspaceFolder, selection: vscode.Selection | undefined): EditorContextInputV1 {
+  const start = selection ? document.offsetAt(selection.start) : undefined;
+  const end = selection ? document.offsetAt(selection.end) : undefined;
+  return { workspaceRoot: folder.uri.fsPath, workspaceName: folder.name, filePath: document.uri.fsPath, languageId: document.languageId, text: document.getText(), selection: start === undefined || end === undefined || start === end ? undefined : { start, end }, cursorLine: selection?.active.line ?? 0 };
+}
+
+function collectAttachedWorkbenchContext(options: { includeFile: boolean; includeSelection: boolean; includeGit: boolean }, attached: ReadonlySet<"includeFile" | "includeSelection" | "includeGit">, inputs: ReadonlyMap<"includeFile" | "includeSelection" | "includeGit", EditorContextInputV1>) {
+  const includeFile = options.includeFile && attached.has("includeFile");
+  const includeSelection = options.includeSelection && attached.has("includeSelection");
+  const includeGit = options.includeGit && attached.has("includeGit");
+  if (!includeFile && !includeSelection && !includeGit) return undefined;
+  const primary = (includeSelection ? inputs.get("includeSelection") : undefined) ?? (includeFile ? inputs.get("includeFile") : undefined) ?? inputs.get("includeGit");
+  if (!primary) return undefined;
+  const git = includeGit ? inputs.get("includeGit")?.git : undefined;
+  return new WorkspaceContextCollector().collect({ ...primary, git }, { includeFile, includeSelection, includeGit });
 }
 
 function chatError(error: unknown): string {
