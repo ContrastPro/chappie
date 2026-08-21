@@ -2,7 +2,7 @@
   "name": "vscode-chappie",
   "displayName": "Chappie",
   "description": "Local Chappie Control Plane companion.",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "publisher": "chappie-local",
   "license": "UNLICENSED",
   "repository": {

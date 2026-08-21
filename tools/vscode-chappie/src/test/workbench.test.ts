@@ -189,11 +189,29 @@ test("completed Workbench turns call the Markdown renderer defined by the embedd
 
 test("Source disclosures remain DOM-local while canonical session snapshots are rendered", () => {
   const script = workbenchRendererScript();
-  assert.match(script, /const toggleSources=/);
-  assert.match(script, /list\.hidden=open/);
+  assert.match(script, /expandedSources=new Set/);
+  assert.match(script, /const sourceDisclosure=/);
+  assert.match(script, /Sources · /);
+  assert.match(script, /list\.hidden=!open/);
   assert.match(script, /turns\.replaceChildren\(\.\.\.session\.map\(turnNode\)\)/);
   assert.match(script, /const patchFeedback=turn/);
   assert.match(script, /const renderSession=\(next,revision\)/);
+});
+
+test("Workbench message actions remain local, accessible, and preserve canonical turn history", () => {
+  const script = workbenchRendererScript();
+  assert.match(script, /const copyAction=/);
+  assert.match(script, /Copy message/);
+  assert.match(script, /Copy answer/);
+  assert.match(script, /Edit message/);
+  assert.match(script, /question\.value=turn\.question/);
+  assert.match(script, /navigator\.clipboard\.writeText/);
+  assert.match(script, /type:'retry'/);
+  assert.match(script, /Good answer/);
+  assert.match(script, /Not good/);
+  assert.match(script, /turn\.status==='failed'/);
+  assert.match(script, /const jumpLatest=/);
+  assert.match(script, /canvas\.addEventListener\('scroll',updateJumpLatest\)/);
 });
 
 test("Workbench exposes real retry feedback and bounded Inspector metadata", () => {

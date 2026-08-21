@@ -244,7 +244,7 @@ FROZEN_CONTRACT_SNAPSHOT = {
 
 ALLOWED_TRACKED_DISTRIBUTION_ARTIFACTS = frozenset(
     {
-        "tools/vscode-chappie/dist/chappie-vscode-0.1.9.vsix",
+        "tools/vscode-chappie/dist/chappie-vscode-0.1.10.vsix",
         "tools/vscode-chappie/dist/SHA256SUMS",
     }
 )
