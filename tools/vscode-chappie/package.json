@@ -28,7 +28,10 @@
   ],
   "main": "./out/extension.js",
   "files": [
-    "out/*.js",
+    "out/extension.js",
+    "out/api/**",
+    "out/workspace/**",
+    "out/ui/**",
     "resources",
     "README.md",
     "LICENSE",

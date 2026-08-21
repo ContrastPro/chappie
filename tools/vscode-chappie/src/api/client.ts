@@ -12,7 +12,7 @@ import {
   TransportEnvelopeV1,
   ProjectQAResponseV1,
 } from "./contracts";
-import { WorkspaceContextV1 } from "./workspace_context";
+import { WorkspaceContextV1 } from "../workspace/context";
 
 export class ControlPlaneClientError extends Error {}
 export class ControlPlaneIncompatibleError extends ControlPlaneClientError {}

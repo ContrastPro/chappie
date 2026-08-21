@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import test from "node:test";
-import { ChappieControlPlaneClient, CONTROL_PLANE_HEALTH_TIMEOUT_MS, CONTROL_PLANE_REFRESH_TIMEOUT_MS, ControlPlaneClientError, ControlPlaneDependencyError, ControlPlaneIncompatibleError, PROJECT_QA_HTTP_TIMEOUT_MS } from "../client";
-import { capabilitySummary, contextPreview, humanState, projectChatAvailability, projectQaFailureMessage, setupActionLabel } from "../presentation";
-import { CONTROL_PLANE_DIGEST, CONTROL_PLANE_IDENTITY, TRANSPORT_DIGEST, TRANSPORT_IDENTITY } from "../contracts";
-import { ChappieSetupTerminalV1, isChappieWorkspace, localWorkspaceState, OwnedControlPlaneProcess, readSetupFailureSummary, resolveChappieExecutable, resolveChappieSetupCommand, setupBootstrapRemediation, shouldAutoStartControlPlane } from "../workspace";
-import { appendTurn, ChatTurnV1, escapeHtml, MAX_CHAT_TURNS, renderTurns } from "../chat";
-import { WorkspaceContextCollector } from "../workspace_context";
-import { collectGitMetadata } from "../git_metadata";
+import { ChappieControlPlaneClient, CONTROL_PLANE_HEALTH_TIMEOUT_MS, CONTROL_PLANE_REFRESH_TIMEOUT_MS, ControlPlaneClientError, ControlPlaneDependencyError, ControlPlaneIncompatibleError, PROJECT_QA_HTTP_TIMEOUT_MS } from "../api/client";
+import { capabilitySummary, contextPreview, humanState, projectChatAvailability, projectQaFailureMessage, setupActionLabel } from "../ui/presentation";
+import { CONTROL_PLANE_DIGEST, CONTROL_PLANE_IDENTITY, TRANSPORT_DIGEST, TRANSPORT_IDENTITY } from "../api/contracts";
+import { ChappieSetupTerminalV1, isChappieWorkspace, localWorkspaceState, OwnedControlPlaneProcess, readSetupFailureSummary, resolveChappieExecutable, resolveChappieSetupCommand, setupBootstrapRemediation, shouldAutoStartControlPlane } from "../workspace/workspace";
+import { appendTurn, ChatTurnV1, escapeHtml, MAX_CHAT_TURNS, renderTurns } from "../ui/chat";
+import { WorkspaceContextCollector } from "../workspace/context";
+import { collectGitMetadata } from "../workspace/git_metadata";
 
 function envelope(data: unknown, overrides: Record<string, unknown> = {}): Response {
   return new Response(JSON.stringify({
@@ -265,6 +265,30 @@ test("activation remains bounded to the Chappie CLI marker", () => {
   const manifest = JSON.parse(readFileSync("package.json", "utf8")) as { activationEvents: string[] };
   assert.ok(manifest.activationEvents.includes("workspaceContains:**/app/cli.py"));
   assert.equal(manifest.activationEvents.includes("workspaceContains:pyproject.toml"), false);
+});
+
+test("extension internal layers keep one-way import boundaries", () => {
+  const sourceRoot = path.resolve(__dirname, "../../src");
+  const source = (relativePath: string) => readFileSync(path.join(sourceRoot, relativePath), "utf8");
+  const api = `${source("api/client.ts")}\n${source("api/contracts.ts")}`;
+  const workspace = `${source("workspace/workspace.ts")}\n${source("workspace/context.ts")}\n${source("workspace/git_metadata.ts")}`;
+  const contracts = source("api/contracts.ts");
+  const extension = source("extension.ts");
+
+  assert.doesNotMatch(api, /from ["']\.\.\/ui\//);
+  assert.doesNotMatch(workspace, /from ["']\.\.\/ui\//);
+  assert.doesNotMatch(contracts, /from ["']\.\.\/extension/);
+  for (const dependency of [
+    "./api/client",
+    "./api/contracts",
+    "./workspace/workspace",
+    "./workspace/context",
+    "./workspace/git_metadata",
+    "./ui/presentation",
+    "./ui/chat",
+  ]) {
+    assert.match(extension, new RegExp(`from ["']${dependency}`));
+  }
 });
 
 test("setup action launches canonical CLI only and detailed capabilities remain explicit", () => {

@@ -7,13 +7,13 @@ import {
   ControlPlaneAIStatusV1,
   ControlPlaneCapabilitiesV1,
   ControlPlaneStatusV1,
-} from "./contracts";
-import { ChappieControlPlaneClient, ControlPlaneClientError, ControlPlaneDependencyError, ControlPlaneIncompatibleError } from "./client";
-import { appendTurn, ChatTurnV1, renderTurns } from "./chat";
-import { capabilitySummary, contextPreview, humanState, projectChatAvailability, projectQaFailureMessage, setupActionLabel } from "./presentation";
-import { WorkspaceContextCollector } from "./workspace_context";
-import { collectGitMetadata } from "./git_metadata";
-import { ChappieSetupTerminalV1, isChappieWorkspace, localWorkspaceState, OwnedControlPlaneProcess, readSetupFailureSummary, resolveChappieExecutable, resolveChappieSetupCommand, setupBootstrapRemediation, shouldAutoStartControlPlane } from "./workspace";
+} from "./api/contracts";
+import { ChappieControlPlaneClient, ControlPlaneClientError, ControlPlaneDependencyError, ControlPlaneIncompatibleError } from "./api/client";
+import { appendTurn, ChatTurnV1, renderTurns } from "./ui/chat";
+import { capabilitySummary, contextPreview, humanState, projectChatAvailability, projectQaFailureMessage, setupActionLabel } from "./ui/presentation";
+import { WorkspaceContextCollector } from "./workspace/context";
+import { collectGitMetadata } from "./workspace/git_metadata";
+import { ChappieSetupTerminalV1, isChappieWorkspace, localWorkspaceState, OwnedControlPlaneProcess, readSetupFailureSummary, resolveChappieExecutable, resolveChappieSetupCommand, setupBootstrapRemediation, shouldAutoStartControlPlane } from "./workspace/workspace";
 
 const CONTROL_PLANE_STARTUP_TIMEOUT_MS = 15_000;
 const CONTROL_PLANE_STARTUP_POLL_MS = 250;

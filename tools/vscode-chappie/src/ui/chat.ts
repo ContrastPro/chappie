@@ -1,4 +1,4 @@
-import { ProjectQAResponseV1 } from "./contracts";
+import { ProjectQAResponseV1 } from "../api/contracts";
 
 export interface ChatTurnV1 {
   question: string;
