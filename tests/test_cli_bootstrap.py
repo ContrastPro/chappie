@@ -915,8 +915,8 @@ def test_windows_ready_ai_status_is_observational_and_fail_closed(
             "PROJECT_REPOSITORY", ComponentStateV1.READY, True, None, None, "clean"
         ),
     )
-    monkeypatch.setattr("app.knowledge.read_store", lambda _path: ((), manifest))
-    monkeypatch.setattr("app.knowledge.committed_snapshot", lambda _root: snapshot)
+    monkeypatch.setattr("app.knowledge.store.read_store", lambda _path: ((), manifest))
+    monkeypatch.setattr("app.knowledge.store.committed_snapshot", lambda _root: snapshot)
     monkeypatch.setattr("app.platform.ollama.readiness.OllamaReadinessProbe", Probe)
     monkeypatch.setattr("app.platform.ollama.windows.WindowsOllamaInstallerV1", Installer)
 
@@ -992,8 +992,8 @@ def test_macos_ready_ai_status_uses_the_darwin_executor(
         "detect_hardware",
         lambda _paths: HardwareProfileV1("Darwin", "fixture", "arm64", None, 8, 18 * 1024**3),
     )
-    monkeypatch.setattr("app.knowledge.read_store", lambda _path: ((), manifest))
-    monkeypatch.setattr("app.knowledge.committed_snapshot", lambda _root: snapshot)
+    monkeypatch.setattr("app.knowledge.store.read_store", lambda _path: ((), manifest))
+    monkeypatch.setattr("app.knowledge.store.committed_snapshot", lambda _root: snapshot)
     monkeypatch.setattr("app.platform.ollama.readiness.OllamaReadinessProbe", Probe)
     monkeypatch.setattr("app.platform.ollama.macos.MacOllamaInstallerV1", Installer)
     status = collect_status(paths)
@@ -1077,14 +1077,14 @@ def test_knowledge_stale_keeps_rebuild_remediation(
     paths.knowledge_file.parent.mkdir(parents=True)
     paths.knowledge_file.touch()
     monkeypatch.setattr(
-        "app.knowledge.read_store",
+        "app.knowledge.store.read_store",
         lambda _path: (
             (),
             KnowledgeManifestV1(RepositorySnapshotV1("a" * 40, True), (), "fixture"),
         ),
     )
     monkeypatch.setattr(
-        "app.knowledge.committed_snapshot", lambda _root: RepositorySnapshotV1("b" * 40, True)
+        "app.knowledge.store.committed_snapshot", lambda _root: RepositorySnapshotV1("b" * 40, True)
     )
     status = collect_status(paths)
     assert _component(status, "KNOWLEDGE").state == ComponentStateV1.STALE

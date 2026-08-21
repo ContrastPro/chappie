@@ -8,7 +8,7 @@ from enum import StrEnum
 
 from app.ai.schemas import digest
 from app.ai.tasks import AITask
-from app.knowledge import (
+from app.knowledge.store import (
     SOURCE_ALLOWLIST,
     KnowledgeAuthorityV1,
     KnowledgeContextRecordV1,

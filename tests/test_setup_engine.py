@@ -218,12 +218,12 @@ def test_existing_knowledge_store_requires_current_canonical_snapshot(
     action = SetupActionV1(SetupActionCodeV1.BUILD_KNOWLEDGE, ActionSafetyV1.SAFE, "x", None)
     current = RepositorySnapshotV1("b" * 40, True)
     old = KnowledgeManifestV1(RepositorySnapshotV1("a" * 40, True), (), "fixture")
-    monkeypatch.setattr("app.knowledge.read_store", lambda _path: ((), old))
-    monkeypatch.setattr("app.knowledge.committed_snapshot", lambda _root: current)
+    monkeypatch.setattr("app.knowledge.store.read_store", lambda _path: ((), old))
+    monkeypatch.setattr("app.knowledge.store.committed_snapshot", lambda _root: current)
     assert engine._check(action) is False
 
     matching = KnowledgeManifestV1(current, (), "fixture")
-    monkeypatch.setattr("app.knowledge.read_store", lambda _path: ((), matching))
+    monkeypatch.setattr("app.knowledge.store.read_store", lambda _path: ((), matching))
     assert engine._check(action) is True
 
 
@@ -245,7 +245,7 @@ def test_dirty_repository_blocks_knowledge_with_typed_failure_reason(
     from app.knowledge import RepositorySnapshotV1
 
     monkeypatch.setattr(
-        "app.knowledge.committed_snapshot",
+        "app.knowledge.store.committed_snapshot",
         lambda _root: RepositorySnapshotV1("a" * 40, False),
     )
     result = KnowledgeOnlyEngine(_paths(tmp_path)).execute(

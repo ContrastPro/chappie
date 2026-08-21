@@ -7,7 +7,8 @@ import json
 from collections.abc import Sequence
 from pathlib import Path
 
-from app.knowledge import (
+from app.knowledge.retrieval import KnowledgeRetrievalRequestV1, retrieve
+from app.knowledge.store import (
     KNOWLEDGE_STORE_PATH,
     KnowledgeAuthorityV1,
     KnowledgeStatusV1,
@@ -19,7 +20,6 @@ from app.knowledge import (
     verify_knowledge_store,
     write_store,
 )
-from app.knowledge_retrieval import KnowledgeRetrievalRequestV1, retrieve
 
 
 def main(argv: Sequence[str] | None = None) -> int:

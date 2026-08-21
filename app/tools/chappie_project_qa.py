@@ -6,8 +6,8 @@ from app.ai.providers import OllamaProvider
 from app.ai.router import ModelRouter
 from app.ai.runtime import AIConfig, ChappieAI
 from app.ai.tasks import ModelProfile
-from app.knowledge import committed_snapshot, initial_records, manifest
-from app.knowledge_retrieval import KnowledgeRetrievalRequestV1, retrieve
+from app.knowledge.retrieval import KnowledgeRetrievalRequestV1, retrieve
+from app.knowledge.store import committed_snapshot, initial_records, manifest
 
 
 def main():

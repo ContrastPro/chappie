@@ -9,7 +9,7 @@ from app.ai.errors import AIValidationError
 from app.ai.schemas import FactV1
 
 if TYPE_CHECKING:
-    from app.knowledge import KnowledgeContextV1
+    from app.knowledge.store import KnowledgeContextV1
 
 PROJECT_QA_IDENTITY = "project_qa/1.0.0"
 PROJECT_QA_JSON_SCHEMA: dict[str, Any] = {

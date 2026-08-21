@@ -796,7 +796,7 @@ def _knowledge_status(paths: ChappiePaths) -> ComponentStatusV1:
             RemediationCodeV1.BUILD_KNOWLEDGE_STORE,
         )
     try:
-        from app.knowledge import committed_snapshot, read_store
+        from app.knowledge.store import committed_snapshot, read_store
 
         _, stored_manifest = read_store(paths.knowledge_file)
         try:

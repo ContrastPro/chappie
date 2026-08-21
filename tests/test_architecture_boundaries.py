@@ -23,7 +23,7 @@ from app.control_plane_transport import (
     CONTROL_PLANE_TRANSPORT_IDENTITY,
 )
 from app.knowledge import KNOWLEDGE_CONTRACT_DIGEST, KNOWLEDGE_IDENTITY, SOURCE_ALLOWLIST
-from app.knowledge_retrieval import RETRIEVAL_CONTRACT_DIGEST, RETRIEVAL_IDENTITY
+from app.knowledge.retrieval import RETRIEVAL_CONTRACT_DIGEST, RETRIEVAL_IDENTITY
 from app.platform.ollama.macos import MACOS_OLLAMA_POLICY_DIGEST, MACOS_OLLAMA_POLICY_IDENTITY
 from app.platform.ollama.windows import WINDOWS_OLLAMA_POLICY_DIGEST, WINDOWS_OLLAMA_POLICY_IDENTITY
 from app.platform.setup.engine import SETUP_ENGINE_DIGEST, SETUP_ENGINE_IDENTITY
@@ -38,8 +38,6 @@ ROOT_MODULE_ALLOWLIST = frozenset(
     {
         "control_plane.py",
         "control_plane_transport.py",
-        "knowledge.py",
-        "knowledge_retrieval.py",
         "research_methodology.py",
         "workspace_context.py",
     }
@@ -82,7 +80,9 @@ COMPATIBILITY_MAP = {
     "app.cli": "FROZEN_PATH",
     "app.main": "FROZEN_PATH",
     "app.persistence.migrations": "FROZEN_PATH",
-    "app.knowledge": "TEMPORARY_COMPATIBILITY_WRAPPER",
+    "app.knowledge": "STABLE_PACKAGE_API",
+    "app.knowledge.store": "CANONICAL_IMPLEMENTATION",
+    "app.knowledge.retrieval": "CANONICAL_IMPLEMENTATION",
     "app.control_plane": "TEMPORARY_COMPATIBILITY_WRAPPER",
     "app.tools.*": "TEMPORARY_COMPATIBILITY_WRAPPER",
 }
@@ -106,6 +106,8 @@ COMPLETED_DIRECT_MIGRATIONS = {
     "app.research.intelligence.universe": "COMPLETED_DIRECT_MIGRATION",
     "app.foundation.config": "COMPLETED_DIRECT_MIGRATION",
     "app.foundation.logging": "COMPLETED_DIRECT_MIGRATION",
+    "app.knowledge.retrieval": "COMPLETED_DIRECT_MIGRATION",
+    "app.knowledge.store": "COMPLETED_DIRECT_MIGRATION",
     "app.platform.ollama.macos": "COMPLETED_DIRECT_MIGRATION",
     "app.platform.ollama.readiness": "COMPLETED_DIRECT_MIGRATION",
     "app.platform.ollama.start": "COMPLETED_DIRECT_MIGRATION",
@@ -134,7 +136,6 @@ DYNAMIC_IMPORT_OWNERS = {
             "app.ai.runtime",
         }
     ),
-    "app.knowledge_retrieval": frozenset({"app.ai.schemas"}),
     "app.exchange_execution.__init__": frozenset(
         {
             "app.exchange_execution.phase3",
@@ -143,6 +144,7 @@ DYNAMIC_IMPORT_OWNERS = {
             "app.exchange_execution.stage4_sell_recovery",
         }
     ),
+    "app.knowledge.retrieval": frozenset({"app.ai.schemas"}),
     "app.persistence.sqlite": frozenset({"app.persistence.migrations"}),
 }
 
@@ -243,6 +245,7 @@ def test_completed_direct_migrations_have_only_canonical_paths() -> None:
     assert not (APP / "multi_asset_flow_intelligence.py").exists()
     assert not (APP / "news_event_intelligence.py").exists()
     assert not (APP / "leverage_stress.py").exists()
+    assert not (APP / "knowledge_retrieval.py").exists()
     assert not (APP / "market_intelligence.py").exists()
     assert not (APP / "market_intelligence_flow.py").exists()
     assert not (APP / "news_event_macro.py").exists()
@@ -425,6 +428,36 @@ def test_platform_bootstrap_and_vscode_remain_infrastructure_only() -> None:
     assert violations == {}
 
 
+def test_knowledge_does_not_import_platform_or_runtime_authority() -> None:
+    forbidden_prefixes = (
+        "app.platform",
+        "app.runtime",
+        "app.control_plane",
+        "app.coordination",
+        "app.exchange_execution",
+        "app.exchange_runtime",
+        "app.execution",
+        "app.infrastructure",
+        "app.market",
+        "app.paper",
+        "app.persistence",
+        "app.portfolio",
+        "app.research",
+        "app.risk",
+        "app.shadow",
+        "app.strategies",
+        "app.tools",
+        "app.trading",
+    )
+    violations = {
+        _module_name(path): imported
+        for path in (APP / "knowledge").rglob("*.py")
+        for imported in _imports(path)
+        if _matches(imported, forbidden_prefixes)
+    }
+    assert violations == {}
+
+
 def test_ai_has_no_execution_or_trading_authority_imports() -> None:
     violations = {
         _module_name(path): imported
@@ -526,7 +559,12 @@ def test_dynamic_import_sites_are_bounded_by_the_inventory() -> None:
 
 
 def test_compatibility_map_classifies_required_future_surfaces() -> None:
-    assert {"FROZEN_PATH", "TEMPORARY_COMPATIBILITY_WRAPPER"} == set(COMPATIBILITY_MAP.values())
+    assert {
+        "CANONICAL_IMPLEMENTATION",
+        "FROZEN_PATH",
+        "STABLE_PACKAGE_API",
+        "TEMPORARY_COMPATIBILITY_WRAPPER",
+    } == set(COMPATIBILITY_MAP.values())
     assert COMPATIBILITY_MAP["app.cli"] == "FROZEN_PATH"
     assert COMPATIBILITY_MAP["app.main"] == "FROZEN_PATH"
     assert COMPATIBILITY_MAP["app.persistence.migrations"] == "FROZEN_PATH"

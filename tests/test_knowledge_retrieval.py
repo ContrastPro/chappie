@@ -1,6 +1,6 @@
 from app.ai.tasks import AITask
 from app.knowledge import KnowledgeStatusV1, RepositorySnapshotV1, initial_records, manifest
-from app.knowledge_retrieval import (
+from app.knowledge.retrieval import (
     RETRIEVAL_CONTRACT_DIGEST,
     RETRIEVAL_IDENTITY,
     KnowledgeRetrievalRequestV1,

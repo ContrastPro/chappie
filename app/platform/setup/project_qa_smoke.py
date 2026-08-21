@@ -10,8 +10,13 @@ from typing import Any
 
 from app.ai.errors import AIProviderError, AIProviderTimeoutError, AIValidationError
 from app.ai.runtime import ChappieAI
-from app.knowledge import KnowledgeAuthorityV1, KnowledgeContextV1, KnowledgeTypeV1, read_store
-from app.knowledge_retrieval import KnowledgeRetrievalRequestV1, retrieve
+from app.knowledge.retrieval import KnowledgeRetrievalRequestV1, retrieve
+from app.knowledge.store import (
+    KnowledgeAuthorityV1,
+    KnowledgeContextV1,
+    KnowledgeTypeV1,
+    read_store,
+)
 from app.platform.bootstrap import ChappieLocalConfigV1
 from app.platform.setup.ai_smoke import build_configured_chappie_ai, valid_setup_ai_config
 

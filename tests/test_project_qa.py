@@ -9,7 +9,7 @@ from app.ai.router import ModelRouter
 from app.ai.runtime import AIConfig, ChappieAI
 from app.ai.tasks import ModelProfile
 from app.knowledge import RepositorySnapshotV1, initial_records, manifest
-from app.knowledge_retrieval import KnowledgeRetrievalRequestV1, retrieve
+from app.knowledge.retrieval import KnowledgeRetrievalRequestV1, retrieve
 
 
 def test_knowledge_and_ai_imports_are_order_independent() -> None:

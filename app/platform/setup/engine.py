@@ -568,7 +568,7 @@ class SetupEngineV1:
             ).exists()
         if action.code == SetupActionCodeV1.BUILD_KNOWLEDGE:
             try:
-                from app.knowledge import committed_snapshot, read_store
+                from app.knowledge.store import committed_snapshot, read_store
 
                 _, stored_manifest = read_store(self.paths.knowledge_file)
                 return stored_manifest.snapshot == committed_snapshot(self.paths.root)
@@ -720,7 +720,12 @@ class SetupEngineV1:
                 [str(python), "-m", "pip", "install", "-e", target], cwd=self.paths.root, check=True
             )
         elif action.code == SetupActionCodeV1.BUILD_KNOWLEDGE:
-            from app.knowledge import committed_snapshot, initial_records, manifest, write_store
+            from app.knowledge.store import (
+                committed_snapshot,
+                initial_records,
+                manifest,
+                write_store,
+            )
 
             snapshot = committed_snapshot(self.paths.root)
             records = initial_records(self.paths.root, snapshot)
