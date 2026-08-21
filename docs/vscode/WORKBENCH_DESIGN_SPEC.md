@@ -49,6 +49,8 @@ Connection and readiness state comes only from existing Control Plane status, AI
 
 ## Accessibility and responsive behavior
 
+Long submitted questions use per-turn, bidirectional disclosure: `Show more` expands the complete stored question and `Show less` restores its bounded preview. Top-level conversation separators appear only between adjacent turns, never before the first or after the last. The composer region has no full-width divider or background band; its own surface and spacing provide separation.
+
 Interactive elements use native buttons, explicit labels, `aria-expanded`, `aria-selected`, and `aria-pressed`. Focus uses VS Code focus colors. The design does not rely on color alone: state includes text. Source disclosure, tabs, composer, context chips, Retry, feedback, New Chat, and Inspector controls must be keyboard reachable.
 
 ## Component seams
@@ -57,7 +59,7 @@ The current production components are Header, Conversation, Turn, Safe Markdown,
 
 ## Versioning and packaging
 
-This material UI/protocol change increments the extension install identity to 0.1.3. Distribution contains one active versioned VSIX plus `SHA256SUMS`. A same-version replacement is prohibited because VS Code can retain stale installed code and make acceptance ambiguous.
+This material UI/protocol change increments the extension install identity to 0.1.4. Distribution contains one active versioned VSIX plus `SHA256SUMS`. A same-version replacement is prohibited because VS Code can retain stale installed code and make acceptance ambiguous.
 
 ## Acceptance gates
 

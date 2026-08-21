@@ -31,6 +31,7 @@ test("Workbench protocol accepts only bounded typed webview messages", () => {
   assert.deepEqual(parseWebviewMessage({ type: "ask", requestId: "request_1", question: "Explain architecture", context: { includeFile: true, includeSelection: false, includeGit: true } }), { type: "ask", requestId: "request_1", question: "Explain architecture", context: { includeFile: true, includeSelection: false, includeGit: true } });
   assert.equal(parseWebviewMessage({ type: "ask", requestId: "request_1", question: " ", context: {} }), undefined);
   assert.equal(parseWebviewMessage({ type: "ask", requestId: "request_1", question: "x".repeat(1001), context: {} }), undefined);
+  assert.equal(parseWebviewMessage({ type: "ask", requestId: "request_1", question: "x".repeat(12_001), context: noContext }), undefined);
   assert.equal(parseWebviewMessage({ type: "runAction", action: "unsafe" }), undefined);
   assert.deepEqual(parseWebviewMessage({ type: "retry", turnId: "turn_1" }), { type: "retry", turnId: "turn_1" });
   assert.deepEqual(parseWebviewMessage({ type: "feedback", turnId: "turn_1", value: "good" }), { type: "feedback", turnId: "turn_1", value: "good" });
@@ -97,6 +98,11 @@ test("Workbench renderer uses incremental DOM-safe turn rendering", () => {
   assert.match(script, /navigator\.clipboard/);
   assert.match(script, /scrollHeight-canvas\.scrollTop/);
   assert.match(script, /attachments\.some/);
+  assert.match(script, /expandedQuestions/);
+  assert.match(script, /Show less/);
+  assert.match(script, /aria-expanded/);
+  assert.match(script, /\.turn\+\.turn/);
+  assert.match(script, /composer-region\{border-top:0/);
 });
 
 test("Workbench Markdown subset builds inert DOM nodes for untrusted text", () => {
@@ -116,7 +122,7 @@ test("Source disclosures remain DOM-local while unrelated turns are patched", ()
   assert.match(script, /list\.hidden=open/);
   assert.match(script, /old\.replaceWith\(turnNode\(turn\)\)/);
   assert.match(script, /const patchFeedback=turn/);
-  assert.match(script, /const patchTurn=turn/);
+  assert.match(script, /const patchTurn=incoming/);
 });
 
 test("Workbench exposes real retry feedback and bounded Inspector metadata", () => {
@@ -145,4 +151,7 @@ test("Workbench controller keeps one reusable editor panel", () => {
   assert.match(source, /if \(this\.panel\) \{ this\.panel\.reveal/);
   assert.match(source, /this\.panel\.onDidDispose/);
   assert.match(source, /createWebviewPanel/);
+  assert.match(source, /turnCompleted/);
+  assert.match(source, /operationChanged.*false/);
+  assert.match(source, /clearInterval\(telemetry\)/);
 });

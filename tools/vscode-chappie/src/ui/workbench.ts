@@ -1,7 +1,7 @@
 import * as vscode from "vscode";
 import { ProjectQAResponseV1 } from "../api/contracts";
 import { workbenchHtml } from "./workbench_html";
-import { ContextOptionsV1, HostMessageV1, parseWebviewMessage, WorkbenchActionV1, WorkbenchConnectionSnapshotV1, WorkbenchContextAttachmentV1, WorkbenchContextKindV1 } from "./workbench_protocol";
+import { ContextOptionsV1, HostMessageV1, parseWebviewMessage, RuntimeTelemetryV1, WorkbenchActionV1, WorkbenchConnectionSnapshotV1, WorkbenchContextAttachmentV1, WorkbenchContextKindV1 } from "./workbench_protocol";
 import { WorkbenchSessionV1 } from "./workbench_state";
 
 export interface WorkbenchDependenciesV1 {
@@ -10,6 +10,7 @@ export interface WorkbenchDependenciesV1 {
   removeContext(kind: WorkbenchContextKindV1): void;
   previewContext(kind: WorkbenchContextKindV1): string;
   clearContexts(): void;
+  runtimeTelemetry(): Promise<RuntimeTelemetryV1>;
   runAction(action: WorkbenchActionV1): Promise<void>;
   workspaceName(): string | undefined;
   errorMessage(error: unknown): string;
@@ -65,11 +66,13 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
     const turn = this.session.begin(`turn_${++this.sequence}`, requestId, question, context);
     if (!turn) return;
     this.post({ type: "turnStarted", turn }); this.post({ type: "operationChanged", active: true });
+    const telemetry = setInterval(() => { void this.publishTelemetry(); }, 1_500); void this.publishTelemetry();
     try { const completed = this.session.complete(turn.turnId, await this.dependencies.askProject(turn.question, turn.context)); if (completed) this.post({ type: "turnCompleted", turn: completed }); }
     catch (error) { const failed = this.session.fail(turn.turnId, this.dependencies.errorMessage(error)); if (failed) this.post({ type: "turnFailed", turn: failed }); }
-    finally { this.post({ type: "operationChanged", active: false }); }
+    finally { clearInterval(telemetry); this.post({ type: "operationChanged", active: false }); }
   }
 
   private safePreview(kind: WorkbenchContextKindV1): string { try { return this.dependencies.previewContext(kind); } catch { return "Workspace context is unavailable."; } }
+  private async publishTelemetry(): Promise<void> { try { this.post({ type: "runtimeTelemetry", telemetry: await this.dependencies.runtimeTelemetry() }); } catch { /* optional diagnostics never affect Project QA */ } }
   private post(message: HostMessageV1): void { void this.panel?.webview.postMessage(message); }
 }

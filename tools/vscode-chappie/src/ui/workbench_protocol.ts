@@ -9,6 +9,7 @@ export const MAX_WORKBENCH_REQUEST_CHARACTERS = 12_000;
 export interface ContextOptionsV1 { includeFile: boolean; includeSelection: boolean; includeGit: boolean; }
 export type WorkbenchContextKindV1 = keyof ContextOptionsV1;
 export interface WorkbenchContextAttachmentV1 { kind: WorkbenchContextKindV1; label: string; detail: string; }
+export interface RuntimeTelemetryV1 { available: boolean; provider: string | null; gpuName: string | null; utilizationPercent: number | null; memoryUsedMb: number | null; memoryTotalMb: number | null; temperatureC: number | null; sampledAtMs: number; }
 export interface WorkbenchConnectionSnapshotV1 {
   state: "DISCONNECTED" | "CONNECTING" | "CONNECTED" | "INCOMPATIBLE" | "ERROR";
   model: string | null;
@@ -42,6 +43,7 @@ export type HostMessageV1 =
   | { type: "contextPreview"; preview: string }
   | { type: "attachmentsChanged"; attachments: readonly WorkbenchContextAttachmentV1[] }
   | { type: "notice"; message: string }
+  | { type: "runtimeTelemetry"; telemetry: RuntimeTelemetryV1 }
   | { type: "turnStarted"; turn: WorkbenchTurnV1 }
   | { type: "turnCompleted"; turn: WorkbenchTurnV1 }
   | { type: "turnFailed"; turn: WorkbenchTurnV1 }

@@ -15,6 +15,7 @@ import { ChappieStatusSidebarV1 } from "./ui/status";
 import { ChappieWorkbenchV1 } from "./ui/workbench";
 import { EditorContextInputV1, WorkspaceContextCollector } from "./workspace/context";
 import { collectGitMetadata } from "./workspace/git_metadata";
+import { queryNvidiaTelemetry } from "./workspace/runtime_telemetry";
 import { ChappieSetupTerminalV1, isChappieWorkspace, localWorkspaceState, OwnedControlPlaneProcess, readSetupFailureSummary, resolveChappieExecutable, resolveChappieSetupCommand, setupBootstrapRemediation, shouldAutoStartControlPlane } from "./workspace/workspace";
 
 const CONTROL_PLANE_STARTUP_TIMEOUT_MS = 15_000;
@@ -131,8 +132,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const bar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 100);
   const tree = new ChappieStatusSidebarV1((action) => {
     if (action === "newChat") { void vscode.commands.executeCommand("chappie.newChat"); }
-    else if (action === "openWorkbench") { void vscode.commands.executeCommand("chappie.openWorkbench"); }
-    else if (action === "projectQa") { workbench?.focusComposer(); }
     else if (action === "refresh") { void vscode.commands.executeCommand("chappie.refresh"); }
     else { void vscode.commands.executeCommand("chappie.showDoctor"); }
   });
@@ -316,6 +315,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     removeContext: (kind) => { workbenchContext.delete(kind); workbenchInputs.delete(kind); },
     clearContexts: () => { workbenchContext.clear(); workbenchInputs.clear(); },
     previewContext: (kind) => contextPreview(new WorkspaceContextCollector().collect(workbenchInputs.get(kind)!, { includeFile: kind === "includeFile", includeSelection: kind === "includeSelection", includeGit: kind === "includeGit" })),
+    runtimeTelemetry: queryNvidiaTelemetry,
     runAction: async (action) => {
       if (action === "diagnostics") {
         await vscode.commands.executeCommand("chappie.showDoctor");
