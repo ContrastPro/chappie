@@ -230,7 +230,7 @@ test("Workbench renderer projects status and lifecycle from host-owned snapshots
   assert.match(script, /enforceAvailability/);
   assert.match(script, /connection\?\.availability/);
   assert.match(script, /sessionRevision=-1/);
-  assert.match(script, /revision<sessionRevision/);
+  assert.match(script, /revision>=sessionRevision/);
   assert.match(script, /renderSession\(data\.session,data\.sessionRevision\)/);
   assert.match(script, /turn\.status==='pending'/);
   assert.match(script, /resizeComposer/);
