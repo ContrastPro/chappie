@@ -20,7 +20,7 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
   private panel: vscode.WebviewPanel | undefined;
   private readonly session = new WorkbenchSessionV1();
   private readonly attachments = new Map<WorkbenchContextKindV1, WorkbenchContextAttachmentV1>();
-  private connection: WorkbenchConnectionSnapshotV1 = { state: "DISCONNECTED", model: null, knowledge: "UNKNOWN", availability: "Chappie setup is required before the local service can connect.", setupAction: "Set up" };
+  private connection: WorkbenchConnectionSnapshotV1 = { state: "DISCONNECTED", system: "UNKNOWN", model: null, knowledge: "UNKNOWN", availability: "Chappie setup is required before the local service can connect.", setupAction: "Set up" };
   private sequence = 0;
 
   public constructor(private readonly dependencies: WorkbenchDependenciesV1) {}
@@ -40,7 +40,7 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
   public focusComposer(): void { this.open(); this.post({ type: "notice", message: "Focus the composer to ask Chappie about this project." }); }
   public dispose(): void { this.panel?.dispose(); this.panel = undefined; }
 
-  private initialize(): void { this.post({ type: "initialize", protocol: "chappie_workbench/1.2.0", connection: this.connection, session: this.session.snapshot(), attachments: this.attachmentSnapshot() }); }
+  private initialize(): void { void this.post({ type: "initialize", protocol: "chappie_workbench/1.2.0", connection: this.connection, session: this.session.snapshot(), attachments: this.attachmentSnapshot() }); }
   private attachmentSnapshot(): readonly WorkbenchContextAttachmentV1[] { return [...this.attachments.values()].map((value) => ({ ...value })); }
   private clearAttachments(): void { this.attachments.clear(); this.dependencies.clearContexts(); this.post({ type: "attachmentsChanged", attachments: [] }); }
 
@@ -55,24 +55,32 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
     }
     if (message.type === "previewContext") { this.post({ type: "contextPreview", preview: this.safePreview(message.kind) }); return; }
     if (message.type === "removeContext") { this.attachments.delete(message.kind); this.dependencies.removeContext(message.kind); this.post({ type: "contextPreview", preview: "" }); this.post({ type: "attachmentsChanged", attachments: this.attachmentSnapshot() }); return; }
-    if (message.type === "clearConversation") { this.session.clear(); this.clearAttachments(); this.post({ type: "replaceSession", session: this.session.snapshot() }); return; }
-    if (message.type === "feedback") { const updated = this.session.feedback(message.turnId, message.value); if (updated) this.post({ type: "turnFeedback", turn: updated }); return; }
+    if (message.type === "clearConversation") { this.session.clear(); this.clearAttachments(); await this.postSession(); return; }
+    if (message.type === "feedback") { const updated = this.session.feedback(message.turnId, message.value); if (updated) await this.post({ type: "turnFeedback", turn: updated }); return; }
     if (message.type === "runAction") { await this.dependencies.runAction(message.action); return; }
     const original = message.type === "retry" ? this.session.find(message.turnId) : undefined;
     if (message.type === "retry" && (!original || original.status === "pending")) return;
     const question = message.type === "retry" ? original!.question : message.question.trim();
     const context = message.type === "retry" ? original!.context : message.context;
     const requestId = message.type === "retry" ? `retry_${Date.now().toString(36)}` : message.requestId;
+    if (this.connection.availability) {
+      await this.post({ type: "notice", message: this.connection.availability });
+      return;
+    }
     const turn = this.session.begin(`turn_${++this.sequence}`, requestId, question, context);
     if (!turn) return;
-    this.post({ type: "turnStarted", turn }); this.post({ type: "operationChanged", active: true });
+    await this.postSession();
     const telemetry = setInterval(() => { void this.publishTelemetry(); }, 1_500); void this.publishTelemetry();
-    try { const completed = this.session.complete(turn.turnId, await this.dependencies.askProject(turn.question, turn.context)); if (completed) this.post({ type: "turnCompleted", turn: completed }); }
-    catch (error) { const failed = this.session.fail(turn.turnId, this.dependencies.errorMessage(error)); if (failed) this.post({ type: "turnFailed", turn: failed }); }
-    finally { clearInterval(telemetry); this.post({ type: "operationChanged", active: false }); }
+    try {
+      const response = await this.dependencies.askProject(turn.question, turn.context);
+      if (response.state !== "OK" || !(response.answer ?? "").trim()) throw new Error(response.error?.message ?? "Project QA did not return a final answer.");
+      this.session.complete(turn.turnId, response);
+    } catch (error) { this.session.fail(turn.turnId, this.dependencies.errorMessage(error)); }
+    finally { clearInterval(telemetry); await this.postSession(); }
   }
 
   private safePreview(kind: WorkbenchContextKindV1): string { try { return this.dependencies.previewContext(kind); } catch { return "Workspace context is unavailable."; } }
   private async publishTelemetry(): Promise<void> { try { this.post({ type: "runtimeTelemetry", telemetry: await this.dependencies.runtimeTelemetry() }); } catch { /* optional diagnostics never affect Project QA */ } }
-  private post(message: HostMessageV1): void { void this.panel?.webview.postMessage(message); }
+  private postSession(): Promise<void> { return this.post({ type: "replaceSession", session: this.session.snapshot() }); }
+  private async post(message: HostMessageV1): Promise<void> { await this.panel?.webview.postMessage(message); }
 }

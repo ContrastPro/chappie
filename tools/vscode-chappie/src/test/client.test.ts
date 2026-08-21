@@ -4,6 +4,7 @@ import * as path from "node:path";
 import test from "node:test";
 import { ChappieControlPlaneClient, CONTROL_PLANE_HEALTH_TIMEOUT_MS, CONTROL_PLANE_REFRESH_TIMEOUT_MS, ControlPlaneClientError, ControlPlaneDependencyError, ControlPlaneIncompatibleError, PROJECT_QA_HTTP_TIMEOUT_MS } from "../api/client";
 import { capabilitySummary, contextPreview, humanState, projectChatAvailability, projectQaFailureMessage, setupActionLabel } from "../ui/presentation";
+import { StatusRefreshGateV1 } from "../ui/status";
 import { CONTROL_PLANE_DIGEST, CONTROL_PLANE_IDENTITY, TRANSPORT_DIGEST, TRANSPORT_IDENTITY } from "../api/contracts";
 import { ChappieSetupTerminalV1, isChappieWorkspace, localWorkspaceState, OwnedControlPlaneProcess, readSetupFailureSummary, resolveChappieExecutable, resolveChappieSetupCommand, setupBootstrapRemediation, shouldAutoStartControlPlane } from "../workspace/workspace";
 import { appendTurn, ChatTurnV1, escapeHtml, MAX_CHAT_TURNS, renderTurns } from "../ui/chat";
@@ -186,10 +187,12 @@ test("connected degraded Project QA remains connected and presents bounded remed
   assert.equal(projectChatAvailability("CONNECTED", "DEGRADED", "NOT_CONFIGURED", "READY"), "Project chat unavailable. Chappie AI is not configured for this workspace.");
   assert.equal(projectChatAvailability("CONNECTED", "DEGRADED", "READY", "NOT_CONFIGURED"), "Project chat unavailable. Chappie Knowledge is not configured for this workspace.");
   assert.equal(projectChatAvailability("CONNECTED", "AVAILABLE", "READY", "READY"), null);
+  assert.equal(projectChatAvailability("CONNECTED", "AVAILABLE", "READY", "STALE"), "Knowledge is stale. Repair Chappie to use Project QA.");
   assert.equal(capabilitySummary([{ status: "AVAILABLE" }, { status: "DEGRADED" }, { status: "UNAVAILABLE" }]), "1/3");
   assert.equal(setupActionLabel("CONNECTED", "DEGRADED", "DEGRADED", "READY"), "Repair");
   assert.equal(setupActionLabel("CONNECTED", "DEGRADED", "NOT_CONFIGURED", "NOT_CONFIGURED"), "Set up");
   assert.equal(setupActionLabel("CONNECTED", "AVAILABLE", "READY", "READY"), "Set up");
+  assert.equal(setupActionLabel("CONNECTED", "AVAILABLE", "READY", "STALE"), "Repair");
 });
 
 test("compact presentation translates states and only renders selected safe context previews", () => {
@@ -198,6 +201,14 @@ test("compact presentation translates states and only renders selected safe cont
   assert.equal(humanState("READY"), "Ready");
   assert.equal(contextPreview({ active_file_relative_path: "app/control_plane.py", selected_text_range: { start_line: 119, end_line: 137 }, excerpt_range: null, git_branch: "main", git_dirty: true }), "app/control_plane.py · Lines 120–138\nGit · main · dirty");
   assert.equal(contextPreview(undefined), "");
+});
+
+test("late status refreshes cannot overwrite the newest canonical snapshot", () => {
+  const gate = new StatusRefreshGateV1();
+  const older = gate.begin();
+  const newer = gate.begin();
+  assert.equal(gate.isCurrent(newer), true);
+  assert.equal(gate.isCurrent(older), false);
 });
 
 test("project QA response, history, and renderer remain bounded and escaped", async () => {

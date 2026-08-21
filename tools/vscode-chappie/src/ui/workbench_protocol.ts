@@ -12,6 +12,8 @@ export interface WorkbenchContextAttachmentV1 { kind: WorkbenchContextKindV1; la
 export interface RuntimeTelemetryV1 { available: boolean; provider: string | null; gpuName: string | null; utilizationPercent: number | null; memoryUsedMb: number | null; memoryTotalMb: number | null; temperatureC: number | null; sampledAtMs: number; }
 export interface WorkbenchConnectionSnapshotV1 {
   state: "DISCONNECTED" | "CONNECTING" | "CONNECTED" | "INCOMPATIBLE" | "ERROR";
+  /** Overall local Chappie system state, distinct from transport connection. */
+  system: string;
   model: string | null;
   knowledge: string;
   availability: string | null;
@@ -44,11 +46,8 @@ export type HostMessageV1 =
   | { type: "attachmentsChanged"; attachments: readonly WorkbenchContextAttachmentV1[] }
   | { type: "notice"; message: string }
   | { type: "runtimeTelemetry"; telemetry: RuntimeTelemetryV1 }
-  | { type: "turnStarted"; turn: WorkbenchTurnV1 }
-  | { type: "turnCompleted"; turn: WorkbenchTurnV1 }
-  | { type: "turnFailed"; turn: WorkbenchTurnV1 }
   | { type: "turnFeedback"; turn: WorkbenchTurnV1 }
-  | { type: "operationChanged"; active: boolean }
+  /** The sole host-owned lifecycle projection for conversation, Inspector and Activity. */
   | { type: "replaceSession"; session: readonly WorkbenchTurnV1[] };
 
 const contextKeys = new Set<WorkbenchContextKindV1>(["includeFile", "includeSelection", "includeGit"]);

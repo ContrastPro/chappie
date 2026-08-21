@@ -70,6 +70,30 @@ test("Workbench clear keeps an in-flight request and returned snapshots are deta
   assert.equal(session.snapshot()[0].turnId, "turn_1");
 });
 
+test("Workbench terminal snapshots make completed and failed turns internally consistent", () => {
+  const session = new WorkbenchSessionV1();
+  const successful = session.begin("turn_success", "request_success", "Question", noContext, 100);
+  assert.ok(successful);
+  const realShape = response("A grounded final answer.");
+  realShape.supporting_records = [{ record_id: "architecture", title: "Chappie Architecture", authority: "DOCUMENTATION", status: "ACTIVE" }];
+  session.complete(successful.turnId, realShape, 200);
+  const completed = session.find(successful.turnId);
+  assert.equal(completed?.requestId, "request_success");
+  assert.equal(completed?.status, "complete");
+  assert.equal(completed?.response?.answer, "A grounded final answer.");
+  assert.equal(completed?.response?.supporting_records[0]?.record_id, "architecture");
+  assert.equal(completed?.completedAtMs, 200);
+
+  const rejected = session.begin("turn_failure", "request_failure", "Question", noContext, 300);
+  assert.ok(rejected);
+  session.fail(rejected.turnId, "Knowledge is stale. Repair Chappie to use Project QA.", 400);
+  const failed = session.find(rejected.turnId);
+  assert.equal(failed?.requestId, "request_failure");
+  assert.equal(failed?.status, "failed");
+  assert.equal(failed?.response, undefined);
+  assert.match(failed?.error ?? "", /Knowledge is stale/);
+});
+
 test("Workbench eviction prefers completed turns over failed turns", () => {
   const session = new WorkbenchSessionV1();
   const failed = session.begin("failed", "request_failed", "Failed", noContext);
@@ -116,13 +140,13 @@ test("Workbench Markdown subset builds inert DOM nodes for untrusted text", () =
   assert.doesNotMatch(script, /https?:\/\//);
 });
 
-test("Source disclosures remain DOM-local while unrelated turns are patched", () => {
+test("Source disclosures remain DOM-local while canonical session snapshots are rendered", () => {
   const script = workbenchRendererScript();
   assert.match(script, /const toggleSources=/);
   assert.match(script, /list\.hidden=open/);
-  assert.match(script, /old\.replaceWith\(turnNode\(turn\)\)/);
+  assert.match(script, /turns\.replaceChildren\(\.\.\.session\.map\(turnNode\)\)/);
   assert.match(script, /const patchFeedback=turn/);
-  assert.match(script, /const patchTurn=incoming/);
+  assert.match(script, /const renderSession=next/);
 });
 
 test("Workbench exposes real retry feedback and bounded Inspector metadata", () => {
@@ -151,7 +175,19 @@ test("Workbench controller keeps one reusable editor panel", () => {
   assert.match(source, /if \(this\.panel\) \{ this\.panel\.reveal/);
   assert.match(source, /this\.panel\.onDidDispose/);
   assert.match(source, /createWebviewPanel/);
-  assert.match(source, /turnCompleted/);
-  assert.match(source, /operationChanged.*false/);
+  assert.match(source, /postSession/);
+  assert.match(source, /replaceSession/);
+  assert.match(source, /this\.connection\.availability/);
+  assert.doesNotMatch(source, /operationChanged/);
   assert.match(source, /clearInterval\(telemetry\)/);
+});
+
+test("Workbench renderer projects status and lifecycle from host-owned snapshots", () => {
+  const script = workbenchRendererScript();
+  assert.match(script, /active=session\.some\(turn=>turn\.status==='pending'\)/);
+  assert.match(script, /connection\.system==='READY'/);
+  assert.match(script, /Needs attention/);
+  assert.match(script, /enforceAvailability/);
+  assert.match(script, /connection\?\.availability/);
+  assert.doesNotMatch(script, /turnCompleted\|\|data\.type==='turnFailed'/);
 });

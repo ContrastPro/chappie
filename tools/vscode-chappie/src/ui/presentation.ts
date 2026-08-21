@@ -48,7 +48,9 @@ export function projectChatAvailability(
     if (localState === "DEGRADED") return "Chappie is configured but needs repair before the local service can connect.";
     return "Chappie setup is required before the local service can connect.";
   }
-  if (capability === "AVAILABLE") return null;
+  // A capability advertisement is not sufficient on its own: Project QA is
+  // grounded in the current Knowledge snapshot and must never start against
+  // stale Knowledge.
   if (aiProvider === "NOT_CONFIGURED" && knowledge === "NOT_CONFIGURED") {
     return "Project chat unavailable. AI and Knowledge setup required.";
   }
@@ -58,6 +60,16 @@ export function projectChatAvailability(
   if (knowledge === "NOT_CONFIGURED") {
     return "Project chat unavailable. Chappie Knowledge is not configured for this workspace.";
   }
+  if (knowledge === "STALE") {
+    return "Knowledge is stale. Repair Chappie to use Project QA.";
+  }
+  if (knowledge !== "READY") {
+    return "Project chat unavailable. Knowledge is not ready for grounded answers.";
+  }
+  if (aiProvider !== "READY") {
+    return "Project chat unavailable. Chappie AI is not ready for this workspace.";
+  }
+  if (capability === "AVAILABLE") return null;
   return "Project chat is temporarily unavailable. Refresh Chappie status for details.";
 }
 
@@ -72,7 +84,7 @@ export function setupActionLabel(
   if (connection !== "CONNECTED") {
     return localState === "READY" ? "Reconnect" : localState === "DEGRADED" ? "Repair" : "Set up";
   }
-  if (capability === "AVAILABLE") return "Set up";
+  if (capability === "AVAILABLE" && aiProvider === "READY" && knowledge === "READY") return "Set up";
   return aiProvider === "NOT_CONFIGURED" && knowledge === "NOT_CONFIGURED" ? "Set up" : "Repair";
 }
 

@@ -3,6 +3,13 @@ import { ConnectionState, ControlPlaneAIStatusV1, ControlPlaneCapabilitiesV1, Co
 import { capabilitySummary, humanState } from "./presentation";
 
 export interface StatusSnapshotV1 { status?: ControlPlaneStatusV1; ai?: ControlPlaneAIStatusV1; capabilities?: ControlPlaneCapabilitiesV1; }
+
+/** Rejects late status responses without reinterpreting their payload. */
+export class StatusRefreshGateV1 {
+  private generation = 0;
+  public begin(): number { this.generation += 1; return this.generation; }
+  public isCurrent(generation: number): boolean { return generation === this.generation; }
+}
 type SidebarActionV1 = "newChat" | "refresh" | "diagnostics";
 export class ChappieStatusSidebarV1 implements vscode.WebviewViewProvider {
   private view: vscode.WebviewView | undefined; private state: ConnectionState = "DISCONNECTED"; private snapshot: StatusSnapshotV1 = {};

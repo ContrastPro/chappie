@@ -59,7 +59,7 @@ The current production components are Header, Conversation, Turn, Safe Markdown,
 
 ## Versioning and packaging
 
-This material UI/protocol change increments the extension install identity to 0.1.4. Distribution contains one active versioned VSIX plus `SHA256SUMS`. A same-version replacement is prohibited because VS Code can retain stale installed code and make acceptance ambiguous.
+This material Workbench state-consistency change increments the extension install identity to 0.1.5. Distribution contains one active versioned VSIX plus `SHA256SUMS`. A same-version replacement is prohibited because VS Code can retain stale installed code and make acceptance ambiguous.
 
 ## Acceptance gates
 
