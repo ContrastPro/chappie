@@ -32,8 +32,8 @@ from app.platform.setup.project_qa_smoke import PROJECT_QA_SETUP_SMOKE_IDENTITY
 ROOT = Path(__file__).parents[1]
 APP = ROOT / "app"
 
-# This list is intentionally temporary and may only shrink as modules move into
-# the approved package tree. cli.py and main.py are stable adapters, not debt.
+# This list is intentionally small and may only shrink. cli.py and main.py are
+# stable adapters, not debt.
 ROOT_MODULE_ALLOWLIST = frozenset(
     {
         "research_methodology.py",
@@ -49,7 +49,6 @@ OFFLINE_RESEARCH_PREFIXES = (
 RUNTIME_TRADING_PREFIXES = (
     "app.main",
     "app.runtime",
-    "app.agent",
     "app.coordination",
     "app.exchange_runtime",
     "app.execution",
@@ -123,7 +122,6 @@ COMPATIBILITY_MAP = {
     "app.control_plane.service": "CANONICAL_IMPLEMENTATION",
     "app.control_plane.transport": "CANONICAL_IMPLEMENTATION",
     "app.control_plane.workspace_context": "CANONICAL_IMPLEMENTATION",
-    "app.tools.*": "TEMPORARY_COMPATIBILITY_WRAPPER",
 }
 COMPLETED_DIRECT_MIGRATIONS = {
     "app.research.data.alignment": "COMPLETED_DIRECT_MIGRATION",
@@ -284,6 +282,9 @@ def test_root_module_allowlist_can_only_shrink() -> None:
 
 
 def test_completed_direct_migrations_have_only_canonical_paths() -> None:
+    assert not (APP / "agent" / "__init__.py").exists()
+    assert not (APP / "core" / "__init__.py").exists()
+    assert not (APP / "database" / "__init__.py").exists()
     assert not (APP / "research_alignment.py").exists()
     assert not (APP / "research_anomalies.py").exists()
     assert not (APP / "research_cache_identity.py").exists()
@@ -677,7 +678,6 @@ def test_compatibility_map_classifies_required_future_surfaces() -> None:
         "CANONICAL_IMPLEMENTATION",
         "FROZEN_PATH",
         "STABLE_PACKAGE_API",
-        "TEMPORARY_COMPATIBILITY_WRAPPER",
     } == set(COMPATIBILITY_MAP.values())
     assert COMPATIBILITY_MAP["app.cli"] == "FROZEN_PATH"
     assert COMPATIBILITY_MAP["app.main"] == "FROZEN_PATH"

@@ -62,11 +62,9 @@ def test_portfolio_architecture_boundaries() -> None:
         "sqlite3",
         "urllib",
         "app.shadow",
-        "app.agent",
         "app.runtime.application",
         "app.main",
         "app.risk",
-        "app.database",
         "app.market.binance_provider",
     }
     portfolio_files = sorted(Path("app/portfolio").glob("*.py"))
@@ -121,10 +119,8 @@ def test_risk_architecture_boundaries() -> None:
         "urllib",
         "pathlib",
         "app.shadow",
-        "app.agent",
         "app.runtime.application",
         "app.main",
-        "app.database",
         "app.market.binance_provider",
         "app.market.cache",
         "app.market.events",
@@ -205,10 +201,8 @@ def test_execution_provider_architecture_boundaries() -> None:
         "time",
         "pathlib",
         "sqlite3",
-        "app.agent",
         "app.runtime.application",
         "app.main",
-        "app.database",
         "app.market.binance_provider",
         "app.market.cache",
         "app.market.polling",
@@ -245,13 +239,11 @@ def test_paper_engine_architecture_boundaries() -> None:
         "pathlib",
         "app.main",
         "app.runtime.application",
-        "app.database",
         "app.market.cache",
         "app.market.polling",
         "app.market.binance_provider",
         "app.shadow",
         "app.strategies",
-        "app.agent",
     }
     paper_files = sorted(Path("app/paper").glob("*.py"))
     assert paper_files
@@ -538,7 +530,6 @@ def test_architecture_import_boundaries() -> None:
         "app/strategies/ema_crossover.py": (
             "app.market.cache",
             "app.market.polling",
-            "app.database",
             "httpx",
             "time",
         ),
@@ -549,11 +540,10 @@ def test_architecture_import_boundaries() -> None:
             "httpx",
             "app.execution",
             "app.risk",
-            "app.database",
             "app.main",
             "app.runtime.trader",
         ),
-        "app/shadow/observer.py": ("pathlib", "app.database"),
+        "app/shadow/observer.py": ("pathlib",),
         "app/shadow/consumer.py": (
             "app.market.cache",
             "app.trading.pipeline.TradingDecisionPipeline",
@@ -566,7 +556,6 @@ def test_architecture_import_boundaries() -> None:
         "app/coordination/trading.py": (
             "app.market.binance_provider",
             "app.market.polling",
-            "app.database",
             "app.execution.paper",
             "httpx",
         ),

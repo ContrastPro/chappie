@@ -25,6 +25,7 @@ only when a direct migration would break an operator contract.
 app/
 ├── cli.py
 ├── main.py
+├── foundation/
 ├── runtime/
 ├── platform/
 │   ├── setup/
@@ -36,6 +37,8 @@ app/
 │   ├── intelligence/
 │   └── strategy/
 ├── ai/
+│   ├── evaluation/
+│   └── research/
 ├── market/
 ├── trading/
 ├── strategies/
@@ -59,7 +62,8 @@ app/
 | `market`, `trading`, `risk`, `portfolio`, `execution` | Domain contracts, deterministic decisions, approvals, fills, and accounting. |
 | `persistence`, `infrastructure` | Durable storage and external adapters implementing bounded ports. |
 | `paper`, `coordination`, `exchange_runtime`, `shadow` | Application/runtime services. |
-| `runtime` | Process composition, status, configuration, and service lifecycle. |
+| `foundation` | Neutral configuration and logging primitives. |
+| `runtime` | Process composition, status, and service lifecycle. |
 | `platform` | Setup, local-provider installation, workstation integration, and bounded smoke checks. |
 | `control_plane` | Read-only local application projection and loopback transport. |
 | `knowledge` | Provenance-bound source ingestion and deterministic retrieval. |

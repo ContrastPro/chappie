@@ -531,8 +531,6 @@ def test_production_factories_and_dependencies_satisfy_protocols() -> None:
 
 def test_decision_modules_have_no_forbidden_infrastructure_dependencies() -> None:
     forbidden = (
-        "app.agent",
-        "app.database",
         "app.execution",
         "app.main",
         "app.market.cache",
