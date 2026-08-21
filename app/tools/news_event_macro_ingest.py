@@ -13,13 +13,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from urllib.request import Request, urlopen
 
-from app.news_event_intelligence import DEFAULT_NEWS_EVENT_STORE_PATH
 from app.research.intelligence.macro_events import (
     OfficialMacroSource,
     ingest_official_macro_records,
     official_macro_registry_digest,
     parse_official_macro_html,
 )
+from app.research.intelligence.news_events import DEFAULT_NEWS_EVENT_STORE_PATH
 from app.research.paths import compact_db_path, news_macro_download_cache_dir, results_dir
 
 

@@ -17,7 +17,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Final
 
-from app.market_intelligence_universe import (
+from app.research.intelligence.universe import (
     ASSETS,
     UNIVERSE_NAME,
     UNIVERSE_VERSION,

@@ -1,4 +1,4 @@
-from app.market_intelligence_universe import (
+from app.research.intelligence.universe import (
     ASSETS,
     GROUPS,
     MEMBERS,

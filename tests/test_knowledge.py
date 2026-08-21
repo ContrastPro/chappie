@@ -46,6 +46,13 @@ def test_records_cover_authority_result_decision_and_exact_filters() -> None:
         query(records, status=KnowledgeStatusV1.PLANNED)[0].knowledge_type
         == KnowledgeTypeV1.BACKLOG
     )
+    expected_path = "app/research/intelligence/multi_asset_flow.py"
+    assert result[0].sources[0].path == expected_path
+    assert decision[0].sources[0].path == expected_path
+    assert result[0].authority == KnowledgeAuthorityV1.VERIFIED_RESEARCH_EVIDENCE
+    assert result[0].status == KnowledgeStatusV1.HISTORICAL
+    assert decision[0].authority == KnowledgeAuthorityV1.PROJECT_DECISION
+    assert decision[0].status == KnowledgeStatusV1.ACTIVE
 
 
 def test_manifest_context_verification_and_conflicts() -> None:

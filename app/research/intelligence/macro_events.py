@@ -17,8 +17,7 @@ from enum import StrEnum
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from app.market_intelligence_universe import UNIVERSE_NAME, UNIVERSE_VERSION, universe_digest
-from app.news_event_intelligence import (
+from app.research.intelligence.news_events import (
     DEFAULT_NEWS_EVENT_STORE_PATH,
     EventFamily,
     EventInterpretationV1,
@@ -33,6 +32,7 @@ from app.news_event_intelligence import (
     classify_source_reference,
     strict_after_five_minute_anchor,
 )
+from app.research.intelligence.universe import UNIVERSE_NAME, UNIVERSE_VERSION, universe_digest
 from app.research_methodology import METHODOLOGY_NAME, METHODOLOGY_VERSION, methodology_digest
 
 REGISTRY_NAME = "news_event_official_macro_sources"

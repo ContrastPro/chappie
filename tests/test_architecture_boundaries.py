@@ -44,9 +44,6 @@ ROOT_MODULE_ALLOWLIST = frozenset(
         "knowledge.py",
         "knowledge_retrieval.py",
         "macos_ollama.py",
-        "market_intelligence_universe.py",
-        "multi_asset_flow_intelligence.py",
-        "news_event_intelligence.py",
         "ollama_readiness.py",
         "ollama_start.py",
         "project_qa_setup_smoke.py",
@@ -60,11 +57,7 @@ ROOT_MODULE_ALLOWLIST = frozenset(
 )
 STABLE_ROOT_ADAPTERS = frozenset({"cli.py", "main.py"})
 
-# Current root-level research identities. When the app.research package exists,
-# replace these with its namespace without changing the guard's semantics.
 OFFLINE_RESEARCH_PREFIXES = (
-    "app.multi_asset_flow_intelligence",
-    "app.news_event_intelligence",
     "app.research_",
     "app.research.intelligence",
     "app.research.strategy",
@@ -120,6 +113,9 @@ COMPLETED_DIRECT_MIGRATIONS = {
     "app.research.intelligence.leverage_stress": "COMPLETED_DIRECT_MIGRATION",
     "app.research.intelligence.macro_events": "COMPLETED_DIRECT_MIGRATION",
     "app.research.intelligence.market": "COMPLETED_DIRECT_MIGRATION",
+    "app.research.intelligence.multi_asset_flow": "COMPLETED_DIRECT_MIGRATION",
+    "app.research.intelligence.news_events": "COMPLETED_DIRECT_MIGRATION",
+    "app.research.intelligence.universe": "COMPLETED_DIRECT_MIGRATION",
     "app.research.strategy.history": "COMPLETED_DIRECT_MIGRATION",
     "app.research.strategy.lab": "COMPLETED_DIRECT_MIGRATION",
     "app.research.strategy.long_history": "COMPLETED_DIRECT_MIGRATION",
@@ -241,6 +237,9 @@ def test_completed_direct_migrations_have_only_canonical_paths() -> None:
     assert not (APP / "research_paths.py").exists()
     assert not (APP / "behavioral_market.py").exists()
     assert not (APP / "capital_rotation.py").exists()
+    assert not (APP / "market_intelligence_universe.py").exists()
+    assert not (APP / "multi_asset_flow_intelligence.py").exists()
+    assert not (APP / "news_event_intelligence.py").exists()
     assert not (APP / "leverage_stress.py").exists()
     assert not (APP / "market_intelligence.py").exists()
     assert not (APP / "market_intelligence_flow.py").exists()
@@ -340,8 +339,8 @@ def test_knowledge_allowlist_paths_exist_and_identify_move_sensitive_sources() -
     assert missing == []
     migration_sensitive = {
         "app/research_methodology.py",
-        "app/market_intelligence_universe.py",
-        "app/multi_asset_flow_intelligence.py",
+        "app/research/intelligence/universe.py",
+        "app/research/intelligence/multi_asset_flow.py",
     }
     assert migration_sensitive <= SOURCE_ALLOWLIST
 

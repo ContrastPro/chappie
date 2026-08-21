@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from app.multi_asset_flow_intelligence import analyze, report_digest
+from app.research.intelligence.multi_asset_flow import analyze, report_digest
 
 
 def main() -> int:

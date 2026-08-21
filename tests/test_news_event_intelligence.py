@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 
 import pytest
 
-from app.news_event_intelligence import (
+from app.research.intelligence.news_events import (
     ASSET_GROUPS,
     AIEnrichmentV1,
     EventFamily,

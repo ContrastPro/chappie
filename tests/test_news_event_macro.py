@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from app.news_event_intelligence import strict_after_five_minute_anchor
 from app.research.data.store import ResearchStore
 from app.research.intelligence.macro_events import (
     MACRO_STORE_SCHEMA,
@@ -21,6 +20,7 @@ from app.research.intelligence.macro_events import (
     official_macro_source_registry,
     parse_official_macro_html,
 )
+from app.research.intelligence.news_events import strict_after_five_minute_anchor
 
 
 @pytest.mark.parametrize(
