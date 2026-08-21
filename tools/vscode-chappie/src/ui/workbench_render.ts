@@ -4,6 +4,9 @@ import { WORKBENCH_COMPOSER_MAX_HEIGHT_PX, WORKBENCH_COMPOSER_MIN_HEIGHT_PX } fr
 export function workbenchRendererScript(): string { return `
 const vscode=acquireVsCodeApi();const codexAvailability='No supported Chappie–Codex runtime integration is configured';let session=[],sessionRevision=-1,selectedTurnId='',active=false,attachments=[];
 let connection=null;
+let inspectorOpen=true;
+const setInspectorOpen=open=>{inspectorOpen=open;const inspector=document.getElementById('inspector'),toggle=document.getElementById('open-inspector');inspector.hidden=!open;toggle.setAttribute('aria-pressed',String(open))};
+queueMicrotask(()=>{const toggle=document.getElementById('open-inspector'),close=document.getElementById('close-inspector'),newChat=document.getElementById('new-conversation');newChat.after(toggle);toggle.textContent='▣';toggle.title='Toggle Inspector';toggle.setAttribute('aria-label','Toggle Inspector');toggle.onclick=()=>setInspectorOpen(!inspectorOpen);close.onclick=()=>setInspectorOpen(false)});
 const normalizeTurn=turn=>turn?.response?{...turn,response:{...turn.response,sources:turn.response.supporting_records||[]}}:turn;
 const expandedQuestions=new Set(),expandedSources=new Set();
 const composerLayout=document.createElement('style');composerLayout.textContent='.composer-footer{flex-wrap:wrap}.composer textarea{max-height:none}';document.head.append(composerLayout);

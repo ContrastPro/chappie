@@ -208,6 +208,8 @@ test("Source disclosures remain DOM-local while canonical session snapshots are 
   assert.match(script, /Sources · /);
   assert.match(script, /list\.hidden=!open/);
   assert.match(html, /\.source-list\[hidden\]\{display:none\}/);
+  assert.match(html, /\.turn \.sources\{margin-top:16px\}/);
+  assert.match(html, /\.turn \.source-list\{margin-top:9px;gap:8px/);
   assert.match(script, /turns\.replaceChildren\(\.\.\.session\.map\(turnNode\)\)/);
   assert.match(script, /const patchFeedback=turn/);
   assert.match(script, /const renderSession=\(next,revision\)/);
@@ -227,6 +229,19 @@ test("Workbench message actions remain local, accessible, and preserve canonical
   assert.match(script, /turn\.status==='failed'/);
   assert.match(script, /const jumpLatest=/);
   assert.match(script, /canvas\.addEventListener\('scroll',updateJumpLatest\)/);
+});
+
+test("Inspector close and header toggle share one Webview-local visibility state", () => {
+  const script = workbenchRendererScript();
+  const html = readFileSync("src/ui/workbench_html.ts", "utf8");
+  assert.match(script, /let inspectorOpen=true/);
+  assert.match(script, /const setInspectorOpen=open=>/);
+  assert.match(script, /newChat\.after\(toggle\)/);
+  assert.match(script, /toggle\.onclick=\(\)=>setInspectorOpen\(!inspectorOpen\)/);
+  assert.match(script, /close\.onclick=\(\)=>setInspectorOpen\(false\)/);
+  assert.match(script, /aria-label','Toggle Inspector'/);
+  assert.match(script, /title='Toggle Inspector'/);
+  assert.match(html, /\.header \.open-inspector\{display:inline-flex/);
 });
 
 test("Workbench exposes real retry feedback and bounded Inspector metadata", () => {

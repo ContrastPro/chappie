@@ -41,7 +41,7 @@ Inspector selection and disclosure state are UI-local. Handler failures or prese
 
 ## Sources and safe rendering
 
-Sources are keyboard-operable disclosures with titles, authority, status, and typed supporting fact identifiers when present. Each completed turn starts collapsed, and its source-list `hidden` state is explicitly enforced so CSS grid layout cannot reveal cards while `aria-expanded="false"`. All AI and source content is inserted with DOM `textContent`. The Markdown subset supports headings, emphasis, lists, quotes, dividers, inline code, fenced code blocks, and copy actions. Raw HTML, remote resources, arbitrary commands, `innerHTML`, `eval`, and script injection are prohibited. The Webview CSP uses `default-src 'none'` and nonce-scoped scripts.
+Sources are keyboard-operable disclosures with titles, authority, status, and typed supporting fact identifiers when present. Each completed turn starts collapsed, and its source-list `hidden` state is explicitly enforced so CSS grid layout cannot reveal cards while `aria-expanded="false"`. The disclosure is low-chrome, aligned with the answer, separated by 16px from answer text and 9px from expanded cards. All AI and source content is inserted with DOM `textContent`. The Markdown subset supports headings, emphasis, lists, quotes, dividers, inline code, fenced code blocks, and copy actions. Raw HTML, remote resources, arbitrary commands, `innerHTML`, `eval`, and script injection are prohibited. The Webview CSP uses `default-src 'none'` and nonce-scoped scripts.
 
 ## State and lifecycle
 
@@ -53,7 +53,7 @@ Connection and readiness state comes only from existing Control Plane status, AI
 
 Long submitted questions use per-turn, bidirectional disclosure: `Show more` expands the complete stored question and `Show less` restores its bounded preview. Top-level conversation separators appear only between adjacent turns, never before the first or after the last. The composer region has no full-width divider or background band; its own surface and spacing provide separation.
 
-Interactive elements use native buttons, explicit labels, `aria-expanded`, `aria-selected`, and `aria-pressed`. Focus uses VS Code focus colors. The design does not rely on color alone: state includes text. Source disclosure, tabs, composer, context chips, Retry, feedback, New Chat, and Inspector controls must be keyboard reachable.
+Interactive elements use native buttons, explicit labels, `aria-expanded`, `aria-selected`, and `aria-pressed`. Focus uses VS Code focus colors. The design does not rely on color alone: state includes text. Source disclosure, tabs, composer, context chips, Retry, feedback, New Chat, and Inspector controls must be keyboard reachable. The permanent header Inspector control and Inspector × share one Webview-local visibility state, so a closed Inspector is always reopenable without resetting the conversation or selected turn.
 
 ## Component seams
 
@@ -61,7 +61,7 @@ The current production components are Header, Conversation, Turn, Safe Markdown,
 
 ## Versioning and packaging
 
-UX-A incremented the extension install identity to 0.1.10 with compact keyboard-accessible per-message actions, local Copy feedback, edit-to-draft without historical mutation, per-turn Sources disclosure, and near-bottom scroll anchoring with a Jump to latest control. The Inspector visual follow-up incremented it to 0.1.11. The Sources/Inspector hidden-state hotfix increments it to 0.1.12. Distribution contains one active versioned VSIX plus `SHA256SUMS`. A same-version replacement is prohibited because VS Code can retain stale installed code and make acceptance ambiguous. The Host-to-Webview session snapshot carries a monotonic revision; Webview discards older snapshots, so a terminal answer cannot be overwritten by a delayed pending snapshot for the same turn.
+UX-A incremented the extension install identity to 0.1.10 with compact keyboard-accessible per-message actions, local Copy feedback, edit-to-draft without historical mutation, per-turn Sources disclosure, and near-bottom scroll anchoring with a Jump to latest control. The Inspector visual follow-up incremented it to 0.1.11, and the Sources/Inspector hidden-state hotfix to 0.1.12. The Sources-spacing and Inspector-reopen hotfix increments it to 0.1.13. Distribution contains one active versioned VSIX plus `SHA256SUMS`. A same-version replacement is prohibited because VS Code can retain stale installed code and make acceptance ambiguous. The Host-to-Webview session snapshot carries a monotonic revision; Webview discards older snapshots, so a terminal answer cannot be overwritten by a delayed pending snapshot for the same turn.
 
 ## Acceptance gates
 
