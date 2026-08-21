@@ -238,7 +238,7 @@ FROZEN_CONTRACT_SNAPSHOT = {
 
 ALLOWED_TRACKED_DISTRIBUTION_ARTIFACTS = frozenset(
     {
-        "tools/vscode-chappie/dist/chappie-vscode-0.1.1.vsix",
+        "tools/vscode-chappie/dist/chappie-vscode-0.1.2.vsix",
         "tools/vscode-chappie/dist/SHA256SUMS",
     }
 )
@@ -489,9 +489,15 @@ def _matches(module: str, prefixes: tuple[str, ...]) -> bool:
 
 def _tracked_files() -> frozenset[str]:
     result = subprocess.run(
-        ["git", "ls-files"], cwd=ROOT, check=True, capture_output=True, text=True
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
+        cwd=ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
     )
-    return frozenset(line for line in result.stdout.splitlines() if line)
+    return frozenset(
+        line for line in result.stdout.splitlines() if line and (ROOT / line).is_file()
+    )
 
 
 def _owner_for_module(module: str) -> str | None:

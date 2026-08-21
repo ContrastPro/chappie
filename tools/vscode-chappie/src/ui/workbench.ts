@@ -40,12 +40,19 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
     this.panel.webview.html = workbenchHtml(this.panel.webview);
     this.panel.webview.onDidReceiveMessage((value: unknown) => { void this.receive(value); });
     this.panel.onDidDispose(() => { this.panel = undefined; });
-    this.post({ type: "initialize", protocol: "chappie_workbench/1.0.0", connection: this.connection, session: this.session.snapshot() });
+    this.post({ type: "initialize", protocol: "chappie_workbench/1.1.0", connection: this.connection, session: this.session.snapshot() });
   }
 
   public updateConnection(connection: WorkbenchConnectionSnapshotV1): void {
     this.connection = connection;
     this.post({ type: "connectionChanged", connection });
+  }
+
+  public newChat(): void {
+    if (this.session.active) return;
+    this.session.clear();
+    this.open();
+    this.post({ type: "replaceSession", session: this.session.snapshot() });
   }
 
   public dispose(): void { this.panel?.dispose(); this.panel = undefined; }
@@ -54,7 +61,7 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
     const message = parseWebviewMessage(value);
     if (!message) return;
     if (message.type === "ready") {
-      this.post({ type: "initialize", protocol: "chappie_workbench/1.0.0", connection: this.connection, session: this.session.snapshot() });
+      this.post({ type: "initialize", protocol: "chappie_workbench/1.1.0", connection: this.connection, session: this.session.snapshot() });
       return;
     }
     if (message.type === "previewContext") {
@@ -70,11 +77,21 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
       this.post({ type: "replaceSession", session: this.session.snapshot() });
       return;
     }
+    if (message.type === "feedback") {
+      this.session.feedback(message.turnId, message.value);
+      this.post({ type: "replaceSession", session: this.session.snapshot() });
+      return;
+    }
     if (message.type === "runAction") {
       await this.dependencies.runAction(message.action);
       return;
     }
-    const turn = this.session.begin(`turn_${++this.sequence}`, message.requestId, message.question.trim(), message.context);
+    const original = message.type === "retry" ? this.session.find(message.turnId) : undefined;
+    if (message.type === "retry" && (!original || original.status === "pending")) return;
+    const question = message.type === "retry" ? original!.question : message.question.trim();
+    const context = message.type === "retry" ? original!.context : message.context;
+    const requestId = message.type === "retry" ? `retry_${Date.now().toString(36)}` : message.requestId;
+    const turn = this.session.begin(`turn_${++this.sequence}`, requestId, question, context);
     if (!turn) return;
     this.post({ type: "turnStarted", turn });
     this.post({ type: "operationChanged", active: true });

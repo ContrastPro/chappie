@@ -7,15 +7,17 @@ export class WorkbenchSessionV1 {
   private turns: WorkbenchTurnV1[] = [];
   public get active(): boolean { return this.turns.some((turn) => turn.status === "pending"); }
   public snapshot(): readonly WorkbenchTurnV1[] { return this.turns.map((turn) => ({ ...turn })); }
-  public begin(turnId: string, requestId: string, question: string, context: ContextOptionsV1): WorkbenchTurnV1 | undefined {
+  public begin(turnId: string, requestId: string, question: string, context: ContextOptionsV1, startedAtMs = Date.now()): WorkbenchTurnV1 | undefined {
     if (this.active) return undefined;
-    const turn: WorkbenchTurnV1 = { turnId, requestId, question, context, status: "pending" };
+    const turn: WorkbenchTurnV1 = { turnId, requestId, question, context: { ...context }, status: "pending", startedAtMs };
     this.turns.push(turn); this.trim(); return { ...turn };
   }
-  public complete(turnId: string, response: WorkbenchTurnV1["response"]): WorkbenchTurnV1 | undefined { return this.settle(turnId, { response, status: "complete" }); }
-  public fail(turnId: string, error: string): WorkbenchTurnV1 | undefined { return this.settle(turnId, { error, status: "failed" }); }
+  public complete(turnId: string, response: WorkbenchTurnV1["response"], completedAtMs = Date.now()): WorkbenchTurnV1 | undefined { return this.settle(turnId, { response, status: "complete", completedAtMs }); }
+  public fail(turnId: string, error: string, completedAtMs = Date.now()): WorkbenchTurnV1 | undefined { return this.settle(turnId, { error, status: "failed", completedAtMs }); }
+  public find(turnId: string): WorkbenchTurnV1 | undefined { const turn = this.turns.find((item) => item.turnId === turnId); return turn ? { ...turn, context: { ...turn.context } } : undefined; }
+  public feedback(turnId: string, value: "good" | "bad"): WorkbenchTurnV1 | undefined { const index = this.turns.findIndex((turn) => turn.turnId === turnId && turn.status === "complete"); if (index < 0) return undefined; this.turns[index] = { ...this.turns[index], feedback: this.turns[index].feedback === value ? null : value }; return { ...this.turns[index] }; }
   public clear(): void { this.turns = this.turns.filter((turn) => turn.status === "pending"); }
-  private settle(turnId: string, update: Pick<WorkbenchTurnV1, "status" | "response" | "error">): WorkbenchTurnV1 | undefined {
+  private settle(turnId: string, update: Pick<WorkbenchTurnV1, "status" | "response" | "error" | "completedAtMs">): WorkbenchTurnV1 | undefined {
     const index = this.turns.findIndex((turn) => turn.turnId === turnId && turn.status === "pending"); if (index < 0) return undefined;
     this.turns[index] = { ...this.turns[index], ...update }; this.trim(); return { ...this.turns[index] };
   }

@@ -141,7 +141,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     return root ? localWorkspaceState(root, platform, fs.existsSync) : "UNCONFIGURED";
   };
   const chat = new ChappieChatView(() => new ChappieControlPlaneClient(configuredPort()));
-  context.subscriptions.push(output, bar, vscode.window.registerTreeDataProvider("chappie.status", tree), vscode.window.registerWebviewViewProvider("chappie.chat", chat), { dispose: () => { ownedProcess.stop(); } });
+  context.subscriptions.push(output, bar, vscode.window.registerTreeDataProvider("chappie.status", tree), { dispose: () => { ownedProcess.stop(); } });
   bar.command = "chappie.openView";
 
   const connect = async (): Promise<ConnectionState> => {
@@ -314,6 +314,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   context.subscriptions.push(
     vscode.commands.registerCommand("chappie.refresh", connect),
     vscode.commands.registerCommand("chappie.openWorkbench", () => workbench?.open()),
+    vscode.commands.registerCommand("chappie.newChat", () => workbench?.newChat()),
     vscode.commands.registerCommand("chappie.openView", () => vscode.commands.executeCommand("workbench.view.extension.chappie")),
     vscode.commands.registerCommand("chappie.showDoctor", async () => {
       const client = new ChappieControlPlaneClient(configuredPort());

@@ -1,6 +1,6 @@
 import { ProjectQAResponseV1 } from "../api/contracts";
 
-export const WORKBENCH_PROTOCOL_VERSION = "chappie_workbench/1.0.0";
+export const WORKBENCH_PROTOCOL_VERSION = "chappie_workbench/1.1.0";
 export const MAX_WORKBENCH_QUESTION_CHARACTERS = 1000;
 
 export interface ContextOptionsV1 { includeFile: boolean; includeSelection: boolean; includeGit: boolean; }
@@ -13,9 +13,11 @@ export interface WorkbenchConnectionSnapshotV1 {
 }
 export type WorkbenchActionV1 = "setup" | "repair" | "reconnect" | "diagnostics";
 export type WorkbenchTurnStatusV1 = "pending" | "complete" | "failed";
+export type WorkbenchFeedbackV1 = "good" | "bad" | null;
 export interface WorkbenchTurnV1 {
   turnId: string; requestId: string; question: string; context: ContextOptionsV1;
   status: WorkbenchTurnStatusV1; response?: ProjectQAResponseV1; error?: string;
+  startedAtMs: number; completedAtMs?: number; feedback?: WorkbenchFeedbackV1;
 }
 
 export type WebviewMessageV1 =
@@ -24,6 +26,8 @@ export type WebviewMessageV1 =
   | { type: "previewContext"; context: ContextOptionsV1 }
   | { type: "removeContext"; kind: keyof ContextOptionsV1 }
   | { type: "clearConversation" }
+  | { type: "retry"; turnId: string }
+  | { type: "feedback"; turnId: string; value: Exclude<WorkbenchFeedbackV1, null> }
   | { type: "runAction"; action: WorkbenchActionV1 };
 
 export type HostMessageV1 =
@@ -44,6 +48,8 @@ export function parseWebviewMessage(value: unknown): WebviewMessageV1 | undefine
   if (!isRecord(value) || typeof value.type !== "string") return undefined;
   if (value.type === "ready") return value.protocol === WORKBENCH_PROTOCOL_VERSION ? { type: "ready", protocol: WORKBENCH_PROTOCOL_VERSION } : undefined;
   if (value.type === "clearConversation") return Object.keys(value).length === 1 ? { type: "clearConversation" } : undefined;
+  if (value.type === "retry" && Object.keys(value).length === 2 && typeof value.turnId === "string" && /^[a-zA-Z0-9_-]{1,64}$/.test(value.turnId)) return { type: "retry", turnId: value.turnId };
+  if (value.type === "feedback" && Object.keys(value).length === 3 && typeof value.turnId === "string" && /^[a-zA-Z0-9_-]{1,64}$/.test(value.turnId) && (value.value === "good" || value.value === "bad")) return { type: "feedback", turnId: value.turnId, value: value.value };
   if (value.type === "removeContext") return Object.keys(value).length === 2 && typeof value.kind === "string" && contextKeys.has(value.kind as keyof ContextOptionsV1) ? { type: "removeContext", kind: value.kind as keyof ContextOptionsV1 } : undefined;
   if (value.type === "runAction") return Object.keys(value).length === 2 && typeof value.action === "string" && actions.has(value.action as WorkbenchActionV1) ? { type: "runAction", action: value.action as WorkbenchActionV1 } : undefined;
   if (value.type === "previewContext") return Object.keys(value).length === 2 && contextOptions(value.context) ? { type: "previewContext", context: contextOptions(value.context)! } : undefined;

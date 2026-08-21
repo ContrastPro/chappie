@@ -32,6 +32,9 @@ test("Workbench protocol accepts only bounded typed webview messages", () => {
   assert.equal(parseWebviewMessage({ type: "ask", requestId: "request_1", question: " ", context: {} }), undefined);
   assert.equal(parseWebviewMessage({ type: "ask", requestId: "request_1", question: "x".repeat(1001), context: {} }), undefined);
   assert.equal(parseWebviewMessage({ type: "runAction", action: "unsafe" }), undefined);
+  assert.deepEqual(parseWebviewMessage({ type: "retry", turnId: "turn_1" }), { type: "retry", turnId: "turn_1" });
+  assert.deepEqual(parseWebviewMessage({ type: "feedback", turnId: "turn_1", value: "good" }), { type: "feedback", turnId: "turn_1", value: "good" });
+  assert.equal(parseWebviewMessage({ type: "feedback", turnId: "turn_1", value: "maybe" }), undefined);
   assert.equal(parseWebviewMessage({ type: "ready", protocol: "wrong" }), undefined);
 });
 
@@ -109,10 +112,31 @@ test("Workbench Markdown subset builds inert DOM nodes for untrusted text", () =
 
 test("Source disclosures remain DOM-local while unrelated turns are patched", () => {
   const script = workbenchRendererScript();
-  assert.match(script, /toggle\.addEventListener\('click'/);
+  assert.match(script, /const toggle=button\('Sources/);
   assert.match(script, /list\.hidden=!expanded/);
-  assert.match(script, /old\.replaceWith\(answerNode\(turn\)\)/);
-  assert.match(script, /patchTurn\(turn\)/);
+  assert.match(script, /section\.replaceWith\(turnNode\(turn\)\)/);
+  assert.match(script, /const patchTurn=turn/);
+});
+
+test("Workbench exposes real retry feedback and bounded Inspector metadata", () => {
+  const script = workbenchRendererScript();
+  assert.match(script, /type:'retry'/);
+  assert.match(script, /type:'feedback'/);
+  assert.match(script, /validation_status/);
+  assert.match(script, /supporting_records/);
+  assert.match(script, /No supported Chappie–Codex runtime integration is configured/);
+  assert.doesNotMatch(script, /chain.of.thought|fake agent|fake market/i);
+});
+
+test("Workbench feedback is local typed state and retry source remains immutable", () => {
+  const session = new WorkbenchSessionV1();
+  const turn = session.begin("turn_1", "request_1", "Question", noContext, 100);
+  assert.ok(turn);
+  session.complete(turn.turnId, response("Answer"), 125);
+  assert.equal(session.feedback(turn.turnId, "good")?.feedback, "good");
+  assert.equal(session.feedback(turn.turnId, "good")?.feedback, null);
+  assert.equal(session.find(turn.turnId)?.question, "Question");
+  assert.equal(session.find(turn.turnId)?.completedAtMs, 125);
 });
 
 test("Workbench controller keeps one reusable editor panel", () => {

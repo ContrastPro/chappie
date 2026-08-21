@@ -30,12 +30,20 @@ export class ChappieStatusTreeV1 implements vscode.TreeDataProvider<vscode.TreeI
       `AI: ${this.snapshot.ai?.model ?? humanState(this.snapshot.ai?.provider_state)}`,
       `Knowledge: ${componentState(this.snapshot.status, "KNOWLEDGE")}`,
       `Capabilities: ${capabilitySummary(this.snapshot.capabilities?.capabilities ?? [])}`,
+      "New Chat",
       "Open Chappie Workbench",
+      "Project QA",
+      "Health Check",
+      "Diagnostics",
     ];
     return rows.map((label) => {
       const result = new vscode.TreeItem(label, vscode.TreeItemCollapsibleState.None);
       if (label.startsWith("Capabilities:")) result.command = { command: "chappie.showCapabilities", title: "Chappie: Show Capabilities" };
       if (label === "Open Chappie Workbench") result.command = { command: "chappie.openWorkbench", title: "Chappie: Open Workbench" };
+      if (label === "New Chat") result.command = { command: "chappie.newChat", title: "Chappie: New Chat" };
+      if (label === "Project QA") result.command = { command: "chappie.openWorkbench", title: "Chappie: Project QA" };
+      if (label === "Health Check") result.command = { command: "chappie.refresh", title: "Chappie: Refresh" };
+      if (label === "Diagnostics") result.command = { command: "chappie.showDoctor", title: "Chappie: Show Doctor" };
       if (label === "System: SETUP_REQUIRED") result.command = { command: "chappie.runSetup", title: "Chappie: Set Up" };
       return result;
     });

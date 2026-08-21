@@ -2,7 +2,7 @@
   "name": "vscode-chappie",
   "displayName": "Chappie",
   "description": "Local Chappie Control Plane companion.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "chappie-local",
   "license": "UNLICENSED",
   "repository": {
@@ -25,7 +25,8 @@
     "onCommand:chappie.showCapabilities",
     "onCommand:chappie.runSetup",
     "onCommand:chappie.openView",
-    "onCommand:chappie.openWorkbench"
+    "onCommand:chappie.openWorkbench",
+    "onCommand:chappie.newChat"
   ],
   "main": "./out/extension.js",
   "files": [
@@ -71,6 +72,10 @@
       {
         "command": "chappie.openWorkbench",
         "title": "Chappie: Open Workbench"
+      },
+      {
+        "command": "chappie.newChat",
+        "title": "Chappie: New Chat"
       }
     ],
     "configuration": {
@@ -109,11 +114,6 @@
         {
           "id": "chappie.status",
           "name": "Chappie Status"
-        },
-        {
-          "id": "chappie.chat",
-          "name": "Chappie Chat",
-          "type": "webview"
         }
       ]
     }
