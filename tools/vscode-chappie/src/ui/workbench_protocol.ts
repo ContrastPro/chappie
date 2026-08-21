@@ -37,8 +37,6 @@ export type WebviewMessageV1 =
   | { type: "clearConversation" }
   | { type: "retry"; turnId: string }
   | { type: "feedback"; turnId: string; value: Exclude<WorkbenchFeedbackV1, null> }
-  /** Development-only bounded trace; never includes prompt or answer text. */
-  | { type: "wbtrace"; checkpoint: "WEBVIEW_RECEIVE" | "WEBVIEW_STATE_AFTER_APPLY" | "DOM_AFTER_RENDER"; requestId: string; turnId: string; sessionRevision: number; status: WorkbenchTurnStatusV1; answerLength: number; accepted: boolean; thinkingPresent?: boolean; answerNodePresent?: boolean; answerTextLength?: number; turnNodeCount?: number }
   | { type: "runAction"; action: WorkbenchActionV1 };
 
 export type HostMessageV1 =
@@ -62,7 +60,6 @@ export function parseWebviewMessage(value: unknown): WebviewMessageV1 | undefine
   if (value.type === "clearConversation") return Object.keys(value).length === 1 ? { type: "clearConversation" } : undefined;
   if (value.type === "retry" && Object.keys(value).length === 2 && typeof value.turnId === "string" && /^[a-zA-Z0-9_-]{1,64}$/.test(value.turnId)) return { type: "retry", turnId: value.turnId };
   if (value.type === "feedback" && Object.keys(value).length === 3 && typeof value.turnId === "string" && /^[a-zA-Z0-9_-]{1,64}$/.test(value.turnId) && (value.value === "good" || value.value === "bad")) return { type: "feedback", turnId: value.turnId, value: value.value };
-  if (value.type === "wbtrace" && typeof value.checkpoint === "string" && ["WEBVIEW_RECEIVE", "WEBVIEW_STATE_AFTER_APPLY", "DOM_AFTER_RENDER"].includes(value.checkpoint) && typeof value.requestId === "string" && /^[a-zA-Z0-9_-]{1,64}$/.test(value.requestId) && typeof value.turnId === "string" && /^[a-zA-Z0-9_-]{1,64}$/.test(value.turnId) && typeof value.sessionRevision === "number" && Number.isInteger(value.sessionRevision) && (value.status === "pending" || value.status === "complete" || value.status === "failed") && typeof value.answerLength === "number" && Number.isInteger(value.answerLength) && typeof value.accepted === "boolean") return value as Extract<WebviewMessageV1, { type: "wbtrace" }>;
   if ((value.type === "attachContext" || value.type === "previewContext" || value.type === "removeContext") && Object.keys(value).length === 2 && typeof value.kind === "string" && contextKeys.has(value.kind as WorkbenchContextKindV1)) return { type: value.type, kind: value.kind as WorkbenchContextKindV1 };
   if (value.type === "runAction") return Object.keys(value).length === 2 && typeof value.action === "string" && actions.has(value.action as WorkbenchActionV1) ? { type: "runAction", action: value.action as WorkbenchActionV1 } : undefined;
   if (value.type === "ask" && Object.keys(value).length === 4 && typeof value.requestId === "string" && /^[a-zA-Z0-9_-]{1,64}$/.test(value.requestId) && typeof value.question === "string" && value.question.trim().length > 0 && value.question.length <= MAX_WORKBENCH_REQUEST_CHARACTERS && contextOptions(value.context)) return { type: "ask", requestId: value.requestId, question: value.question, context: contextOptions(value.context)! };

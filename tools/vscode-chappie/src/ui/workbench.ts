@@ -12,7 +12,6 @@ export interface WorkbenchDependenciesV1 {
   clearContexts(): void;
   runtimeTelemetry(): Promise<RuntimeTelemetryV1>;
   runAction(action: WorkbenchActionV1): Promise<void>;
-  trace(message: string): void;
   workspaceName(): string | undefined;
   errorMessage(error: unknown): string;
 }
@@ -23,7 +22,6 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
   private readonly attachments = new Map<WorkbenchContextKindV1, WorkbenchContextAttachmentV1>();
   private connection: WorkbenchConnectionSnapshotV1 = { state: "DISCONNECTED", system: "UNKNOWN", model: null, knowledge: "UNKNOWN", availability: "Chappie setup is required before the local service can connect.", setupAction: "Set up" };
   private sequence = 0;
-  private traceRequestId: string | undefined;
 
   public constructor(private readonly dependencies: WorkbenchDependenciesV1) {}
 
@@ -49,10 +47,6 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
   private async receive(value: unknown): Promise<void> {
     const message = parseWebviewMessage(value);
     if (!message) return;
-    if (message.type === "wbtrace") {
-      if (message.requestId === this.traceRequestId) this.dependencies.trace(this.webviewTraceLine(message));
-      return;
-    }
     if (message.type === "ready") { this.initialize(); return; }
     if (message.type === "attachContext") {
       try { this.attachments.set(message.kind, await this.dependencies.attachContext(message.kind)); this.post({ type: "attachmentsChanged", attachments: this.attachmentSnapshot() }); }
@@ -75,10 +69,6 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
     }
     const turn = this.session.begin(`turn_${++this.sequence}`, requestId, question, context);
     if (!turn) return;
-    if (!this.traceRequestId) {
-      this.traceRequestId = turn.requestId;
-      this.dependencies.trace(`[WBTRACE][HOST_PENDING] sessionRevision=${this.session.currentRevision} turnId=${turn.turnId} requestId=${turn.requestId} status=${turn.status}`);
-    }
     await this.postSession();
     const telemetry = setInterval(() => { void this.publishTelemetry(); }, 1_500); void this.publishTelemetry();
     try {
@@ -91,19 +81,6 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
 
   private safePreview(kind: WorkbenchContextKindV1): string { try { return this.dependencies.previewContext(kind); } catch { return "Workspace context is unavailable."; } }
   private async publishTelemetry(): Promise<void> { try { this.post({ type: "runtimeTelemetry", telemetry: await this.dependencies.runtimeTelemetry() }); } catch { /* optional diagnostics never affect Project QA */ } }
-  private postSession(): Promise<void> {
-    const message: Extract<HostMessageV1, { type: "replaceSession" }> = { type: "replaceSession", session: this.session.snapshot(), sessionRevision: this.session.currentRevision };
-    const turn = this.traceTurn(message.session);
-    if (turn && turn.status !== "pending") this.dependencies.trace(`[WBTRACE][HOST_TERMINAL] sessionRevision=${message.sessionRevision} turnId=${turn.turnId} requestId=${turn.requestId} status=${turn.status} answerPresent=${Boolean(turn.response?.answer?.trim())} answerLength=${turn.response?.answer?.length ?? 0} sourcesCount=${turn.response?.supporting_records.length ?? 0}`);
-    return this.post(message);
-  }
-  private async post(message: HostMessageV1): Promise<void> {
-    if (message.type === "replaceSession") {
-      const turn = this.traceTurn(message.session);
-      if (turn && turn.status !== "pending") this.dependencies.trace(`[WBTRACE][POSTMESSAGE] type=replaceSession sessionRevision=${message.sessionRevision} turnId=${turn.turnId} requestId=${turn.requestId} status=${turn.status} answerPresent=${Boolean(turn.response?.answer?.trim())} answerLength=${turn.response?.answer?.length ?? 0}`);
-    }
-    await this.panel?.webview.postMessage(message);
-  }
-  private traceTurn(session: readonly import("./workbench_protocol").WorkbenchTurnV1[]): import("./workbench_protocol").WorkbenchTurnV1 | undefined { return this.traceRequestId ? session.find((turn) => turn.requestId === this.traceRequestId) : undefined; }
-  private webviewTraceLine(message: Extract<import("./workbench_protocol").WebviewMessageV1, { type: "wbtrace" }>): string { return `[WBTRACE][${message.checkpoint}] sessionRevision=${message.sessionRevision} turnId=${message.turnId} requestId=${message.requestId} status=${message.status} accepted=${message.accepted} answerLength=${message.answerLength}${message.thinkingPresent === undefined ? "" : ` thinkingPresent=${message.thinkingPresent} answerNodePresent=${message.answerNodePresent} answerTextLength=${message.answerTextLength} turnNodeCount=${message.turnNodeCount}`}`; }
+  private postSession(): Promise<void> { return this.post({ type: "replaceSession", session: this.session.snapshot(), sessionRevision: this.session.currentRevision }); }
+  private async post(message: HostMessageV1): Promise<void> { await this.panel?.webview.postMessage(message); }
 }

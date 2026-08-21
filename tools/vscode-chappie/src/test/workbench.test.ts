@@ -176,8 +176,15 @@ test("Workbench Markdown subset builds inert DOM nodes for untrusted text", () =
   assert.match(script, /code-block/);
   assert.match(script, /blockquote/);
   assert.match(script, /startsWith\(fence\)/);
+  assert.match(script, /const renderMarkdown=\(target,value\)=>target\.replaceChildren\(\.\.\.markdownNodes\(value\)\)/);
   assert.doesNotMatch(script, /innerHTML|insertAdjacentHTML|eval\(/);
   assert.doesNotMatch(script, /https?:\/\//);
+});
+
+test("completed Workbench turns call the Markdown renderer defined by the embedded Webview script", () => {
+  const renderer = workbenchRendererScript();
+  assert.match(renderer, /renderMarkdown\(answer,turn\.response\?\.answer\|\|''\)/);
+  assert.match(renderer, /const renderMarkdown=\(target,value\)=>target\.replaceChildren\(\.\.\.markdownNodes\(value\)\)/);
 });
 
 test("Source disclosures remain DOM-local while canonical session snapshots are rendered", () => {
@@ -230,7 +237,7 @@ test("Workbench renderer projects status and lifecycle from host-owned snapshots
   assert.match(script, /enforceAvailability/);
   assert.match(script, /connection\?\.availability/);
   assert.match(script, /sessionRevision=-1/);
-  assert.match(script, /revision>=sessionRevision/);
+  assert.match(script, /revision<sessionRevision/);
   assert.match(script, /renderSession\(data\.session,data\.sessionRevision\)/);
   assert.match(script, /turn\.status==='pending'/);
   assert.match(script, /resizeComposer/);

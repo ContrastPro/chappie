@@ -323,7 +323,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     clearContexts: () => { workbenchContext.clear(); workbenchInputs.clear(); },
     previewContext: (kind) => contextPreview(new WorkspaceContextCollector().collect(workbenchInputs.get(kind)!, { includeFile: kind === "includeFile", includeSelection: kind === "includeSelection", includeGit: kind === "includeGit" })),
     runtimeTelemetry: queryNvidiaTelemetry,
-    trace: (message) => output.appendLine(message),
     runAction: async (action) => {
       if (action === "diagnostics") {
         await vscode.commands.executeCommand("chappie.showDoctor");
