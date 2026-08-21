@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import tomllib
 from pathlib import Path
 
@@ -679,6 +680,89 @@ def test_hardware_fixtures_keep_gpu_unknown_separate_from_failure(tmp_path: Path
     assert windows.cuda_available is True
     assert linux.gpu_names == ()
     assert linux.cuda_available is None
+
+
+def test_windows_nvidia_12_gib_gpu_is_high_capability_despite_market_ram_boundary(
+    tmp_path: Path,
+) -> None:
+    hardware = detect_hardware(
+        _paths(tmp_path),
+        system="Windows",
+        machine="AMD64",
+        memory_bytes=15_700 * 1024**2,
+        cpu_count=16,
+        gpu_names=("NVIDIA GeForce RTX 4070 Ti",),
+        gpu_memory_bytes=12_282 * 1024**2,
+        cuda_available=None,
+    )
+    assert hardware.capability == HardwareCapabilityV1.HIGH
+    assert hardware.gpu_names == ("NVIDIA GeForce RTX 4070 Ti",)
+
+
+def test_windows_gpu_unavailable_and_absent_keep_cpu_ram_fallback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.platform import bootstrap
+
+    absent = detect_hardware(
+        _paths(tmp_path),
+        system="Windows",
+        machine="AMD64",
+        memory_bytes=16 * 1024**3,
+        cpu_count=8,
+        gpu_names=(),
+        gpu_memory_bytes=None,
+    )
+    monkeypatch.setattr(bootstrap, "_windows_nvidia_smi_info", lambda: ((), None))
+    monkeypatch.setattr(bootstrap, "_windows_cim_gpu_info", lambda: ((), None))
+    unavailable = detect_hardware(
+        _paths(tmp_path),
+        system="Windows",
+        machine="AMD64",
+        memory_bytes=16 * 1024**3,
+        cpu_count=8,
+    )
+    assert absent.capability == HardwareCapabilityV1.BALANCED
+    assert unavailable.capability == absent.capability
+
+
+def test_windows_nvidia_smi_is_bounded_and_parsed_without_profile_mutation(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.platform import bootstrap
+
+    calls: list[tuple[object, ...]] = []
+
+    def run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        assert kwargs["timeout"] == 1
+        assert kwargs["check"] is True
+        assert kwargs["capture_output"] is True
+        assert kwargs["shell"] is False
+        return subprocess.CompletedProcess(
+            args[0], 0, "NVIDIA GeForce RTX 4070 Ti, 12282, 576.88\n", ""
+        )
+
+    monkeypatch.setattr(bootstrap.subprocess, "run", run)
+    paths = _paths(tmp_path)
+    config = ChappieLocalConfigV1(
+        provider="ollama", model="qwen3:14b", enabled_capabilities=("ADVANCED",)
+    )
+    paths.config_file.parent.mkdir(parents=True)
+    paths.config_file.write_text(json.dumps(config.payload()), encoding="utf-8")
+    names, memory = bootstrap._windows_nvidia_smi_info()
+    assert calls == [
+        (
+            [
+                "nvidia-smi",
+                "--query-gpu=name,memory.total,driver_version",
+                "--format=csv,noheader,nounits",
+            ],
+        )
+    ]
+    assert names == ("NVIDIA GeForce RTX 4070 Ti",)
+    assert memory == 12_282 * 1024**2
+    assert load_local_config(paths) == config
 
 
 def test_paths_are_portable_and_config_is_non_secret(tmp_path: Path) -> None:

@@ -194,6 +194,19 @@ class HardwareProfileV1:
         if self.memory_bytes is None or self.logical_cpu_count is None:
             return HardwareCapabilityV1.UNKNOWN
         gib = self.memory_bytes / 1024**3
+        # Windows reports installed RAM slightly below its marketed capacity on some
+        # machines. NVIDIA also reports a marketed 12 GB adapter as 12,282 MiB.
+        # That verified discrete-GPU evidence must not be discarded by a binary
+        # 12 GiB boundary alone.
+        if (
+            self.operating_system == "Windows"
+            and any("nvidia" in name.lower() for name in self.gpu_names)
+            and self.gpu_memory_bytes is not None
+            and self.gpu_memory_bytes >= 12_000 * 1024**2
+            and gib >= 12
+            and self.logical_cpu_count >= 8
+        ):
+            return HardwareCapabilityV1.HIGH
         if gib < 8 or self.logical_cpu_count < 4:
             return HardwareCapabilityV1.MINIMAL
         if gib < 16 or self.logical_cpu_count < 8:
@@ -467,7 +480,53 @@ def _memory_bytes(system: str) -> int | None:
 
 
 def _windows_gpu_info() -> tuple[tuple[str, ...], int | None]:
-    """Best-effort built-in CIM discovery; unknown VRAM stays unknown, never zero."""
+    """Best-effort NVIDIA discovery with a built-in CIM fallback."""
+    nvidia = _windows_nvidia_smi_info()
+    if nvidia[0]:
+        return nvidia
+    return _windows_cim_gpu_info()
+
+
+def _windows_nvidia_smi_info() -> tuple[tuple[str, ...], int | None]:
+    """Read local NVIDIA adapter facts through a bounded argv-only command."""
+    try:
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=name,memory.total,driver_version",
+                "--format=csv,noheader,nounits",
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=1,
+            shell=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return (), None
+    return _parse_nvidia_smi_csv(result.stdout)
+
+
+def _parse_nvidia_smi_csv(raw: str) -> tuple[tuple[str, ...], int | None]:
+    names: list[str] = []
+    memory_mib: list[int] = []
+    for line in raw.splitlines():
+        fields = [field.strip() for field in line.split(",")]
+        if len(fields) != 3 or not fields[0]:
+            continue
+        try:
+            memory = int(fields[1])
+        except ValueError:
+            continue
+        if memory <= 0:
+            continue
+        names.append(fields[0])
+        memory_mib.append(memory)
+    return tuple(names), max(memory_mib) * 1024**2 if memory_mib else None
+
+
+def _windows_cim_gpu_info() -> tuple[tuple[str, ...], int | None]:
+    """Best-effort built-in CIM fallback; unknown VRAM stays unknown, never zero."""
     command = (
         "Get-CimInstance Win32_VideoController | "
         "Select-Object Name,AdapterRAM | ConvertTo-Json -Compress"
