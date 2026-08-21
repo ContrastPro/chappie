@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { ProjectQAResponseV1 } from "../api/contracts";
+import { workbenchMarkdownRendererScript } from "../ui/markdown";
 import { parseWebviewMessage, WORKBENCH_PROTOCOL_VERSION } from "../ui/workbench_protocol";
 import { workbenchRendererScript } from "../ui/workbench_render";
 import { MAX_WORKBENCH_TURNS, WorkbenchSessionV1 } from "../ui/workbench_state";
@@ -88,6 +89,30 @@ test("Workbench renderer uses incremental DOM-safe turn rendering", () => {
   assert.doesNotMatch(script, /innerHTML/);
   assert.match(script, /previewContext/);
   assert.match(script, /clearConversation/);
+  assert.match(script, /aria-expanded/);
+  assert.match(script, /source-list/);
+  assert.match(script, /navigator\.clipboard/);
+  assert.match(script, /scrollHeight-canvas\.scrollTop/);
+  assert.match(script, /context\[key\]/);
+});
+
+test("Workbench Markdown subset builds inert DOM nodes for untrusted text", () => {
+  const script = workbenchMarkdownRendererScript();
+  assert.match(script, /document\.createElement/);
+  assert.match(script, /textContent/);
+  assert.match(script, /code-block/);
+  assert.match(script, /blockquote/);
+  assert.match(script, /startsWith\(fence\)/);
+  assert.doesNotMatch(script, /innerHTML|insertAdjacentHTML|eval\(/);
+  assert.doesNotMatch(script, /https?:\/\//);
+});
+
+test("Source disclosures remain DOM-local while unrelated turns are patched", () => {
+  const script = workbenchRendererScript();
+  assert.match(script, /toggle\.addEventListener\('click'/);
+  assert.match(script, /list\.hidden=!expanded/);
+  assert.match(script, /old\.replaceWith\(answerNode\(turn\)\)/);
+  assert.match(script, /patchTurn\(turn\)/);
 });
 
 test("Workbench controller keeps one reusable editor panel", () => {
