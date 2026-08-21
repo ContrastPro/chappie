@@ -1,11 +1,11 @@
 from dataclasses import replace
 
-from app.ai.rde_capabilities import ExistingEventResearchQueryV1
-from app.ai.rde_query_executor import (
+from app.ai.research.capabilities import ExistingEventResearchQueryV1
+from app.ai.research.query_compiler import CanonicalRDEQueryV1, CanonicalResearchPredicateV1
+from app.ai.research.query_executor import (
     execute_canonical_existing_cache_query,
     execute_existing_cache_query,
 )
-from app.ai.research_query_compiler import CanonicalRDEQueryV1, CanonicalResearchPredicateV1
 from app.research.data.cache_identity import VerifiedResearchCacheIdentityV1
 from tests.rde_executor_fixture_support import (
     bps_oracle,

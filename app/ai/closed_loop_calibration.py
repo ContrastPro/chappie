@@ -12,9 +12,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from app.ai.prompts import prompt_digest
-from app.ai.rde_execution_cache import evidence_payload
-from app.ai.rde_execution_contracts import ExistingCacheResearchEvidenceV1, YearEvidenceSliceV1
-from app.ai.research_evidence_review import (
+from app.ai.research.evidence_review import (
     EvidenceAssessmentV1,
     EvidenceCritiqueRunV1,
     OriginalHypothesisV1,
@@ -22,6 +20,8 @@ from app.ai.research_evidence_review import (
     ResearchHypothesisReviewV1,
     ResearchHypothesisReviewV11,
 )
+from app.ai.research.execution_cache import evidence_payload
+from app.ai.research.execution_contracts import ExistingCacheResearchEvidenceV1, YearEvidenceSliceV1
 from app.ai.schemas import canonical_json, digest
 from app.ai.tasks import AITask, task_contract
 

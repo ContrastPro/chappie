@@ -17,7 +17,17 @@ def test_schemas_import_does_not_eagerly_load_high_level_ai_modules() -> None:
         "import sys; import app.ai.schemas; "
         "assert 'app.ai.runtime' not in sys.modules; "
         "assert 'app.ai.project_qa' not in sys.modules; "
-        "assert 'app.ai.rde_query_executor' not in sys.modules"
+        "assert 'app.ai.research.query_executor' not in sys.modules"
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_ai_package_import_does_not_eagerly_load_research_or_rde_modules() -> None:
+    result = _import(
+        "import sys; import app.ai; "
+        "assert 'app.ai.research.reasoning' not in sys.modules; "
+        "assert 'app.ai.research.query_compiler' not in sys.modules; "
+        "assert 'app.ai.research.query_executor' not in sys.modules"
     )
     assert result.returncode == 0, result.stderr
 

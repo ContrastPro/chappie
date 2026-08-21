@@ -10,25 +10,25 @@ from dataclasses import asdict, dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 
-from app.ai.rde_capabilities import (
+from app.ai.research.capabilities import (
     CapabilityStatusV1,
     ExistingEventResearchQueryV1,
     RDECapabilityResolverV1,
 )
-from app.ai.rde_execution_contracts import (
+from app.ai.research.execution_contracts import (
     ExistingCacheResearchEvidenceV1,
     PersistedEventReferenceV1,
     PersistedMatchReferenceV1,
     YearEvidenceSliceV1,
 )
-from app.ai.rde_query_executor import (
+from app.ai.research.query_compiler import CanonicalRDEQueryV1
+from app.ai.research.query_executor import (
     ExecutorResultV1,
     ExistingCacheFixtureStorage,
     assess_existing_cache_query,
     execute_existing_cache_query,
     existing_executor_digest,
 )
-from app.ai.research_query_compiler import CanonicalRDEQueryV1
 from app.ai.schemas import digest
 from app.research.data.cache_identity import VerifiedResearchCacheIdentityV1
 

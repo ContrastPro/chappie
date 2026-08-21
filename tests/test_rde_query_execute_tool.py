@@ -6,7 +6,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from app.ai.rde_capabilities import ExistingEventResearchQueryV1
+from app.ai.research.capabilities import ExistingEventResearchQueryV1
 from app.tools.rde_query_execute import main
 from tests.rde_executor_fixture_support import btc_fixture
 

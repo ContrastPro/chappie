@@ -5,9 +5,9 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from statistics import mean, median
 
-from app.ai.rde_capabilities import ExistingEventResearchQueryV1
-from app.ai.rde_execution_contracts import ExistingCacheResearchEvidenceV1
-from app.ai.rde_query_executor import execute_existing_cache_query
+from app.ai.research.capabilities import ExistingEventResearchQueryV1
+from app.ai.research.execution_contracts import ExistingCacheResearchEvidenceV1
+from app.ai.research.query_executor import execute_existing_cache_query
 from tests.rde_executor_fixture_support import Fixture, Pair, btc_fixture, eth_touch_fixture
 
 

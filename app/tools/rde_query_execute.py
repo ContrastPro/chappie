@@ -13,10 +13,10 @@ from collections.abc import Sequence
 from dataclasses import asdict
 from pathlib import Path
 
-from app.ai.rde_canonical_storage import CanonicalExistingCacheStorageV1
-from app.ai.rde_capabilities import CapabilityStatusV1, ExistingEventResearchQueryV1
-from app.ai.rde_execution_cache import RDEResearchExecutionService, execution_cache_identity
-from app.ai.rde_query_executor import assess_existing_cache_query
+from app.ai.research.canonical_storage import CanonicalExistingCacheStorageV1
+from app.ai.research.capabilities import CapabilityStatusV1, ExistingEventResearchQueryV1
+from app.ai.research.execution_cache import RDEResearchExecutionService, execution_cache_identity
+from app.ai.research.query_executor import assess_existing_cache_query
 from app.research.paths import compact_db_path, rde_execution_cache_dir, rde_execution_results_dir
 
 

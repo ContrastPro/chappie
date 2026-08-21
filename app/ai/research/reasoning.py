@@ -8,7 +8,7 @@ from enum import StrEnum
 from typing import Any
 
 from app.ai.errors import AIValidationError
-from app.ai.market_semantics import semantic_violation
+from app.ai.research.market_semantics import semantic_violation
 from app.ai.schemas import FactV1, ReasonedStatementV1, digest, timestamp_ms
 
 RESEARCH_REASONING_IDENTITY = "research_reasoning/1.1.0"

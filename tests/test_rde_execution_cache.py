@@ -5,16 +5,16 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from app.ai.rde_capabilities import ExistingEventResearchQueryV1
-from app.ai.rde_execution_cache import (
+from app.ai.research.capabilities import ExistingEventResearchQueryV1
+from app.ai.research.execution_cache import (
     CacheStatusV1,
     RDEResearchExecutionService,
     cache_path,
     execution_cache_identity,
     research_evidence_digest,
 )
-from app.ai.rde_query_executor import execute_existing_cache_query
-from app.ai.research_query_compiler import CanonicalRDEQueryV1, CanonicalResearchPredicateV1
+from app.ai.research.query_compiler import CanonicalRDEQueryV1, CanonicalResearchPredicateV1
+from app.ai.research.query_executor import execute_existing_cache_query
 from tests.rde_executor_fixture_support import Fixture, btc_fixture
 
 

@@ -5,8 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
-from app.ai.research_query_compiler import CanonicalRDEQueryV1
-from app.ai.research_reasoning import RELATIONSHIPS, TARGET_HORIZONS, TARGET_METRICS
+from app.ai.research.query_compiler import CanonicalRDEQueryV1
+from app.ai.research.reasoning import RELATIONSHIPS, TARGET_HORIZONS, TARGET_METRICS
 from app.ai.schemas import digest
 from app.research.data.event_bridge import EVENT_TYPES
 

@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
 
-from app.ai.research_reasoning import (
+from app.ai.research.reasoning import (
     RELATIONSHIPS,
     TARGET_HORIZONS,
     TARGET_METRICS,

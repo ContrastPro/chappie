@@ -22,7 +22,7 @@ from app.ai import (
 from app.ai.prompts import prompt_digest, system_instruction
 from app.ai.provider import ModelProvider
 from app.ai.providers import MockMode, MockProvider, OllamaProvider
-from app.ai.research_reasoning import RESEARCH_REASONING_JSON_SCHEMA
+from app.ai.research.reasoning import RESEARCH_REASONING_JSON_SCHEMA
 from app.ai.router import ModelRouter
 from app.ai.schemas import REASONING_OUTPUT_JSON_SCHEMA
 from app.ai.tasks import task_contract

@@ -36,7 +36,7 @@ from app.ai.benchmark import (
 )
 from app.ai.errors import AIProviderError
 from app.ai.providers import MockMode, MockProvider
-from app.ai.research_reasoning import parse_research_reasoning_output
+from app.ai.research.reasoning import parse_research_reasoning_output
 from app.ai.router import ModelRouter
 from app.ai.runtime import AIConfig, ChappieAI
 from app.ai.schemas import FactV1, parse_reasoning_output

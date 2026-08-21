@@ -11,14 +11,12 @@ import pytest
 from app.ai.errors import AIValidationError
 from app.ai.prompts import prompt_digest
 from app.ai.providers.mock import MockProvider
-from app.ai.rde_capabilities import (
+from app.ai.research.capabilities import (
     CapabilityStatusV1,
     ExistingEventResearchQueryV1,
     RDECapabilityResolverV1,
 )
-from app.ai.rde_execution_cache import evidence_payload, research_evidence_digest
-from app.ai.rde_query_executor import execute_existing_cache_query
-from app.ai.research_evidence_review import (
+from app.ai.research.evidence_review import (
     CLOSED_LOOP_SAFETY_BENCHMARK_IDENTITY,
     CLOSED_LOOP_SAFETY_CASES,
     CRITIQUE_IDENTITY,
@@ -35,12 +33,14 @@ from app.ai.research_evidence_review import (
     parse_research_evidence_critique_v11,
     score_closed_loop_review,
 )
-from app.ai.research_query_compiler import (
+from app.ai.research.execution_cache import evidence_payload, research_evidence_digest
+from app.ai.research.query_compiler import (
     AIResearchIntentV1,
     CompilationStatus,
     ExpectedDirectionV1,
     compile_research_intent,
 )
+from app.ai.research.query_executor import execute_existing_cache_query
 from app.ai.router import ModelRouter
 from app.ai.runtime import AIConfig, ChappieAI
 from app.ai.schemas import FactV1

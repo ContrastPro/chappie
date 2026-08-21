@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from app.ai.rde_capabilities import CapabilityStatusV1, RDECapabilityResolverV1
-from app.ai.research_query_compiler import (
+from app.ai.research.capabilities import CapabilityStatusV1, RDECapabilityResolverV1
+from app.ai.research.query_compiler import (
     COMPILER_IDENTITY,
     FIELD_REGISTRY_V1,
     AIResearchIntentV1,
@@ -16,7 +16,7 @@ from app.ai.research_query_compiler import (
     compile_research_intent,
     compiler_digest,
 )
-from app.ai.research_reasoning import parse_research_reasoning_output_v111
+from app.ai.research.reasoning import parse_research_reasoning_output_v111
 from app.ai.schemas import FactV1
 
 NOW = datetime(2026, 8, 19, 12, tzinfo=UTC)

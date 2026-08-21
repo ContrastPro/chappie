@@ -34,7 +34,7 @@ from app.ai.closed_loop_calibration import (
 from app.ai.errors import AIValidationError
 from app.ai.prompts import prompt_digest
 from app.ai.providers.mock import MockProvider
-from app.ai.research_evidence_review import EvidenceAssessmentV1, parse_research_evidence_critique
+from app.ai.research.evidence_review import EvidenceAssessmentV1, parse_research_evidence_critique
 from app.ai.router import ModelRouter
 from app.ai.runtime import AIConfig, ChappieAI
 from app.ai.tasks import AITask, ModelProfile, task_contract

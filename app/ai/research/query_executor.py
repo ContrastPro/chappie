@@ -9,25 +9,25 @@ from pathlib import Path
 from statistics import mean, median
 from typing import Protocol
 
-from app.ai.rde_capabilities import (
+from app.ai.research.capabilities import (
     METHODOLOGY_DIGEST,
     METHODOLOGY_NAME,
     CapabilityStatusV1,
     ExistingEventResearchQueryV1,
     RDECapabilityResolverV1,
 )
-from app.ai.rde_execution_contracts import (
+from app.ai.research.execution_contracts import (
     ExistingCacheResearchEvidenceV1,
     PersistedEventReferenceV1,
     PersistedMatchReferenceV1,
     YearEvidenceSliceV1,
 )
-from app.ai.research_query_compiler import (
+from app.ai.research.query_compiler import (
     CanonicalRDEQueryV1,
     CanonicalResearchPredicateV1,
     ResearchEvidenceV1,
 )
-from app.ai.research_reasoning import RELATIONSHIPS
+from app.ai.research.reasoning import RELATIONSHIPS
 from app.ai.schemas import digest
 from app.research.data.cache_identity import (
     VerifiedResearchCacheIdentityV1,

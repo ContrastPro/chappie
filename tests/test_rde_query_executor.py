@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from app.ai.rde_capabilities import ExistingEventResearchQueryV1
-from app.ai.rde_query_executor import execute_existing_cache_query, existing_executor_digest
+from app.ai.research.capabilities import ExistingEventResearchQueryV1
+from app.ai.research.query_executor import execute_existing_cache_query, existing_executor_digest
 from tests.rde_executor_fixture_support import Pair, btc_fixture
 
 

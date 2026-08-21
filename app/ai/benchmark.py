@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 
 from app.ai.errors import AIError, AIProviderTimeoutError, AIValidationError
 from app.ai.models import ModelResponse
-from app.ai.research_reasoning import (
+from app.ai.research.reasoning import (
     ResearchReasoningOutputV11,
     TestableHypothesisV11,
     is_rde_queryable,

@@ -11,8 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from app.ai.errors import AIValidationError
-from app.ai.rde_execution_cache import _evidence_from_payload, research_evidence_digest
-from app.ai.rde_execution_contracts import ExistingCacheResearchEvidenceV1
+from app.ai.research.execution_cache import _evidence_from_payload, research_evidence_digest
+from app.ai.research.execution_contracts import ExistingCacheResearchEvidenceV1
 from app.ai.schemas import FactV1, digest
 from app.ai.tasks import AITask, task_contract
 from app.ai.trace import AITraceEvent

@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from app.ai.errors import AIError, AIValidationError
-from app.ai.market_semantics import semantics_context
 from app.ai.models import ModelRequest, ModelResponse
 from app.ai.project_qa import (
     PROJECT_QA_JSON_SCHEMA,
@@ -17,7 +16,7 @@ from app.ai.project_qa import (
     parse_project_qa,
 )
 from app.ai.prompts import prompt_digest, system_instruction
-from app.ai.research_evidence_review import (
+from app.ai.research.evidence_review import (
     RESEARCH_EVIDENCE_CRITIQUE_JSON_SCHEMA,
     RESEARCH_EVIDENCE_CRITIQUE_V11_JSON_SCHEMA,
     EvidenceCritiqueRunV1,
@@ -29,7 +28,8 @@ from app.ai.research_evidence_review import (
     parse_research_evidence_critique,
     parse_research_evidence_critique_v11,
 )
-from app.ai.research_reasoning import (
+from app.ai.research.market_semantics import semantics_context
+from app.ai.research.reasoning import (
     RESEARCH_REASONING_JSON_SCHEMA,
     parse_research_reasoning_output,
     parse_research_reasoning_output_v111,

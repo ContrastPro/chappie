@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from app.ai.rde_canonical_storage import CanonicalExistingCacheStorageV1
+from app.ai.research.canonical_storage import CanonicalExistingCacheStorageV1
 
 
 def _database(path: Path) -> None:

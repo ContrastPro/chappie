@@ -14,9 +14,9 @@ import subprocess
 import tomllib
 from pathlib import Path
 
-from app.ai.market_semantics import MARKET_SEMANTICS_IDENTITY
 from app.ai.project_qa import PROJECT_QA_IDENTITY
-from app.ai.research_reasoning import RESEARCH_REASONING_IDENTITY, RESEARCH_REASONING_V111_IDENTITY
+from app.ai.research.market_semantics import MARKET_SEMANTICS_IDENTITY
+from app.ai.research.reasoning import RESEARCH_REASONING_IDENTITY, RESEARCH_REASONING_V111_IDENTITY
 from app.control_plane import CONTROL_PLANE_CONTRACT_DIGEST, CONTROL_PLANE_IDENTITY
 from app.control_plane.transport import (
     CONTROL_PLANE_TRANSPORT_DIGEST,
@@ -71,6 +71,25 @@ AI_FORBIDDEN_AUTHORITY_PREFIXES = (
     "app.shadow",
     "app.trading",
 )
+AI_RESEARCH_FORBIDDEN_PREFIXES = (
+    "app.platform",
+    "app.control_plane",
+    "app.runtime",
+    "app.coordination",
+    "app.exchange_execution",
+    "app.exchange_runtime",
+    "app.execution",
+    "app.infrastructure",
+    "app.market",
+    "app.paper",
+    "app.persistence",
+    "app.portfolio",
+    "app.risk",
+    "app.shadow",
+    "app.strategies",
+    "app.tools",
+    "app.trading",
+)
 
 # Future moves are intentionally classified before wrappers are created.
 COMPATIBILITY_MAP = {
@@ -123,6 +142,15 @@ COMPLETED_DIRECT_MIGRATIONS = {
     "app.runtime.application": "COMPLETED_DIRECT_MIGRATION",
     "app.runtime.status": "COMPLETED_DIRECT_MIGRATION",
     "app.runtime.trader": "COMPLETED_DIRECT_MIGRATION",
+    "app.ai.research.canonical_storage": "COMPLETED_DIRECT_MIGRATION",
+    "app.ai.research.capabilities": "COMPLETED_DIRECT_MIGRATION",
+    "app.ai.research.evidence_review": "COMPLETED_DIRECT_MIGRATION",
+    "app.ai.research.execution_cache": "COMPLETED_DIRECT_MIGRATION",
+    "app.ai.research.execution_contracts": "COMPLETED_DIRECT_MIGRATION",
+    "app.ai.research.market_semantics": "COMPLETED_DIRECT_MIGRATION",
+    "app.ai.research.query_compiler": "COMPLETED_DIRECT_MIGRATION",
+    "app.ai.research.query_executor": "COMPLETED_DIRECT_MIGRATION",
+    "app.ai.research.reasoning": "COMPLETED_DIRECT_MIGRATION",
     "app.research.strategy.history": "COMPLETED_DIRECT_MIGRATION",
     "app.research.strategy.lab": "COMPLETED_DIRECT_MIGRATION",
     "app.research.strategy.long_history": "COMPLETED_DIRECT_MIGRATION",
@@ -134,8 +162,8 @@ DYNAMIC_IMPORT_OWNERS = {
     "app.ai.__init__": frozenset(
         {
             "app.ai.adapters",
-            "app.ai.research_query_compiler",
-            "app.ai.research_reasoning",
+            "app.ai.research.query_compiler",
+            "app.ai.research.reasoning",
             "app.ai.runtime",
         }
     ),
@@ -269,6 +297,15 @@ def test_completed_direct_migrations_have_only_canonical_paths() -> None:
     assert not (APP / "vscode_integration.py").exists()
     assert not (APP / "windows_ollama.py").exists()
     assert not (APP / "workspace_context.py").exists()
+    assert not (APP / "ai" / "market_semantics.py").exists()
+    assert not (APP / "ai" / "research_evidence_review.py").exists()
+    assert not (APP / "ai" / "research_query_compiler.py").exists()
+    assert not (APP / "ai" / "research_reasoning.py").exists()
+    assert not (APP / "ai" / "rde_canonical_storage.py").exists()
+    assert not (APP / "ai" / "rde_capabilities.py").exists()
+    assert not (APP / "ai" / "rde_execution_cache.py").exists()
+    assert not (APP / "ai" / "rde_execution_contracts.py").exists()
+    assert not (APP / "ai" / "rde_query_executor.py").exists()
     for module in COMPLETED_DIRECT_MIGRATIONS:
         assert importlib.util.find_spec(module) is not None
 
@@ -497,6 +534,16 @@ def test_ai_has_no_execution_or_trading_authority_imports() -> None:
         for path in (APP / "ai").rglob("*.py")
         for imported in _imports(path)
         if _matches(imported, AI_FORBIDDEN_AUTHORITY_PREFIXES)
+    }
+    assert violations == {}
+
+
+def test_ai_research_does_not_import_platform_or_authority_packages() -> None:
+    violations = {
+        _module_name(path): imported
+        for path in (APP / "ai" / "research").rglob("*.py")
+        for imported in _imports(path)
+        if _matches(imported, AI_RESEARCH_FORBIDDEN_PREFIXES)
     }
     assert violations == {}
 

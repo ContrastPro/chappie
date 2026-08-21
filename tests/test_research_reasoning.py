@@ -5,9 +5,9 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.ai import AIConfig, AITask, AIValidationError, ChappieAI, FactV1, ModelProfile
-from app.ai.market_semantics import MARKET_SEMANTICS_IDENTITY, market_semantics_digest
 from app.ai.providers import MockProvider
-from app.ai.research_reasoning import (
+from app.ai.research.market_semantics import MARKET_SEMANTICS_IDENTITY, market_semantics_digest
+from app.ai.research.reasoning import (
     RELATIONSHIPS,
     RESEARCH_REASONING_IDENTITY,
     RESEARCH_REASONING_JSON_SCHEMA,

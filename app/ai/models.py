@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from app.ai.research_reasoning import ResearchReasoningOutputV11
+from app.ai.research.reasoning import ResearchReasoningOutputV11
 from app.ai.schemas import FactV1, ReasoningOutputV1
 from app.ai.tasks import AITask, ModelProfile
 

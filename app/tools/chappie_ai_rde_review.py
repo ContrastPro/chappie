@@ -15,7 +15,7 @@ from pathlib import Path
 
 from app.ai import AIConfig, ChappieAI, ModelProfile
 from app.ai.providers import OllamaProvider
-from app.ai.research_evidence_review import (
+from app.ai.research.evidence_review import (
     OriginalHypothesisV1,
     context_from_evidence_artifact,
 )
