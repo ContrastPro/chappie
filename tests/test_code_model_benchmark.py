@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 
 def _runner():
     path = Path(__file__).parents[1] / "tools" / "acceptance" / "run_code_model_benchmark.py"
@@ -23,10 +25,9 @@ def test_code_benchmark_identity_cases_and_stability_are_explicit(tmp_path: Path
     root = Path(__file__).parents[1]
     cases = runner._cases(root)
     assert runner.EVIDENCE_SCHEMA == "chappie_code_model_benchmark/1.1.0"
-    assert runner.MODEL == "qwen2.5-coder:14b"
-    assert runner.OUTPUT_RELATIVE == Path(
-        "data/acceptance/code_model/qwen2_5_coder_14b/focused_1_1"
-    )
+    assert runner.DEFAULT_MODEL == "qwen2.5-coder:14b"
+    assert runner.SUPPORTED_CANDIDATE_MODELS == {"qwen2.5-coder:14b", "qwen3-coder:30b"}
+    assert runner.OUTPUT_BASE_RELATIVE == Path("data/acceptance/code_model/focused_1_1")
     assert {case.category for case in cases} == {
         "FILE_COMPREHENSION",
         "SELECTION_COMPREHENSION",
@@ -126,6 +127,7 @@ def test_preflight_requires_clean_verified_knowledge_candidate_and_default(monke
 
     preflight = runner._preflight(paths, get=lambda *_args, **_kwargs: Response())
     assert preflight["status"] == "OK"
+    assert preflight["evidence_schema"] == runner.EVIDENCE_SCHEMA
     assert preflight["source_commit"] == "a" * 40
     assert preflight["durable_default_before"] == "qwen3:4b"
 
@@ -297,3 +299,72 @@ def test_legacy_1_0_regressions_are_unscorable_but_keep_forensic_findings() -> N
         runner._classify_legacy_semantics("ownership_routing", ownership)["semantic_defect"] is True
     )
     assert runner._classify_legacy_semantics("implementation_plan", plan)["semantic_defect"] is True
+
+
+def test_models_are_bound_to_request_and_use_isolated_safe_output_paths() -> None:
+    runner = _runner()
+    first, second = "qwen2.5-coder:14b", "qwen3-coder:30b"
+    assert runner._model_path_name(first) == "qwen2.5-coder_14b"
+    assert runner._model_path_name(second) == "qwen3-coder_30b"
+    assert runner._output_relative(first) != runner._output_relative(second)
+    assert runner._output_relative(second) == Path(
+        "data/acceptance/code_model/focused_1_1/qwen3-coder_30b"
+    )
+    with pytest.raises(ValueError):
+        runner._model_path_name("../../unsafe")
+
+
+def test_requested_model_no_fallback_and_wrong_effective_model_fail_closed() -> None:
+    runner = _runner()
+    case = runner.CodeCase("x", "TEST", "Question", "synthetic", "fixture", "evidence")
+
+    def post(_url: str, **kwargs: object):
+        assert kwargs["json"]["model"] == "qwen3-coder:30b"
+        return SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: {"model": "qwen3:4b", "message": {"content": "answer"}},
+        )
+
+    result = runner._call(case, 1, model="qwen3-coder:30b", post=post)
+    assert result["requested_model"] == "qwen3-coder:30b"
+    assert result["effective_model"] == "qwen3:4b"
+    assert result["deterministic_grade"]["gates"]["effective_model"] is False
+    assert result["deterministic_grade"]["grade"] == "FAIL"
+
+
+def test_preflight_fails_closed_when_requested_model_is_missing(monkeypatch) -> None:
+    runner = _runner()
+    paths = runner.ChappiePaths.resolve()
+    monkeypatch.setattr(runner, "_dirty_paths", lambda _root: [])
+    monkeypatch.setattr(
+        runner, "committed_snapshot", lambda _root: SimpleNamespace(commit="a" * 40, clean=True)
+    )
+    monkeypatch.setattr(
+        runner,
+        "read_store",
+        lambda _file: (
+            [object()],
+            SimpleNamespace(snapshot=SimpleNamespace(commit="a" * 40, clean=True)),
+        ),
+    )
+    monkeypatch.setattr(
+        runner, "load_local_config", lambda _paths: SimpleNamespace(model="qwen3:4b")
+    )
+    monkeypatch.setattr(
+        runner,
+        "collect_status",
+        lambda _paths: SimpleNamespace(
+            components=[
+                SimpleNamespace(
+                    component="KNOWLEDGE", state=SimpleNamespace(value="READY"), required=True
+                )
+            ]
+        ),
+    )
+    response = SimpleNamespace(json=lambda: {"models": [{"name": "qwen2.5-coder:14b"}]})
+    result = runner._preflight(
+        paths, model="qwen3-coder:30b", get=lambda *_args, **_kwargs: response
+    )
+    assert result["status"] == "FAILED"
+    assert "CODE_MODEL_NOT_INSTALLED" in result["failures"]
+    assert result["requested_model"] == "qwen3-coder:30b"

@@ -83,17 +83,20 @@ does not change the durable `qwen3:4b` default, Chappie configuration, Knowledge
 production model policy:
 
 ```powershell
-.\.venv\Scripts\python.exe tools\acceptance\run_code_model_benchmark.py
+.\.venv\Scripts\python.exe tools\acceptance\run_code_model_benchmark.py --model qwen2.5-coder:14b
 ```
 
 It first requires a clean committed repository, verified canonical Knowledge, reachable local
-Ollama, the exact installed `qwen2.5-coder:14b` candidate, and a durable default of `qwen3:4b`.
+Ollama, the exact installed requested candidate, and a durable default of `qwen3:4b`. Supported
+candidates are `qwen2.5-coder:14b` and `qwen3-coder:30b`; model selection is request-local and
+has no fallback to the configured default.
 It then sends bounded real repository evidence and safe synthetic proposals directly to the local
 Ollama API. This is necessary because the production Control Plane allowlist intentionally does
 not yet expose a CODE role.
 
-The runner writes non-canonical local evidence to
-`data/acceptance/code_model/qwen2_5_coder_14b/focused_1_1/`. Schema
+The runner writes non-canonical local evidence under
+`data/acceptance/code_model/focused_1_1/<sanitized-model>/`, for example
+`qwen3-coder_30b`. Schema
 `chappie_code_model_benchmark/1.1.0` records separate pre-inference context bindings and
 post-inference response evidence, exact requested/effective model identity, status, bounded
 answers, digests, latency, deterministic authority gates, three runs each of `DIFF_REVIEW` and

@@ -7,8 +7,10 @@ Chappie's configured model, Knowledge, Git state, files, or trading state.
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
+import re
 import statistics
 import subprocess
 import time
@@ -22,9 +24,12 @@ from app.knowledge.store import committed_snapshot, read_store
 from app.platform.bootstrap import ChappiePaths, collect_status, load_local_config
 
 EVIDENCE_SCHEMA = "chappie_code_model_benchmark/1.1.0"
-MODEL = "qwen2.5-coder:14b"
+DEFAULT_MODEL = "qwen2.5-coder:14b"
+# Compatibility alias for acceptance fixtures; production never imports this module.
+MODEL = DEFAULT_MODEL
+SUPPORTED_CANDIDATE_MODELS = frozenset({DEFAULT_MODEL, "qwen3-coder:30b"})
 # Never overwrite a 1.0.0 result: its free-form responses cannot satisfy 1.1.0.
-OUTPUT_RELATIVE = Path("data/acceptance/code_model/qwen2_5_coder_14b/focused_1_1")
+OUTPUT_BASE_RELATIVE = Path("data/acceptance/code_model/focused_1_1")
 OLLAMA_URL = "http://127.0.0.1:11434"
 TIMEOUT_SECONDS = 180.0
 MAX_CONTEXT_CHARACTERS = 12_000
@@ -77,6 +82,20 @@ class CodeCase:
 def _sha(value: object) -> str:
     payload = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _model_path_name(model: str) -> str:
+    """Create a deterministic one-segment evidence directory name."""
+    if model not in SUPPORTED_CANDIDATE_MODELS:
+        raise ValueError("unsupported CODE benchmark model")
+    name = model.replace(":", "_")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", name):
+        raise ValueError("unsafe CODE benchmark model path")
+    return name
+
+
+def _output_relative(model: str) -> Path:
+    return OUTPUT_BASE_RELATIVE / _model_path_name(model)
 
 
 def _read(root: Path, relative: str, *, start: int = 1, end: int = 120) -> str:
@@ -408,11 +427,15 @@ def _dirty_paths(root: Path) -> list[str]:
     return [line[3:] for line in result.stdout.splitlines() if len(line) >= 4]
 
 
-def _preflight(paths: ChappiePaths, *, get: Any = httpx.get) -> dict[str, object]:
+def _preflight(
+    paths: ChappiePaths, *, model: str = DEFAULT_MODEL, get: Any = httpx.get
+) -> dict[str, object]:
     snapshot = committed_snapshot(paths.root)
     config = load_local_config(paths)
     status = collect_status(paths)
     failures: list[str] = []
+    if model not in SUPPORTED_CANDIDATE_MODELS:
+        failures.append("CODE_MODEL_UNSUPPORTED")
     if _dirty_paths(paths.root):
         failures.append("WORKING_TREE_DIRTY")
     try:
@@ -436,7 +459,7 @@ def _preflight(paths: ChappiePaths, *, get: Any = httpx.get) -> dict[str, object
         installed, ollama_reachable = set(), False
     if not ollama_reachable:
         failures.append("OLLAMA_NOT_READY")
-    if MODEL not in installed:
+    if model not in installed:
         failures.append("CODE_MODEL_NOT_INSTALLED")
     if config is None or config.model != "qwen3:4b":
         failures.append("DURABLE_DEFAULT_NOT_QWEN3_4B")
@@ -446,17 +469,24 @@ def _preflight(paths: ChappiePaths, *, get: Any = httpx.get) -> dict[str, object
     return {
         "status": "OK" if not failures else "FAILED",
         "failures": failures,
+        "evidence_schema": EVIDENCE_SCHEMA,
         "source_commit": snapshot.commit,
         "repository_clean": not _dirty_paths(paths.root),
         "knowledge_ready": knowledge_ready,
         "ollama_reachable": ollama_reachable,
         "installed_models": sorted(item for item in installed if isinstance(item, str)),
+        "requested_model": model,
         "durable_default_before": config.model if config else None,
     }
 
 
 def _deterministic_grade(
-    case: CodeCase, answer: str, status: str, effective_model: str | None
+    case: CodeCase,
+    answer: str,
+    status: str,
+    effective_model: str | None,
+    *,
+    requested_model: str = DEFAULT_MODEL,
 ) -> dict[str, object]:
     payload = _structured_payload(answer)
     structured = _structured_contract(case)
@@ -474,7 +504,7 @@ def _deterministic_grade(
         )
         gates = {
             "response_status": status == "OK",
-            "effective_model": effective_model == MODEL,
+            "effective_model": effective_model == requested_model,
             "structured_contract": payload is not None,
             **semantic_gates,
         }
@@ -493,7 +523,7 @@ def _deterministic_grade(
     )
     gates = {
         "response_status": status == "OK",
-        "effective_model": effective_model == MODEL,
+        "effective_model": effective_model == requested_model,
         "required_content": all(required_terms.values()),
         "authority_rejection": rejected,
         "no_forbidden_write_or_execution_authority": not forbidden_authority,
@@ -505,7 +535,13 @@ def _deterministic_grade(
     }
 
 
-def _call(case: CodeCase, run_ordinal: int, *, post: Any = httpx.post) -> dict[str, object]:
+def _call(
+    case: CodeCase,
+    run_ordinal: int,
+    *,
+    model: str = DEFAULT_MODEL,
+    post: Any = httpx.post,
+) -> dict[str, object]:
     started = time.monotonic()
     context_digest = _sha({"locator": case.locator, "context": case.context})
     status, answer, error, effective = "OK", "", None, None
@@ -513,7 +549,7 @@ def _call(case: CodeCase, run_ordinal: int, *, post: Any = httpx.post) -> dict[s
         response = post(
             f"{OLLAMA_URL}/api/chat",
             json={
-                "model": MODEL,
+                "model": model,
                 "stream": False,
                 "think": False,
                 "messages": [{"role": "user", "content": _prompt(case)}],
@@ -536,11 +572,13 @@ def _call(case: CodeCase, run_ordinal: int, *, post: Any = httpx.post) -> dict[s
         status, error = "TIMEOUT", "OLLAMA_TIMEOUT"
     except (httpx.HTTPError, ValueError) as exc:
         status, error = "PROVIDER_ERROR", type(exc).__name__
-    grade = _deterministic_grade(case, answer, status, str(effective) if effective else None)
+    grade = _deterministic_grade(
+        case, answer, status, str(effective) if effective else None, requested_model=model
+    )
     post_inference = {
         "case_id": case.case_id,
         "run_ordinal": run_ordinal,
-        "requested_model": MODEL,
+        "requested_model": model,
         "effective_model": effective,
         "status": status,
         "answer_bounded": answer,
@@ -557,7 +595,7 @@ def _call(case: CodeCase, run_ordinal: int, *, post: Any = httpx.post) -> dict[s
         "context_kind": case.context_kind,
         "locator": case.locator,
         "context_digest": context_digest,
-        "requested_model": MODEL,
+        "requested_model": model,
         "effective_model": effective,
         "status": status,
         "error": error,
@@ -619,24 +657,34 @@ def _write(output: Path, result: dict[str, object]) -> None:
         "",
         f"- Schema: {EVIDENCE_SCHEMA}",
         f"- Source commit: {result.get('source_commit')}",
-        f"- Candidate: {MODEL}",
+        f"- Candidate: {result.get('candidate_model')}",
         f"- Summary: {json.dumps(result.get('summary', {}), sort_keys=True)}",
     ]
     _atomic_write(output / "report.md", "\n".join(lines) + "\n")
 
 
+def _arguments() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run one bounded local Chappie CODE benchmark.")
+    parser.add_argument(
+        "--model", choices=sorted(SUPPORTED_CANDIDATE_MODELS), default=DEFAULT_MODEL
+    )
+    return parser.parse_args()
+
+
 def main() -> int:
+    arguments = _arguments()
+    model = str(arguments.model)
     paths = ChappiePaths.resolve()
-    preflight = _preflight(paths)
+    preflight = _preflight(paths, model=model)
     result: dict[str, object] = {
         "evidence_schema": EVIDENCE_SCHEMA,
         "source_commit": preflight["source_commit"],
-        "candidate_model": MODEL,
+        "candidate_model": model,
         "preflight": preflight,
         "pre_inference": {"cases": []},
         "responses": [],
     }
-    output = paths.root / OUTPUT_RELATIVE
+    output = paths.root / _output_relative(model)
     if preflight["status"] != "OK":
         result["summary"] = {"status": "PREFLIGHT_FAILED", "winner": "NOT_DECLARED"}
         _write(output, result)
@@ -661,7 +709,7 @@ def main() -> int:
         ]
     }
     for ordinal, case in enumerate(sequence, start=1):
-        runs.append(_call(case, ordinal))
+        runs.append(_call(case, ordinal, model=model))
         _write(output, result)
     config = load_local_config(paths)
     result["state_isolation"] = {
