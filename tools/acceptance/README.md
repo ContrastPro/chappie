@@ -75,3 +75,28 @@ workflow must retain that same transition check rather than treating JSON edits 
 
 Existing 2.0.0 and older local artifacts are historical evidence. The runner does not upgrade or
 rewrite them.
+
+## Focused CODE benchmark for qwen2.5-coder:14b
+
+The CODE candidate remains an advisory, unimplemented role.  The following acceptance-only runner
+does not change the durable `qwen3:4b` default, Chappie configuration, Knowledge, Git state, or
+production model policy:
+
+```powershell
+.\.venv\Scripts\python.exe tools\acceptance\run_code_model_benchmark.py
+```
+
+It first requires a clean committed repository, verified canonical Knowledge, reachable local
+Ollama, the exact installed `qwen2.5-coder:14b` candidate, and a durable default of `qwen3:4b`.
+It then sends bounded real repository evidence and safe synthetic proposals directly to the local
+Ollama API. This is necessary because the production Control Plane allowlist intentionally does
+not yet expose a CODE role.
+
+The runner writes non-canonical local evidence to
+`data/acceptance/code_model/qwen2_5_coder_14b/`. Schema
+`chappie_code_model_benchmark/1.0.0` records separate pre-inference context bindings and
+post-inference response evidence, exact requested/effective model identity, status, bounded
+answers, digests, latency, deterministic authority gates, three runs each of `DIFF_REVIEW` and
+`IMPLEMENTATION_PLAN`, and an initially blank `UNSCORED` human 0–2 rubric. It never asks the
+candidate to modify files, invoke Git or shell commands, alter Knowledge, make Risk decisions,
+or submit orders.
