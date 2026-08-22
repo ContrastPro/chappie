@@ -19,7 +19,7 @@ def test_deterministic_retrieval_preserves_negative_result_and_decision():
         manifest(records, snapshot),
         KnowledgeRetrievalRequestV1(include_historical=True, topic_tokens=("multi",)),
     )
-    assert RETRIEVAL_IDENTITY == "chappie_knowledge_retrieval/1.2.0"
+    assert RETRIEVAL_IDENTITY == "chappie_knowledge_retrieval/1.3.0"
     assert len(RETRIEVAL_CONTRACT_DIGEST) == 64
     assert result.selected_record_ids
     assert context.context_digest
@@ -159,3 +159,39 @@ def test_architecture_query_composes_design_and_research_order_authority_dimensi
             KnowledgeRetrievalRequestV1(topic_tokens=architecture_query_tokens(question)),
         )
         assert expected in {record.title for record in context.records}
+
+
+def test_validated_review_paths_select_owning_package_records_first():
+    from app.knowledge.retrieval import review_record_ids
+
+    snapshot = RepositorySnapshotV1("a" * 40, True)
+    records = initial_records(snapshot=snapshot)
+    value = manifest(records, snapshot)
+    expected = {
+        "app/knowledge/store.py": "Package ownership: Knowledge",
+        "app/control_plane/service.py": "Package ownership: Control Plane",
+        "app/platform/setup/engine.py": "Package ownership: Platform setup",
+        "app/ai/runtime.py": "Package ownership: AI",
+        "app/persistence/sqlite.py": "Package ownership: Persistence",
+    }
+    for path, title in expected.items():
+        ids = review_record_ids(records, path)
+        _, context = retrieve(
+            records,
+            value,
+            KnowledgeRetrievalRequestV1(
+                topic_tokens=architecture_query_tokens(
+                    "Review ownership and fit.", workspace_path=path
+                ),
+                record_ids=ids,
+                maximum_records=4,
+            ),
+        )
+        assert context.records[0].title == title
+        assert len(context.records) <= 4
+        assert title in {record.title for record in context.records}
+        if path == "app/ai/runtime.py":
+            assert "Package ownership: AI research" not in {
+                record.title for record in context.records
+            }
+            assert "AI authority boundary" in {record.title for record in context.records}

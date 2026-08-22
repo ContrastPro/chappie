@@ -451,6 +451,7 @@ def _run_project_qa(
         KnowledgeRetrievalRequestV1,
         architecture_query_tokens,
         retrieve,
+        review_record_ids,
     )
     from app.knowledge.store import read_store
     from app.platform.setup.ai_smoke import build_configured_chappie_ai, valid_setup_ai_config
@@ -460,14 +461,18 @@ def _run_project_qa(
         return _project_qa_error(ProjectQAStateV1.AI_UNAVAILABLE, question, "AI_UNAVAILABLE")
     try:
         records, knowledge_manifest = read_store(paths.knowledge_file)
+        workspace_path = getattr(workspace_context, "active_file_relative_path", None)
+        record_ids = review_record_ids(records, workspace_path)
         _result, context = retrieve(
             records,
             knowledge_manifest,
             KnowledgeRetrievalRequestV1(
                 topic_tokens=architecture_query_tokens(
                     question,
-                    workspace_path=getattr(workspace_context, "active_file_relative_path", None),
-                )
+                    workspace_path=workspace_path,
+                ),
+                record_ids=record_ids,
+                maximum_records=4 if record_ids else 8,
             ),
         )
     except ValueError:

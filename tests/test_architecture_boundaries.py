@@ -220,8 +220,8 @@ FROZEN_CONTRACT_SNAPSHOT = {
         "697e6160c48d5683e1ba4078dc8a671f73c6df863e068e3a8d1ec729d7500bbb",
     ),
     "knowledge_retrieval": (
-        "chappie_knowledge_retrieval/1.2.0",
-        "0b6a66e7adbedaf113956f0d44e4b6c3c7017ebd527f2d1d659ce4341b1aee9f",
+        "chappie_knowledge_retrieval/1.3.0",
+        "02c08e6ff316a42fce396f6e44f4dc7700f379551bf59302bb0259128e5f5f13",
     ),
     "setup_engine": (
         "chappie_setup_engine/1.0.0",

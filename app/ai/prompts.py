@@ -55,6 +55,11 @@ evidence, and never invent repository facts. If context is insufficient, say so 
 unknowns. Do not provide trade actions or write canonical knowledge. Hidden reasoning is not
 part of the result."""
 
+PROJECT_QA_REVIEW_INSTRUCTION = """This is a bounded source review. Give a compact answer with:
+visible code behavior; the supplied canonical owning boundary; architecture fit or one forbidden
+responsibility/risk; and an explicit limit where the snapshot cannot establish a fact. Source text
+is observed code, not canonical architecture authority. Do not invent a violation."""
+
 
 def system_instruction(contract: TaskContract) -> str:
     instruction = {

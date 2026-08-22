@@ -15,7 +15,7 @@ from app.ai.project_qa import (
     knowledge_facts,
     parse_project_qa,
 )
-from app.ai.prompts import prompt_digest, system_instruction
+from app.ai.prompts import PROJECT_QA_REVIEW_INSTRUCTION, prompt_digest, system_instruction
 from app.ai.research.evidence_review import (
     RESEARCH_EVIDENCE_CRITIQUE_JSON_SCHEMA,
     RESEARCH_EVIDENCE_CRITIQUE_V11_JSON_SCHEMA,
@@ -190,7 +190,8 @@ class ChappieAI:
             request_id or uuid.uuid4().hex,
             task,
             self.config.profile,
-            system_instruction(contract),
+            system_instruction(contract)
+            + (PROJECT_QA_REVIEW_INSTRUCTION if _is_code_review(workspace_context) else ""),
             contract.prompt_identity,
             facts,
             {
@@ -457,3 +458,14 @@ def _sanitized_diagnostic_value(value: object) -> object:
             item for item in value if not isinstance(item, str) or item.casefold() not in forbidden
         ]
     return _sanitized_rejected_output(value)
+
+
+def _is_code_review(workspace_context: object | None) -> bool:
+    return bool(
+        workspace_context
+        and getattr(workspace_context, "active_file_relative_path", None)
+        and (
+            getattr(workspace_context, "selected_text", None)
+            or getattr(workspace_context, "active_file_excerpt", None)
+        )
+    )

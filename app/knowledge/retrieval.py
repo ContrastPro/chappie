@@ -20,7 +20,7 @@ from app.knowledge.store import (
     detect_conflicts,
 )
 
-RETRIEVAL_IDENTITY = "chappie_knowledge_retrieval/1.2.0"
+RETRIEVAL_IDENTITY = "chappie_knowledge_retrieval/1.3.0"
 AUTHORITY_PRIORITY = (
     KnowledgeAuthorityV1.VERSIONED_CONTRACT,
     KnowledgeAuthorityV1.VERIFIED_RESEARCH_EVIDENCE,
@@ -37,6 +37,7 @@ RETRIEVAL_CONTRACT_DIGEST = digest(
         "ranking": [
             "ARCHITECTURE_INTENT_TOKEN_COMPOSITION",
             "DESIGN_AND_AUTHORITY_FALLBACK",
+            "VALIDATED_PATH_FIRST_REVIEW_COMPOSITION",
             "EXACT_ID",
             "CANONICAL_ENTITY_TITLE",
             "TITLE_TOKEN_OVERLAP",
@@ -49,6 +50,12 @@ RETRIEVAL_CONTRACT_DIGEST = digest(
         "relation_expansion": "EXPLICIT_RELATED_TO_IDS_ONLY",
         "relation_depth_default": 1,
         "context_budget_default": 3000,
+        "review_path_composition": {
+            "path": "VALIDATED_APP_PACKAGE_DIRECTORIES",
+            "ownership": "EXACT_PACKAGE_OWNERSHIP_THEN_FALLBACK",
+            "boundary": "PACKAGE_SPECIFIC_AUTHORITY_OR_BOUNDARY",
+            "maximum_records": 4,
+        },
     }
 )
 
@@ -372,10 +379,48 @@ def architecture_query_tokens(
     if {"external", "provider"}.issubset(tokens) or "integration" in tokens:
         tokens.update({"platform", "infrastructure", "io", "adapter"})
     if workspace_path:
-        parts = tuple(part for part in workspace_path.casefold().split("/") if part)
+        parts = tuple(
+            token
+            for part in workspace_path.casefold().split("/")
+            for token in re.findall(r"[a-z0-9]+", part)
+        )
         if len(parts) >= 2 and parts[0] == "app":
-            tokens.update({"architecture", "ownership", *parts[1:]})
+            tokens.update({"architecture", "ownership", "package", *parts[1:]})
     return tuple(sorted(tokens))[:24]
+
+
+def review_record_ids(
+    records: tuple[KnowledgeRecordV1, ...], workspace_path: str | None
+) -> tuple[str, ...]:
+    """Return bounded ownership/boundary records compatible with a validated app path."""
+    if not workspace_path:
+        return ()
+    path_parts = tuple(part for part in workspace_path.casefold().split("/") if part)
+    if len(path_parts) < 3 or path_parts[0] != "app":
+        return ()
+    # A file name is implementation detail, not package identity.  Including its
+    # extension previously made even exact package paths fail the ownership match.
+    package_tokens = {token for part in path_parts[1:-1] for token in _tokens(part)}
+    if not package_tokens:
+        return ()
+    ownership: list[KnowledgeRecordV1] = []
+    fallback_ownership: list[KnowledgeRecordV1] = []
+    boundaries: list[KnowledgeRecordV1] = []
+    for record in records:
+        title_tokens = _tokens(record.title)
+        if record.title.startswith("Package ownership:"):
+            owned_tokens = title_tokens.difference({"package", "ownership"})
+            if owned_tokens == package_tokens:
+                ownership.append(record)
+            elif package_tokens.issubset(owned_tokens):
+                fallback_ownership.append(record)
+        elif package_tokens.issubset(title_tokens) and (
+            "boundary" in title_tokens or "authority" in title_tokens
+        ):
+            boundaries.append(record)
+    return tuple(
+        record.knowledge_id for record in (*(ownership or fallback_ownership), *boundaries)[:2]
+    )
 
 
 def _tokens(*values: str) -> set[str]:

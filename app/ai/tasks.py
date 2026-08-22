@@ -48,7 +48,7 @@ TASKS = {
             "research_evidence_critique",
             "1.0.0",
         ),
-        TaskContract(AITask.PROJECT_QA_V1, "project_qa", "1.0.3"),
+        TaskContract(AITask.PROJECT_QA_V1, "project_qa", "1.0.4"),
         TaskContract(
             AITask.RESEARCH_EVIDENCE_CRITIQUE_V11,
             "research_evidence_critique",

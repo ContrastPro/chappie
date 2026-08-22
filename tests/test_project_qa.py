@@ -8,6 +8,7 @@ from app.ai.providers.mock import MockProvider
 from app.ai.router import ModelRouter
 from app.ai.runtime import AIConfig, ChappieAI
 from app.ai.tasks import ModelProfile
+from app.control_plane.workspace_context import WorkspaceContextV1, WorkspaceRangeV1
 from app.knowledge import RepositorySnapshotV1, initial_records, manifest
 from app.knowledge.retrieval import KnowledgeRetrievalRequestV1, retrieve
 
@@ -97,3 +98,31 @@ def test_project_qa_accepts_substantive_grounded_answer():
         ai.answer_project_qa(question="What do we know?", knowledge_context=c).answer
         == out["answer"]
     )
+
+
+def test_project_qa_adds_compact_review_instruction_only_for_attached_source():
+    c = _context()
+    output = {
+        "answer": "The selected canonical record reports a negative result.",
+        "supporting_knowledge_fact_ids": [f"knowledge.{c.records[0].knowledge_id}.statement"],
+        "conflicts": [],
+        "unknowns": [],
+        "confidence": 0.5,
+    }
+    provider = MockProvider(output=output)
+    ai = ChappieAI(ModelRouter({ModelProfile.LOCAL_DEFAULT: provider}), AIConfig())
+    ai.answer_project_qa(question="What do we know?", knowledge_context=c)
+    assert "bounded source review" not in provider.requests[-1].system_instruction
+
+    ai.answer_project_qa(
+        question="Review the attached source.",
+        knowledge_context=c,
+        workspace_context=WorkspaceContextV1(
+            workspace_name="chappie",
+            workspace_id="test",
+            active_file_relative_path="app/knowledge/store.py",
+            active_file_excerpt="class KnowledgeStore: ...",
+            excerpt_range=WorkspaceRangeV1(1, 1),
+        ),
+    )
+    assert "bounded source review" in provider.requests[-1].system_instruction

@@ -31,7 +31,7 @@ from app.knowledge.store import committed_snapshot
 from app.platform.bootstrap import ChappiePaths, collect_status
 
 OUTPUT_RELATIVE = Path("data/acceptance/development_copilot")
-EXPECTED_RETRIEVAL_IDENTITY = "chappie_knowledge_retrieval/1.2.0"
+EXPECTED_RETRIEVAL_IDENTITY = "chappie_knowledge_retrieval/1.3.0"
 
 
 @dataclass(frozen=True, slots=True)
