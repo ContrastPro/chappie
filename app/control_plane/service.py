@@ -492,6 +492,7 @@ def _run_project_qa(
     from app.ai.errors import AIProviderError, AIProviderTimeoutError, AIValidationError
     from app.ai.model_policy import (
         LocalModelIdV1,
+        local_model_descriptor_for_concrete_model,
         local_model_id_for_concrete_model,
         resolve_local_model,
     )
@@ -531,15 +532,22 @@ def _run_project_qa(
         return _zero_knowledge_response(question, workspace_context)
     try:
         requested = LocalModelIdV1(requested_model_id) if requested_model_id else None
+        descriptor = (
+            resolve_local_model(requested)
+            if requested
+            else local_model_descriptor_for_concrete_model(config.model or "")
+        )
         effective = resolve_local_model(requested).concrete_model if requested else config.model
+        effective = descriptor.concrete_model if descriptor else effective
         effective_model_id = requested or local_model_id_for_concrete_model(effective)
+        timeout_seconds = descriptor.execution_timeout_seconds if descriptor else 45.0
     except ValueError:
         return _project_qa_error(
             ProjectQAStateV1.VALIDATION_ERROR, question, "MODEL_SELECTION_INVALID"
         )
     ai = None
     try:
-        ai = build_configured_chappie_ai(config, model=effective)
+        ai = build_configured_chappie_ai(config, model=effective, timeout_seconds=timeout_seconds)
         answer = ai.answer_project_qa(
             question=question, knowledge_context=context, workspace_context=workspace_context
         )

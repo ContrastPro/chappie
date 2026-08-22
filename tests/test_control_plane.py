@@ -443,3 +443,51 @@ def test_project_qa_response_serializes_execution_model_metadata() -> None:
     assert payload["requested_model_id"] == "QWEN3_14B"
     assert payload["effective_model_id"] == "QWEN3_14B"
     assert payload["effective_model"] == "qwen3:14b"
+
+
+def test_project_qa_resolves_policy_budget_with_the_selected_model(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from app.ai.errors import AIProviderTimeoutError
+    from app.control_plane import service
+    from app.knowledge import store
+    from app.platform.setup import ai_smoke
+
+    snapshot = RepositorySnapshotV1("a" * 40, True)
+    records = initial_records(snapshot=snapshot)
+    config = ChappieLocalConfigV1(
+        provider="ollama", model="qwen3:4b", enabled_capabilities=("LIGHT",)
+    )
+    captured: list[tuple[str, float]] = []
+
+    class TimeoutAI:
+        def answer_project_qa(self, **_kwargs: object) -> object:
+            raise AIProviderTimeoutError("fixture timeout")
+
+        def close(self) -> None:
+            pass
+
+    def build(_config: object, *, model: str, timeout_seconds: float) -> TimeoutAI:
+        captured.append((model, timeout_seconds))
+        return TimeoutAI()
+
+    monkeypatch.setattr(service, "load_local_config", lambda _paths: config)
+    monkeypatch.setattr(ai_smoke, "valid_setup_ai_config", lambda _config: True)
+    monkeypatch.setattr(ai_smoke, "build_configured_chappie_ai", build)
+    monkeypatch.setattr(store, "read_store", lambda _path: (records, manifest(records, snapshot)))
+    paths = _paths(tmp_path)
+
+    for requested_model_id in (None, "QWEN3_4B", "QWEN3_14B", None):
+        response = service._run_project_qa(
+            paths,
+            "What owns verified research evidence authority?",
+            requested_model_id=requested_model_id,
+        )
+        assert response.state == ProjectQAStateV1.TIMEOUT
+
+    assert captured == [
+        ("qwen3:4b", 45.0),
+        ("qwen3:4b", 45.0),
+        ("qwen3:14b", 75.0),
+        ("qwen3:4b", 45.0),
+    ]

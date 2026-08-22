@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.ai.model_policy import LocalModelIdV1, resolve_local_model
 from app.ai.providers import MockMode, MockProvider
 from app.ai.router import ModelRouter
 from app.ai.runtime import AIConfig, ChappieAI
@@ -9,6 +10,7 @@ from app.platform.setup.ai_smoke import (
     SETUP_SMOKE_TIMEOUT_SECONDS,
     AISetupSmokeStateV1,
     ChappieAISetupSmokeV1,
+    build_configured_chappie_ai,
 )
 
 
@@ -65,3 +67,55 @@ def test_invalid_config_fails_before_provider_generation() -> None:
 
     assert result.state == AISetupSmokeStateV1.CONFIG_ERROR
     assert provider.requests == []
+
+
+def test_request_local_model_budgets_do_not_mutate_the_following_default_runtime() -> None:
+    config = _config(model="qwen3:4b")
+    budgets = [
+        resolve_local_model(LocalModelIdV1.QWEN3_4B).execution_timeout_seconds,
+        resolve_local_model(LocalModelIdV1.QWEN3_14B).execution_timeout_seconds,
+        resolve_local_model(LocalModelIdV1.QWEN3_4B).execution_timeout_seconds,
+    ]
+    runtimes = [
+        build_configured_chappie_ai(
+            config, model=resolve_local_model(model).concrete_model, timeout_seconds=budget
+        )
+        for model, budget in zip(
+            (LocalModelIdV1.QWEN3_4B, LocalModelIdV1.QWEN3_14B, LocalModelIdV1.QWEN3_4B),
+            budgets,
+            strict=True,
+        )
+    ]
+    try:
+        assert [item.config.timeout_seconds for item in runtimes] == [45.0, 75.0, 45.0]
+    finally:
+        for item in runtimes:
+            item.close()
+
+
+def test_configured_runtime_propagates_request_local_budget_to_ollama_provider(monkeypatch) -> None:
+    from app.platform.setup import ai_smoke
+
+    captured: list[tuple[str, float]] = []
+
+    class CapturingProvider:
+        def __init__(self, *, model: str, timeout_seconds: float, **_kwargs: object) -> None:
+            captured.append((model, timeout_seconds))
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(ai_smoke, "OllamaProvider", CapturingProvider)
+    runtimes = [
+        build_configured_chappie_ai(
+            _config(model="qwen3:4b"),
+            model=resolve_local_model(model_id).concrete_model,
+            timeout_seconds=resolve_local_model(model_id).execution_timeout_seconds,
+        )
+        for model_id in (LocalModelIdV1.QWEN3_4B, LocalModelIdV1.QWEN3_14B)
+    ]
+    try:
+        assert captured == [("qwen3:4b", 45.0), ("qwen3:14b", 75.0)]
+    finally:
+        for runtime in runtimes:
+            runtime.close()

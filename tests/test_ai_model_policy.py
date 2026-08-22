@@ -3,6 +3,7 @@ import pytest
 from app.ai.model_policy import (
     LOCAL_MODELS,
     LocalModelIdV1,
+    local_model_descriptor_for_concrete_model,
     project_local_inventory,
     resolve_local_model,
 )
@@ -19,9 +20,18 @@ def test_allowed_local_models_resolve_to_canonical_concrete_models(model_id, con
     assert resolve_local_model(model_id).concrete_model == concrete
 
 
+def test_approved_models_have_request_local_execution_budgets():
+    assert resolve_local_model(LocalModelIdV1.QWEN3_4B).execution_timeout_seconds == 45.0
+    assert resolve_local_model(LocalModelIdV1.QWEN3_14B).execution_timeout_seconds == 75.0
+
+
 def test_unknown_model_is_rejected():
     with pytest.raises(ValueError, match="not allowed"):
         resolve_local_model("not-a-model")  # type: ignore[arg-type]
+
+
+def test_unknown_concrete_model_has_no_approved_execution_budget():
+    assert local_model_descriptor_for_concrete_model("qwen3:8b") is None
 
 
 def test_inventory_is_policy_ordered_and_excludes_unrelated_models():

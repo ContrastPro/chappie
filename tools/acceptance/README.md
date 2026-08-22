@@ -21,3 +21,23 @@ The runner grades generated responses consistently across primary and session ca
 empty synthesis, hard-authority violation, or non-substantive file/selection review is not a PASS.
 Typed `UNKNOWN_CURRENT_CAPABILITY` responses are accepted only for questions that explicitly ask
 about an unsupported current implementation.
+
+## qwen3:14b one-command diagnostic
+
+Run the bounded local diagnostic without changing configuration or installing models:
+
+```sh
+.venv/bin/python tools/acceptance/run_qwen3_14b_diagnostic.py
+```
+
+It writes ignored local evidence to `data/acceptance/model_ab/diagnostic/`, including
+`report.md` and `result.json`.
+
+## Focused qwen3:4b versus qwen3:14b A/B
+
+```sh
+.venv/bin/python tools/acceptance/run_model_ab.py
+```
+
+This explicitly selects each model for the same focused review/control cases and writes ignored
+local evidence to `data/acceptance/model_ab/focused/report.md` and `result.json`.
