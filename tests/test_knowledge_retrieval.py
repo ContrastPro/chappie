@@ -55,7 +55,7 @@ def test_canonical_architecture_entities_outrank_generic_project_term_collisions
         "What owns verified research evidence authority?": "RDE evidence authority",
         "What is the Trading Agent?": "Trading Agent",
         "What is the Setup Engine?": "Setup Engine",
-        "Understand architecture": "Chappie Architecture",
+        "Understand architecture": "Clean Architecture layers",
     }
     for question, expected_title in expected_titles.items():
         result, context = retrieve(

@@ -1,0 +1,3 @@
+# SQLite migration hashes are byte-level contracts.  Keep their checkout bytes
+# canonical across Windows, macOS, and Linux.
+app/persistence/migrations/*.sql text eol=lf
