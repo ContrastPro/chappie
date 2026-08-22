@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from app.ai.model_policy import LocalModelIdV1, LocalModelInventoryItemV1
+from app.ai.model_policy import DevelopmentModelRoleV1, LocalModelIdV1, LocalModelInventoryItemV1
 from app.control_plane import (
     CONTROL_PLANE_IDENTITY,
     ChappieControlPlaneV1,
@@ -61,12 +61,40 @@ class _FakeControlPlane:
 
     def list_models(self) -> tuple[LocalModelInventoryItemV1, ...]:
         return (
-            LocalModelInventoryItemV1(LocalModelIdV1.QWEN3_4B, "qwen3:4b", True, True, True),
-            LocalModelInventoryItemV1(LocalModelIdV1.QWEN3_14B, "qwen3:14b", False, False, False),
+            LocalModelInventoryItemV1(
+                LocalModelIdV1.QWEN3_4B,
+                "qwen3:4b",
+                True,
+                True,
+                True,
+                DevelopmentModelRoleV1.FAST,
+                "FAST",
+                "development_model_role/FAST",
+            ),
+            LocalModelInventoryItemV1(
+                LocalModelIdV1.QWEN3_CODER_30B,
+                "qwen3-coder:30b",
+                False,
+                False,
+                False,
+                DevelopmentModelRoleV1.CODE,
+                "CODE_ADVISORY",
+                "development_model_role/CODE_ADVISORY",
+            ),
+            LocalModelInventoryItemV1(
+                LocalModelIdV1.QWEN3_14B,
+                "qwen3:14b",
+                False,
+                False,
+                False,
+                DevelopmentModelRoleV1.DEEP,
+                "DEEP",
+                "development_model_role/DEEP",
+            ),
         )
 
     def ask_project(
-        self, question: str, _workspace_context: object | None = None
+        self, question: str, _workspace_context: object | None = None, **_selection: object
     ) -> ProjectQAControlPlaneResponseV1:
         return ProjectQAControlPlaneResponseV1(
             ProjectQAStateV1.OK,
@@ -145,6 +173,21 @@ def test_model_inventory_route_projects_service_values_without_recomputation(ser
                 "installed": True,
                 "ready": True,
                 "default": True,
+                "role": "FAST",
+                "profile_identity": "FAST",
+                "capability_identity": "development_model_role/FAST",
+                "availability": "AVAILABLE",
+            },
+            {
+                "model_id": "QWEN3_CODER_30B",
+                "concrete_model": "qwen3-coder:30b",
+                "installed": False,
+                "ready": False,
+                "default": False,
+                "role": "CODE",
+                "profile_identity": "CODE_ADVISORY",
+                "capability_identity": "development_model_role/CODE_ADVISORY",
+                "availability": "UNAVAILABLE",
             },
             {
                 "model_id": "QWEN3_14B",
@@ -152,6 +195,10 @@ def test_model_inventory_route_projects_service_values_without_recomputation(ser
                 "installed": False,
                 "ready": False,
                 "default": False,
+                "role": "DEEP",
+                "profile_identity": "DEEP",
+                "capability_identity": "development_model_role/DEEP",
+                "availability": "UNAVAILABLE",
             },
         ]
     }
@@ -185,6 +232,32 @@ def test_project_qa_post_is_strict_and_serializes_grounded_response(server) -> N
         }
     ]
     status, _headers, body = _request(server, "POST", "/v1/project/qa", "{")
+    assert status == 400
+    assert body["error"]["code"] == "INVALID_REQUEST"
+
+
+def test_project_qa_transport_accepts_one_stable_model_role(server) -> None:
+    status, _headers, body = _request(
+        server,
+        "POST",
+        "/v1/project/qa",
+        json.dumps({"question": "Who owns evidence?", "requested_model_role": "CODE"}),
+    )
+    assert status == 200
+    assert body["data"]["answer"] == "RDE owns evidence authority."
+
+    status, _headers, body = _request(
+        server,
+        "POST",
+        "/v1/project/qa",
+        json.dumps(
+            {
+                "question": "Who owns evidence?",
+                "requested_model_id": "QWEN3_4B",
+                "requested_model_role": "FAST",
+            }
+        ),
+    )
     assert status == 400
     assert body["error"]["code"] == "INVALID_REQUEST"
 

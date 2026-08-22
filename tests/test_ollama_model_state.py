@@ -39,6 +39,7 @@ def test_model_state_is_sorted_local_tags_and_composes_with_policy():
     )
     assert [(x.installed, x.ready, x.default) for x in inventory] == [
         (True, True, True),
+        (False, False, False),
         (True, True, False),
     ]
     assert client.paths == ["/api/tags"]

@@ -270,7 +270,9 @@ class ChappieControlPlaneServerV1:
             value = json.loads(handler.rfile.read(content_length))
             if (
                 not isinstance(value, dict)
-                or set(value).difference({"question", "workspace_context", "requested_model_id"})
+                or set(value).difference(
+                    {"question", "workspace_context", "requested_model_id", "requested_model_role"}
+                )
                 or "question" not in value
             ):
                 raise ValueError
@@ -278,12 +280,21 @@ class ChappieControlPlaneServerV1:
             if not isinstance(question, str):
                 raise TypeError
             requested_model_id = value.get("requested_model_id")
+            requested_model_role = value.get("requested_model_role")
+            if requested_model_id is not None and requested_model_role is not None:
+                raise ValueError
             if requested_model_id is not None:
                 from app.ai.model_policy import LocalModelIdV1
 
                 if not isinstance(requested_model_id, str):
                     raise TypeError
                 requested_model_id = LocalModelIdV1(requested_model_id).value
+            if requested_model_role is not None:
+                from app.ai.model_policy import DevelopmentModelRoleV1
+
+                if not isinstance(requested_model_role, str):
+                    raise TypeError
+                requested_model_role = DevelopmentModelRoleV1(requested_model_role).value
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             self._write(
                 handler,
@@ -297,11 +308,17 @@ class ChappieControlPlaneServerV1:
             )
             return
         try:
-            if requested_model_id is None:
+            if requested_model_id is None and requested_model_role is None:
                 response = self._control_plane.ask_project(question, value.get("workspace_context"))
-            else:
+            elif requested_model_id is not None:
                 response = self._control_plane.ask_project(
                     question, value.get("workspace_context"), requested_model_id=requested_model_id
+                )
+            else:
+                response = self._control_plane.ask_project(
+                    question,
+                    value.get("workspace_context"),
+                    requested_model_role=requested_model_role,
                 )
             payload = response.payload()
             if response.error is not None:

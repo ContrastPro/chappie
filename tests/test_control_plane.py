@@ -401,6 +401,7 @@ def test_list_models_projects_only_policy_models_without_mutation(tmp_path: Path
     items = plane.list_models()
     assert [(x.model_id.value, x.installed, x.ready, x.default) for x in items] == [
         ("QWEN3_4B", True, True, True),
+        ("QWEN3_CODER_30B", False, False, False),
         ("QWEN3_14B", True, True, False),
     ]
     assert config.model == "qwen3:4b"
@@ -419,6 +420,7 @@ def test_list_models_is_honest_when_runtime_is_not_ready(tmp_path: Path) -> None
     )
     assert [(x.installed, x.ready, x.default) for x in plane.list_models()] == [
         (True, False, True),
+        (False, False, False),
         (False, False, False),
     ]
 
@@ -443,6 +445,132 @@ def test_project_qa_response_serializes_execution_model_metadata() -> None:
     assert payload["requested_model_id"] == "QWEN3_14B"
     assert payload["effective_model_id"] == "QWEN3_14B"
     assert payload["effective_model"] == "qwen3:14b"
+    assert payload["requested_model_role"] is None
+
+
+def test_project_qa_role_selection_is_fail_closed_when_the_role_is_unavailable(
+    tmp_path: Path,
+) -> None:
+    from app.platform.ollama.model_state import LocalOllamaModelStateV1
+
+    calls: list[object] = []
+    plane = ChappieControlPlaneV1(
+        _paths(tmp_path),
+        status_collector=lambda _paths: _status(),
+        config_loader=lambda _paths: ChappieLocalConfigV1(
+            provider="ollama", model="qwen3:4b", enabled_capabilities=("LIGHT",)
+        ),
+        model_state_reader=lambda: LocalOllamaModelStateV1(("qwen3:4b",), True),
+        project_qa_runner=lambda *_args, **_kwargs: calls.append(_args),
+    )
+
+    response = plane.ask_project("Explain architecture", requested_model_role="CODE")
+
+    assert response.state == ProjectQAStateV1.AI_UNAVAILABLE
+    assert response.error is not None
+    assert response.error.reason_code == "MODEL_ROLE_UNAVAILABLE"
+    assert response.requested_model_role == "CODE"
+    assert response.requested_model == "qwen3-coder:30b"
+    assert calls == []
+
+
+def test_project_qa_role_selection_passes_exact_mapping_and_metadata(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from app.ai.errors import AIProviderTimeoutError
+    from app.control_plane import service
+    from app.knowledge import store
+    from app.platform.ollama.model_state import LocalOllamaModelStateV1
+    from app.platform.setup import ai_smoke
+
+    snapshot = RepositorySnapshotV1("a" * 40, True)
+    records = initial_records(snapshot=snapshot)
+    config = ChappieLocalConfigV1(
+        provider="ollama", model="qwen3:4b", enabled_capabilities=("LIGHT",)
+    )
+    captured: list[tuple[str, float]] = []
+
+    class TimeoutAI:
+        def answer_project_qa(self, **_kwargs: object) -> object:
+            raise AIProviderTimeoutError("fixture timeout")
+
+        def close(self) -> None:
+            pass
+
+    def build(_config: object, *, model: str, timeout_seconds: float) -> TimeoutAI:
+        captured.append((model, timeout_seconds))
+        return TimeoutAI()
+
+    monkeypatch.setattr(service, "load_local_config", lambda _paths: config)
+    monkeypatch.setattr(ai_smoke, "valid_setup_ai_config", lambda _config: True)
+    monkeypatch.setattr(ai_smoke, "build_configured_chappie_ai", build)
+    monkeypatch.setattr(store, "read_store", lambda _path: (records, manifest(records, snapshot)))
+    plane = ChappieControlPlaneV1(
+        _paths(tmp_path),
+        status_collector=lambda _paths: _status(),
+        config_loader=lambda _paths: config,
+        model_state_reader=lambda: LocalOllamaModelStateV1(("qwen3-coder:30b",), True),
+    )
+
+    response = plane.ask_project(
+        "What owns verified research evidence authority?", requested_model_role="CODE"
+    )
+
+    assert response.state == ProjectQAStateV1.TIMEOUT
+    assert captured == [("qwen3-coder:30b", 90.0)]
+
+
+def test_project_qa_successful_role_selection_returns_auditable_model_metadata(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from types import SimpleNamespace
+
+    from app.control_plane import service
+    from app.knowledge import store
+    from app.platform.setup import ai_smoke
+
+    snapshot = RepositorySnapshotV1("a" * 40, True)
+    records = initial_records(snapshot=snapshot)
+    config = ChappieLocalConfigV1(
+        provider="ollama", model="qwen3:4b", enabled_capabilities=("LIGHT",)
+    )
+
+    class SuccessfulAI:
+        def answer_project_qa(self, **kwargs: object) -> object:
+            context = kwargs["knowledge_context"]
+            return SimpleNamespace(
+                answer="RDE owns verified evidence authority.",
+                supporting_knowledge_fact_ids=(
+                    f"knowledge.{context.records[0].knowledge_id}.statement",
+                ),
+                unknowns=(),
+                context_digest=context.context_digest,
+            )
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(service, "load_local_config", lambda _paths: config)
+    monkeypatch.setattr(ai_smoke, "valid_setup_ai_config", lambda _config: True)
+    monkeypatch.setattr(
+        ai_smoke,
+        "build_configured_chappie_ai",
+        lambda _config, **_kwargs: SuccessfulAI(),
+    )
+    monkeypatch.setattr(store, "read_store", lambda _path: (records, manifest(records, snapshot)))
+
+    response = service._run_project_qa(
+        _paths(tmp_path),
+        "What owns verified research evidence authority?",
+        requested_model_role="CODE",
+    )
+
+    assert response.state == ProjectQAStateV1.OK
+    assert response.requested_model_role == "CODE"
+    assert response.requested_model == response.effective_model == "qwen3-coder:30b"
+    assert response.effective_model_id == "QWEN3_CODER_30B"
+    assert response.profile_identity == "CODE_ADVISORY"
+    assert response.capability_identity == "development_model_role/CODE_ADVISORY"
 
 
 def test_project_qa_resolves_policy_budget_with_the_selected_model(

@@ -213,8 +213,12 @@ class ProjectQAControlPlaneResponseV1:
     workspace_context_digest: str | None = None
     workspace_context_used: tuple[str, ...] = ()
     requested_model_id: str | None = None
+    requested_model_role: str | None = None
+    requested_model: str | None = None
     effective_model_id: str | None = None
     effective_model: str | None = None
+    profile_identity: str | None = None
+    capability_identity: str | None = None
 
     def payload(self) -> dict[str, object]:
         return {
@@ -232,8 +236,12 @@ class ProjectQAControlPlaneResponseV1:
             "provider": self.provider,
             "model": self.model,
             "requested_model_id": self.requested_model_id,
+            "requested_model_role": self.requested_model_role,
+            "requested_model": self.requested_model,
             "effective_model_id": self.effective_model_id,
             "effective_model": self.effective_model,
+            "profile_identity": self.profile_identity,
+            "capability_identity": self.capability_identity,
             "authority": "AI_WITH_KNOWLEDGE_READ_ONLY",
             "validation_status": self.validation_status,
             "error": self.error.payload() if self.error else None,
@@ -438,6 +446,7 @@ class ChappieControlPlaneV1:
         workspace_context: object | None = None,
         *,
         requested_model_id: str | None = None,
+        requested_model_role: str | None = None,
     ) -> ProjectQAControlPlaneResponseV1:
         if not isinstance(question, str) or not question.strip():
             return ProjectQAControlPlaneResponseV1(
@@ -469,11 +478,47 @@ class ChappieControlPlaneV1:
                 question.strip(),
                 "WORKSPACE_CONTEXT_INVALID",
             )
+        if requested_model_id is not None and requested_model_role is not None:
+            return _project_qa_error(
+                ProjectQAStateV1.VALIDATION_ERROR,
+                question.strip(),
+                "MODEL_SELECTION_AMBIGUOUS",
+            )
+        if requested_model_role is not None:
+            try:
+                from app.ai.model_policy import (
+                    DevelopmentModelRoleV1,
+                    resolve_development_model_role,
+                )
+
+                role = DevelopmentModelRoleV1(requested_model_role)
+                role_descriptor, model_descriptor = resolve_development_model_role(role)
+                role_item = next(item for item in self.list_models() if item.role == role)
+            except (OSError, RuntimeError, TypeError, ValueError, StopIteration):
+                return _project_qa_error(
+                    ProjectQAStateV1.VALIDATION_ERROR,
+                    question.strip(),
+                    "MODEL_ROLE_INVALID",
+                )
+            if not role_item.ready:
+                return _project_qa_error(
+                    ProjectQAStateV1.AI_UNAVAILABLE,
+                    question.strip(),
+                    "MODEL_ROLE_UNAVAILABLE",
+                    requested_model_role=role.value,
+                    requested_model=model_descriptor.concrete_model,
+                    profile_identity=role_descriptor.profile_identity,
+                    capability_identity=role_descriptor.capability_identity,
+                )
         try:
-            if requested_model_id is None:
+            if requested_model_id is None and requested_model_role is None:
                 return self._project_qa_runner(self._paths, question.strip(), context)
+            if requested_model_id is not None:
+                return self._project_qa_runner(
+                    self._paths, question.strip(), context, requested_model_id=requested_model_id
+                )
             return self._project_qa_runner(
-                self._paths, question.strip(), context, requested_model_id=requested_model_id
+                self._paths, question.strip(), context, requested_model_role=requested_model_role
             )
         except (OSError, RuntimeError, TypeError, ValueError):
             return _project_qa_error(
@@ -487,13 +532,16 @@ def _run_project_qa(
     workspace_context: object | None = None,
     *,
     requested_model_id: str | None = None,
+    requested_model_role: str | None = None,
 ) -> ProjectQAControlPlaneResponseV1:
     """Execute one bounded Project QA request over an existing verified Knowledge store."""
     from app.ai.errors import AIProviderError, AIProviderTimeoutError, AIValidationError
     from app.ai.model_policy import (
+        DevelopmentModelRoleV1,
         LocalModelIdV1,
         local_model_descriptor_for_concrete_model,
         local_model_id_for_concrete_model,
+        resolve_development_model_role,
         resolve_local_model,
     )
     from app.knowledge.retrieval import (
@@ -531,15 +579,35 @@ def _run_project_qa(
     if not context.records:
         return _zero_knowledge_response(question, workspace_context)
     try:
+        if requested_model_id and requested_model_role:
+            raise ValueError("ambiguous model selection")
         requested = LocalModelIdV1(requested_model_id) if requested_model_id else None
+        requested_role = (
+            DevelopmentModelRoleV1(requested_model_role) if requested_model_role else None
+        )
+        role_descriptor, role_model_descriptor = (
+            resolve_development_model_role(requested_role) if requested_role else (None, None)
+        )
         descriptor = (
-            resolve_local_model(requested)
+            role_model_descriptor
+            if requested_role
+            else resolve_local_model(requested)
             if requested
             else local_model_descriptor_for_concrete_model(config.model or "")
         )
-        effective = resolve_local_model(requested).concrete_model if requested else config.model
+        effective = (
+            role_model_descriptor.concrete_model
+            if requested_role and role_model_descriptor
+            else resolve_local_model(requested).concrete_model
+            if requested
+            else config.model
+        )
         effective = descriptor.concrete_model if descriptor else effective
-        effective_model_id = requested or local_model_id_for_concrete_model(effective)
+        effective_model_id = (
+            role_model_descriptor.model_id
+            if requested_role and role_model_descriptor
+            else requested or local_model_id_for_concrete_model(effective)
+        )
         timeout_seconds = descriptor.execution_timeout_seconds if descriptor else 45.0
     except ValueError:
         return _project_qa_error(
@@ -585,8 +653,12 @@ def _run_project_qa(
         provider=config.provider,
         model=effective,
         requested_model_id=requested.value if requested else None,
+        requested_model_role=requested_role.value if requested_role else None,
+        requested_model=descriptor.concrete_model if descriptor else effective,
         effective_model_id=effective_model_id.value if effective_model_id else None,
         effective_model=effective,
+        profile_identity=role_descriptor.profile_identity if role_descriptor else None,
+        capability_identity=role_descriptor.capability_identity if role_descriptor else None,
         validation_status="VALID",
         workspace_context_digest=workspace_context.context_digest if workspace_context else None,
         workspace_context_used=_workspace_provenance(workspace_context),
@@ -594,12 +666,23 @@ def _run_project_qa(
 
 
 def _project_qa_error(
-    state: ProjectQAStateV1, question: str, reason_code: str
+    state: ProjectQAStateV1,
+    question: str,
+    reason_code: str,
+    *,
+    requested_model_role: str | None = None,
+    requested_model: str | None = None,
+    profile_identity: str | None = None,
+    capability_identity: str | None = None,
 ) -> ProjectQAControlPlaneResponseV1:
     return ProjectQAControlPlaneResponseV1(
         state,
         question,
         error=ControlPlaneErrorV1(ControlPlaneStateV1.UNAVAILABLE, reason_code),
+        requested_model_role=requested_model_role,
+        requested_model=requested_model,
+        profile_identity=profile_identity,
+        capability_identity=capability_identity,
     )
 
 
