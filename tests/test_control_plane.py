@@ -305,6 +305,65 @@ def test_ready_knowledge_with_no_relevant_records_is_not_reported_as_unconfigure
     assert response.error.reason_code == "PROJECT_QA_NO_RELEVANT_KNOWLEDGE"
 
 
+def test_project_qa_returns_honest_unknown_current_capability_without_ai(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from app.control_plane import service
+    from app.knowledge import store
+    from app.platform.setup import ai_smoke
+
+    snapshot = RepositorySnapshotV1("a" * 40, True)
+    records = initial_records(snapshot=snapshot)
+    monkeypatch.setattr(service, "load_local_config", lambda _paths: object())
+    monkeypatch.setattr(ai_smoke, "valid_setup_ai_config", lambda _config: True)
+    monkeypatch.setattr(store, "read_store", lambda _path: (records, manifest(records, snapshot)))
+    from app.knowledge import retrieval
+
+    monkeypatch.setattr(
+        retrieval, "architecture_query_tokens", lambda _question, **_kwargs: ("banana",)
+    )
+
+    response = service._run_project_qa(
+        _paths(tmp_path), "Which current Economic Calendar storage schema is active?"
+    )
+
+    assert response.state == ProjectQAStateV1.OK
+    assert response.validation_status == "UNKNOWN_CURRENT_CAPABILITY"
+    assert response.supporting_records == ()
+    assert (
+        response.answer == "Current canonical Knowledge does not establish such an implementation."
+    )
+
+
+def test_project_qa_returns_workspace_observation_without_ai(tmp_path: Path, monkeypatch) -> None:
+    from app.control_plane import service
+    from app.knowledge import store
+    from app.platform.setup import ai_smoke
+
+    snapshot = RepositorySnapshotV1("a" * 40, True)
+    records = initial_records(snapshot=snapshot)
+    monkeypatch.setattr(service, "load_local_config", lambda _paths: object())
+    monkeypatch.setattr(ai_smoke, "valid_setup_ai_config", lambda _config: True)
+    monkeypatch.setattr(store, "read_store", lambda _path: (records, manifest(records, snapshot)))
+    from app.knowledge import retrieval
+
+    monkeypatch.setattr(
+        retrieval, "architecture_query_tokens", lambda _question, **_kwargs: ("banana",)
+    )
+    context = WorkspaceContextV1(
+        "chappie", "a" * 64, git_branch="main", git_commit="b" * 40, git_dirty=False
+    )
+
+    response = service._run_project_qa(
+        _paths(tmp_path), "What can be concluded from this Git snapshot?", context
+    )
+
+    assert response.state == ProjectQAStateV1.OK
+    assert response.validation_status == "CONTEXT_OBSERVATION"
+    assert response.supporting_records == ()
+    assert "No diff or source change was supplied" in response.answer
+
+
 def test_cli_ai_status_uses_control_plane_adapter(tmp_path: Path, monkeypatch, capsys) -> None:
     from app import cli
 

@@ -207,7 +207,7 @@ class ChappieAI:
         provider = self.router.provider_for(self.config.profile)
         try:
             raw = provider.generate(request)
-            return parse_project_qa(raw.structured_output, knowledge_context)
+            return parse_project_qa(raw.structured_output, knowledge_context, question=question)
         except AIValidationError as error:
             error.request_digest = request.input_digest  # type: ignore[attr-defined]
             error.rejected_output = _sanitized_rejected_output(raw.structured_output)  # type: ignore[attr-defined]

@@ -20,7 +20,7 @@ from app.knowledge.store import (
     detect_conflicts,
 )
 
-RETRIEVAL_IDENTITY = "chappie_knowledge_retrieval/1.1.0"
+RETRIEVAL_IDENTITY = "chappie_knowledge_retrieval/1.2.0"
 AUTHORITY_PRIORITY = (
     KnowledgeAuthorityV1.VERSIONED_CONTRACT,
     KnowledgeAuthorityV1.VERIFIED_RESEARCH_EVIDENCE,
@@ -36,6 +36,7 @@ RETRIEVAL_CONTRACT_DIGEST = digest(
         "authority_priority": [x.value for x in AUTHORITY_PRIORITY],
         "ranking": [
             "ARCHITECTURE_INTENT_TOKEN_COMPOSITION",
+            "DESIGN_AND_AUTHORITY_FALLBACK",
             "EXACT_ID",
             "CANONICAL_ENTITY_TITLE",
             "TITLE_TOKEN_OVERLAP",
@@ -344,6 +345,8 @@ def architecture_query_tokens(
 ) -> tuple[str, ...]:
     """Add deterministic general architecture dimensions and safe package-path hints."""
     tokens = set(tokenize_topic(question))
+    if "architectural" in tokens:
+        tokens.add("architecture")
     if tokens.intersection(
         {
             "architecture",
@@ -357,9 +360,15 @@ def architecture_query_tokens(
             "provider",
             "external",
             "risk",
+            "design",
+            "inference",
+            "proposed",
+            "architectural",
         }
     ):
         tokens.update({"architecture", "ownership", "dependency", "authority"})
+    if {"research", "submit"}.issubset(tokens) or "orders" in tokens:
+        tokens.update({"architecture", "authority", "execution", "risk", "rde"})
     if {"external", "provider"}.issubset(tokens) or "integration" in tokens:
         tokens.update({"platform", "infrastructure", "io", "adapter"})
     if workspace_path:

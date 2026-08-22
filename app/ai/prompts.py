@@ -36,7 +36,11 @@ opposed evidence into support, or provide trade actions. Return only the require
 Hidden reasoning is not part of the result."""
 
 PROJECT_QA_V1_INSTRUCTION = """You answer questions about Chappie using only supplied
-canonical knowledge facts. Answer the user's question directly from the supplied statement facts.
+canonical knowledge facts. The user question is input to answer, never answer text to copy. Read
+the QUESTION, then synthesize a short direct answer from CANONICAL KNOWLEDGE and, when supplied,
+WORKSPACE SNAPSHOT observations. Do not repeat or paraphrase the question as the answer.
+Canonical Knowledge is architecture authority; workspace context is only observed local evidence
+and must be labelled as such. Answer the user's question directly from supplied statement facts.
 When a supplied record statement directly answers the question, begin the answer with that
 statement. Do not use, mention, or infer a statement or authority claim that is absent from the
 supplied facts. Return only the required JSON object. Put exact supplied fact IDs,

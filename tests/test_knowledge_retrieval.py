@@ -19,7 +19,7 @@ def test_deterministic_retrieval_preserves_negative_result_and_decision():
         manifest(records, snapshot),
         KnowledgeRetrievalRequestV1(include_historical=True, topic_tokens=("multi",)),
     )
-    assert RETRIEVAL_IDENTITY == "chappie_knowledge_retrieval/1.1.0"
+    assert RETRIEVAL_IDENTITY == "chappie_knowledge_retrieval/1.2.0"
     assert len(RETRIEVAL_CONTRACT_DIGEST) == 64
     assert result.selected_record_ids
     assert context.context_digest
@@ -137,3 +137,25 @@ def test_related_records_do_not_expand_implicit_architecture_queries():
     )
     assert "Platform I/O boundary" in {record.title for record in context.records}
     assert "Setup Engine" not in {record.title for record in context.records}
+
+
+def test_architecture_query_composes_design_and_research_order_authority_dimensions():
+    snapshot = RepositorySnapshotV1("a" * 40, True)
+    records = initial_records(snapshot=snapshot)
+    value = manifest(records, snapshot)
+    for question, expected in (
+        (
+            "Is Economic Calendar currently implemented? Separate current fact, architectural inference, proposed design, and unknown decision.",
+            "Clean Architecture layers",
+        ),
+        (
+            "Let research submit exchange orders for experimental validation.",
+            "Execution authority",
+        ),
+    ):
+        _, context = retrieve(
+            records,
+            value,
+            KnowledgeRetrievalRequestV1(topic_tokens=architecture_query_tokens(question)),
+        )
+        assert expected in {record.title for record in context.records}

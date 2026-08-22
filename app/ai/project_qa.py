@@ -70,7 +70,23 @@ def knowledge_facts(context: KnowledgeContextV1, timestamp) -> tuple[FactV1, ...
     return tuple(facts)
 
 
-def parse_project_qa(value: object, context: KnowledgeContextV1) -> ProjectQAAnswerV1:
+def is_prompt_echo(answer: str, question: str) -> bool:
+    """Reject only answers that are effectively a short replay of the request."""
+    normalized_answer = _normalize(answer)
+    normalized_question = _normalize(question)
+    if not normalized_answer or not normalized_question:
+        return False
+    if normalized_answer == normalized_question:
+        return True
+    return (
+        len(normalized_answer) <= len(normalized_question) + 12
+        and normalized_question in normalized_answer
+    )
+
+
+def parse_project_qa(
+    value: object, context: KnowledgeContextV1, *, question: str
+) -> ProjectQAAnswerV1:
     if not isinstance(value, dict) or set(value) != set(PROJECT_QA_JSON_SCHEMA["required"]):
         raise AIValidationError("project QA must match strict schema")
     answer = value["answer"]
@@ -87,6 +103,11 @@ def parse_project_qa(value: object, context: KnowledgeContextV1) -> ProjectQAAns
         or not 0 <= confidence <= 1
     ):
         raise AIValidationError("project QA output fields are invalid")
+    if is_prompt_echo(answer, question):
+        raise AIValidationError(
+            "project QA synthesis repeats the user question",
+            code="PROJECT_QA_SYNTHESIS_INVALID",
+        )
     allowed = {
         f"knowledge.{item.knowledge_id}.{field}"
         for item in context.records
@@ -106,3 +127,7 @@ def parse_project_qa(value: object, context: KnowledgeContextV1) -> ProjectQAAns
         float(confidence),
         context.context_digest,
     )
+
+
+def _normalize(value: str) -> str:
+    return " ".join("".join(char if char.isalnum() else " " for char in value.casefold()).split())

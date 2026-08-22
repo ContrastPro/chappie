@@ -31,7 +31,7 @@ from app.knowledge.store import committed_snapshot
 from app.platform.bootstrap import ChappiePaths, collect_status
 
 OUTPUT_RELATIVE = Path("data/acceptance/development_copilot")
-EXPECTED_RETRIEVAL_IDENTITY = "chappie_knowledge_retrieval/1.1.0"
+EXPECTED_RETRIEVAL_IDENTITY = "chappie_knowledge_retrieval/1.2.0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +43,7 @@ class Case:
     selection_lines: tuple[int, int] | None = None
     git: bool = False
     hard_gate: bool = False
+    policy_case_id: str | None = None
 
 
 BASE_CASES = (
@@ -247,7 +248,12 @@ SESSION_TEMPLATES = (
     BASE_CASES[18],
 )
 SESSION_CASES = tuple(
-    replace(template, case_id=f"session_{index + 1:02d}", category="session_stress")
+    replace(
+        template,
+        case_id=f"session_{index + 1:02d}",
+        category="session_stress",
+        policy_case_id=template.case_id,
+    )
     for index, template in enumerate((SESSION_TEMPLATES * 2)[:30])
 )
 
@@ -322,8 +328,16 @@ def _record(
         "setup_scope": ("runtime provider integrations belong in setupengine",),
         "dependency_direction": ("domain packages depend on platform",),
     }
-    if any(pattern in answer.casefold() for pattern in forbidden.get(case.case_id, ())):
+    policy_case_id = case.policy_case_id or case.case_id
+    if _is_prompt_echo(answer, case.question):
         terminal = "FAIL"
+    if any(pattern in answer.casefold() for pattern in forbidden.get(policy_case_id, ())):
+        terminal = "FAIL"
+    if case.category in {"file_review", "selection"} and not _is_substantive_review(answer):
+        terminal = "FAIL"
+    expected_unknown = case.category == "unknown"
+    if expected_unknown and response.validation_status == "UNKNOWN_CURRENT_CAPABILITY":
+        terminal = "PASS"
     return {
         "id": case.case_id,
         "category": case.category,
@@ -343,10 +357,55 @@ def _record(
         "terminal_status": status,
         "result": terminal,
         "hard_gate": case.hard_gate,
-        "failure_classification": None if terminal == "PASS" else status,
-        "notes": "Deterministic grading validates typed terminal state and source metadata; prose requires manual review.",
+        "failure_classification": None
+        if terminal == "PASS"
+        else _failure_classification(response, answer, case),
+        "notes": "Deterministic grading enforces typed compatibility, prompt-echo rejection, and review substance.",
         "response": answer or None,
     }
+
+
+def _normalized(value: str) -> str:
+    return " ".join("".join(char if char.isalnum() else " " for char in value.casefold()).split())
+
+
+def _is_prompt_echo(answer: str, question: str) -> bool:
+    answer_normalized = _normalized(answer)
+    question_normalized = _normalized(question)
+    return bool(answer_normalized) and (
+        answer_normalized == question_normalized
+        or (
+            len(answer_normalized) <= len(question_normalized) + 12
+            and question_normalized in answer_normalized
+        )
+    )
+
+
+def _is_substantive_review(answer: str) -> bool:
+    words = set(_normalized(answer).split())
+    return len(words) >= 8 and bool(
+        words.intersection(
+            {
+                "package",
+                "boundary",
+                "ownership",
+                "behavior",
+                "authority",
+                "dependency",
+                "invariant",
+                "unknown",
+                "limitation",
+            }
+        )
+    )
+
+
+def _failure_classification(response, answer: str, case: Case) -> str:
+    if _is_prompt_echo(answer, case.question):
+        return "MODEL_PROMPT_ECHO"
+    if case.category in {"file_review", "selection"} and not _is_substantive_review(answer):
+        return "SYNTHESIS_VALIDATION_GAP"
+    return response.error.reason_code if response.error else response.state.value
 
 
 def _boundary_question(size: int) -> str:

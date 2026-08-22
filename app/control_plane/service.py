@@ -475,11 +475,7 @@ def _run_project_qa(
             ProjectQAStateV1.KNOWLEDGE_UNAVAILABLE, question, "KNOWLEDGE_UNAVAILABLE"
         )
     if not context.records:
-        return _project_qa_error(
-            ProjectQAStateV1.VALIDATION_ERROR,
-            question,
-            "PROJECT_QA_NO_RELEVANT_KNOWLEDGE",
-        )
+        return _zero_knowledge_response(question, workspace_context)
     ai = None
     try:
         ai = build_configured_chappie_ai(config)
@@ -490,9 +486,11 @@ def _run_project_qa(
         return _project_qa_error(ProjectQAStateV1.TIMEOUT, question, "AI_TIMEOUT")
     except AIProviderError:
         return _project_qa_error(ProjectQAStateV1.AI_UNAVAILABLE, question, "AI_UNAVAILABLE")
-    except AIValidationError:
+    except AIValidationError as error:
         return _project_qa_error(
-            ProjectQAStateV1.VALIDATION_ERROR, question, "PROJECT_QA_VALIDATION_ERROR"
+            ProjectQAStateV1.VALIDATION_ERROR,
+            question,
+            error.code if error.code != "VALIDATION_ERROR" else "PROJECT_QA_VALIDATION_ERROR",
         )
     finally:
         if ai is not None:
@@ -531,6 +529,61 @@ def _project_qa_error(
         state,
         question,
         error=ControlPlaneErrorV1(ControlPlaneStateV1.UNAVAILABLE, reason_code),
+    )
+
+
+def _zero_knowledge_response(
+    question: str, workspace_context: object | None
+) -> ProjectQAControlPlaneResponseV1:
+    """Project deterministic, epistemically-labelled outcomes without invoking AI."""
+    if _is_workspace_observation_question(question, workspace_context):
+        context = workspace_context
+        observed = []
+        if context.git_branch:
+            observed.append(f"branch {context.git_branch}")
+        if context.git_commit:
+            observed.append(f"commit {context.git_commit}")
+        if context.git_dirty is not None:
+            observed.append("working tree dirty" if context.git_dirty else "working tree clean")
+        return ProjectQAControlPlaneResponseV1(
+            ProjectQAStateV1.OK,
+            question,
+            "WORKSPACE SNAPSHOT: I can observe "
+            + ", ".join(observed)
+            + ". No diff or source change was supplied, so I cannot claim either was inspected.",
+            unknowns=(
+                "No canonical Knowledge record was selected; this is workspace observation.",
+            ),
+            validation_status="CONTEXT_OBSERVATION",
+            workspace_context_digest=context.context_digest,
+            workspace_context_used=_workspace_provenance(context),
+        )
+    if _is_current_capability_question(question):
+        return ProjectQAControlPlaneResponseV1(
+            ProjectQAStateV1.OK,
+            question,
+            "Current canonical Knowledge does not establish such an implementation.",
+            unknowns=("No relevant canonical Knowledge record was selected.",),
+            validation_status="UNKNOWN_CURRENT_CAPABILITY",
+        )
+    return _project_qa_error(
+        ProjectQAStateV1.VALIDATION_ERROR, question, "PROJECT_QA_NO_RELEVANT_KNOWLEDGE"
+    )
+
+
+def _is_current_capability_question(question: str) -> bool:
+    words = set(question.casefold().replace("?", " ").split())
+    current_markers = {"current", "active", "enabled", "implemented"}
+    design_markers = {"architecture", "architectural", "design", "proposed", "inference"}
+    return bool(words.intersection(current_markers)) and not words.intersection(design_markers)
+
+
+def _is_workspace_observation_question(question: str, workspace_context: object | None) -> bool:
+    if workspace_context is None:
+        return False
+    words = set(question.casefold().replace("?", " ").split())
+    return bool(words.intersection({"git", "snapshot", "branch", "commit", "dirty", "diff"})) and (
+        workspace_context.git_branch is not None or workspace_context.git_commit is not None
     )
 
 

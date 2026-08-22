@@ -16,3 +16,8 @@ The run includes the semantic matrix plus a separate 30-turn mixed session, ques
 to the production 12,000-character boundary, and WorkspaceContext limits up to its production
 12,000-character boundary. Runtime is model-dependent and may take several minutes. Known-invalid
 boundary cases are rejected before model inference where the production contract permits it.
+
+The runner grades generated responses consistently across primary and session cases: a prompt echo,
+empty synthesis, hard-authority violation, or non-substantive file/selection review is not a PASS.
+Typed `UNKNOWN_CURRENT_CAPABILITY` responses are accepted only for questions that explicitly ask
+about an unsupported current implementation.

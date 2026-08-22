@@ -62,3 +62,38 @@ def test_project_qa_rejects_unknown_knowledge_fact():
     ai = ChappieAI(ModelRouter({ModelProfile.LOCAL_DEFAULT: MockProvider(output=out)}), AIConfig())
     with pytest.raises(AIValidationError, match="unknown knowledge"):
         ai.answer_project_qa(question="x", knowledge_context=c)
+
+
+@pytest.mark.parametrize(
+    "answer",
+    ("What do we know?", "What do we know?!"),
+)
+def test_project_qa_rejects_exact_or_near_question_echo(answer: str):
+    c = _context()
+    out = {
+        "answer": answer,
+        "supporting_knowledge_fact_ids": [f"knowledge.{c.records[0].knowledge_id}.statement"],
+        "conflicts": [],
+        "unknowns": [],
+        "confidence": 0.5,
+    }
+    ai = ChappieAI(ModelRouter({ModelProfile.LOCAL_DEFAULT: MockProvider(output=out)}), AIConfig())
+    with pytest.raises(AIValidationError, match="repeats the user question") as error:
+        ai.answer_project_qa(question="What do we know?", knowledge_context=c)
+    assert error.value.code == "PROJECT_QA_SYNTHESIS_INVALID"
+
+
+def test_project_qa_accepts_substantive_grounded_answer():
+    c = _context()
+    out = {
+        "answer": "The selected canonical record reports a negative result.",
+        "supporting_knowledge_fact_ids": [f"knowledge.{c.records[0].knowledge_id}.statement"],
+        "conflicts": [],
+        "unknowns": [],
+        "confidence": 0.5,
+    }
+    ai = ChappieAI(ModelRouter({ModelProfile.LOCAL_DEFAULT: MockProvider(output=out)}), AIConfig())
+    assert (
+        ai.answer_project_qa(question="What do we know?", knowledge_context=c).answer
+        == out["answer"]
+    )
