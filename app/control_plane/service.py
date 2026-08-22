@@ -560,6 +560,33 @@ class ChappieControlPlaneV1:
             ),
         ).analyze(value)
 
+    def prepare_development_task(self, analysis: object):
+        """Validate and project an advisory task; it never invokes Codex or mutates state."""
+        from app.development_analysis import (
+            CodexTaskPreparationRequestV1,
+            development_analysis_from_payload,
+            prepare_codex_task,
+        )
+
+        try:
+            return prepare_codex_task(
+                CodexTaskPreparationRequestV1(development_analysis_from_payload(analysis))
+            )
+        except (TypeError, ValueError):
+            from app.development_analysis.task import CodexTaskStateV1, CodexTaskV1
+
+            return CodexTaskV1(
+                "",
+                CodexTaskStateV1.VALIDATION_ERROR,
+                "chappie_development_analysis/1.0.0",
+                None,
+                None,
+                None,
+                "",
+                validation_status="INVALID",
+                reason_code="SOURCE_ANALYSIS_INVALID",
+            )
+
 
 def _run_project_qa(
     paths: object,

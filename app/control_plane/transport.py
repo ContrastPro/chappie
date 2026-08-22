@@ -231,7 +231,11 @@ class ChappieControlPlaneServerV1:
 
     def _handle_post(self, handler: BaseHTTPRequestHandler) -> None:
         request_id = uuid.uuid4().hex
-        if handler.path not in {"/v1/project/qa", "/v1/development/analyze"}:
+        if handler.path not in {
+            "/v1/project/qa",
+            "/v1/development/analyze",
+            "/v1/development/task",
+        }:
             self._method_not_allowed(handler)
             return
         try:
@@ -269,12 +273,15 @@ class ChappieControlPlaneServerV1:
         try:
             value = json.loads(handler.rfile.read(content_length))
             development = handler.path == "/v1/development/analyze"
+            task = handler.path == "/v1/development/task"
             allowed = (
                 {"request", "requested_role", "workspace_context"}
                 if development
+                else {"analysis"}
+                if task
                 else {"question", "workspace_context", "requested_model_id", "requested_model_role"}
             )
-            required = "request" if development else "question"
+            required = "request" if development else "analysis" if task else "question"
             if (
                 not isinstance(value, dict)
                 or set(value).difference(allowed)
@@ -282,7 +289,7 @@ class ChappieControlPlaneServerV1:
             ):
                 raise ValueError
             question = value[required]
-            if not isinstance(question, str):
+            if not task and not isinstance(question, str):
                 raise TypeError
             if development:
                 from app.ai.model_policy import DevelopmentModelRoleV1
@@ -323,6 +330,23 @@ class ChappieControlPlaneServerV1:
             )
             return
         try:
+            if task:
+                response = self._control_plane.prepare_development_task(question)
+                if response.state.value != "ADVISORY":
+                    self._write(
+                        handler,
+                        400,
+                        _envelope(
+                            request_id=request_id,
+                            error=ControlPlaneTransportErrorV1(
+                                response.reason_code or "TASK_VALIDATION_FAILURE",
+                                "Codex task is unavailable",
+                            ),
+                        ),
+                    )
+                    return
+                self._write(handler, 200, _envelope(request_id=request_id, data=response.payload()))
+                return
             if development:
                 response = self._control_plane.analyze_development(
                     question,

@@ -122,6 +122,74 @@ def evidence_digest(payload: dict[str, object]) -> str:
     return digest({"identity": DEVELOPMENT_ANALYSIS_IDENTITY, **payload})
 
 
+def development_analysis_from_payload(value: object) -> DevelopmentAnalysisV1:
+    """Strictly reconstruct only this package's own bounded response envelope."""
+    if not isinstance(value, dict) or value.get("identity") != DEVELOPMENT_ANALYSIS_IDENTITY:
+        raise ValueError("development analysis payload is invalid")
+    raw = value.get("evidence")
+    if not isinstance(raw, dict):
+        raise TypeError("development analysis evidence is invalid")
+    payload = {
+        key: raw.get(key)
+        for key in (
+            "source_commit",
+            "repository_clean",
+            "knowledge_identity",
+            "knowledge_manifest_digest",
+            "knowledge_context_digest",
+            "workspace_context_digest",
+            "requested_role",
+            "requested_model",
+            "effective_model",
+            "profile_identity",
+            "capability_identity",
+            "record_ids",
+            "record_digests",
+        )
+    }
+    if raw.get("evidence_digest") != evidence_digest(payload):
+        raise ValueError("development analysis evidence digest is invalid")
+    evidence = DevelopmentEvidencePackV1(
+        source_commit=str(payload["source_commit"]),
+        repository_clean=payload["repository_clean"] is True,
+        knowledge_identity=str(payload["knowledge_identity"]),
+        knowledge_manifest_digest=str(payload["knowledge_manifest_digest"]),
+        knowledge_context_digest=str(payload["knowledge_context_digest"]),
+        workspace_context_digest=payload["workspace_context_digest"],
+        requested_role=DevelopmentModelRoleV1(payload["requested_role"]),
+        requested_model=str(payload["requested_model"]),
+        effective_model=str(payload["effective_model"]),
+        profile_identity=str(payload["profile_identity"]),
+        capability_identity=str(payload["capability_identity"]),
+        record_ids=tuple(_strings(payload["record_ids"])),
+        record_digests=tuple(_strings(payload["record_digests"])),
+        evidence_digest=str(raw["evidence_digest"]),
+    )
+    return DevelopmentAnalysisV1(
+        DevelopmentAnalysisStateV1(value["state"]),
+        str(value["request"]),
+        evidence,
+        facts=tuple(_strings(value.get("facts"))),
+        inferences=tuple(_strings(value.get("inferences"))),
+        unknowns=tuple(_strings(value.get("unknowns"))),
+        architecture_owners=tuple(_strings(value.get("architecture_owners"))),
+        affected_contracts=tuple(_strings(value.get("affected_contracts"))),
+        likely_files=tuple(_strings(value.get("likely_files"))),
+        risks=tuple(_strings(value.get("risks"))),
+        required_tests=tuple(_strings(value.get("required_tests"))),
+        non_goals=tuple(_strings(value.get("non_goals"))),
+        acceptance_criteria=tuple(_strings(value.get("acceptance_criteria"))),
+        confidence=value.get("confidence"),
+        validation_status=str(value.get("validation_status", "")),
+    )
+
+
+def _strings(value: object) -> tuple[str, ...]:
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise ValueError("development analysis list is invalid")
+    return tuple(value)
+
+
 def _relative_path(value: str) -> bool:
     path = PurePosixPath(value.replace("\\", "/"))
     return bool(value) and not path.is_absolute() and ".." not in path.parts and ":" not in value
