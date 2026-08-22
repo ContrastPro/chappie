@@ -6,6 +6,10 @@ import {
   ControlPlaneDiagnosticsV1,
   ControlPlaneModelsV1,
   ControlPlaneStatusV1,
+  CodexTaskPreparationRequestV1,
+  CodexTaskV1,
+  DevelopmentAnalysisRequestV1,
+  DevelopmentAnalysisV1,
   HealthV1,
   LOOPBACK_HOST,
   TRANSPORT_DIGEST,
@@ -78,6 +82,12 @@ export class ChappieControlPlaneClient {
       this.projectQaTimeoutMs,
     ));
   }
+  public analyzeDevelopment(request: DevelopmentAnalysisRequestV1): Promise<DevelopmentAnalysisV1> {
+    return this.data("/v1/development/analyze", { method: "POST", body: JSON.stringify(request) }, this.projectQaTimeoutMs).then(parseDevelopmentAnalysis);
+  }
+  public prepareCodexTask(request: CodexTaskPreparationRequestV1): Promise<CodexTaskV1> {
+    return this.data("/v1/development/task", { method: "POST", body: JSON.stringify(request) }, this.projectQaTimeoutMs).then(parseCodexTask);
+  }
 
   private async data<T>(path: string, init: RequestInit = { method: "GET" }, timeoutMs = this.healthTimeoutMs): Promise<T> {
     const response = await this.get<T>(path, init, timeoutMs);
@@ -130,6 +140,22 @@ function parseProjectQA(value: unknown): ProjectQAResponseV1 {
   }
   return value as unknown as ProjectQAResponseV1;
 }
+
+function parseDevelopmentAnalysis(value: unknown): DevelopmentAnalysisV1 {
+  if (!isRecord(value) || value.identity !== "chappie_development_analysis/1.0.0" || typeof value.state !== "string" || typeof value.request !== "string" || !isStringArray(value.facts) || !isStringArray(value.inferences) || !isStringArray(value.unknowns) || !isStringArray(value.architecture_owners) || !isStringArray(value.affected_contracts) || !isStringArray(value.likely_files) || !isStringArray(value.risks) || !isStringArray(value.required_tests) || !isStringArray(value.non_goals) || !isStringArray(value.acceptance_criteria) || typeof value.validation_status !== "string") {
+    throw new ControlPlaneClientError("Control Plane returned an invalid Development Analysis response");
+  }
+  return value as unknown as DevelopmentAnalysisV1;
+}
+
+function parseCodexTask(value: unknown): CodexTaskV1 {
+  if (!isRecord(value) || value.identity !== "chappie_codex_task/1.0.0" || typeof value.task_id !== "string" || (value.state !== "ADVISORY" && value.state !== "VALIDATION_ERROR") || typeof value.projection !== "string" || value.approval_status !== "HUMAN_APPROVAL_REQUIRED") {
+    throw new ControlPlaneClientError("Control Plane returned an invalid Codex task response");
+  }
+  return value as unknown as CodexTaskV1;
+}
+
+function isStringArray(value: unknown): value is string[] { return Array.isArray(value) && value.every((item) => typeof item === "string"); }
 
 function isSource(value: unknown): boolean {
   return isRecord(value) && [value.record_id, value.title, value.authority, value.status].every((item) => typeof item === "string");

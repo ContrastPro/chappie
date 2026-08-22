@@ -244,7 +244,7 @@ FROZEN_CONTRACT_SNAPSHOT = {
 
 ALLOWED_TRACKED_DISTRIBUTION_ARTIFACTS = frozenset(
     {
-        "tools/vscode-chappie/dist/chappie-vscode-0.1.17.vsix",
+        "tools/vscode-chappie/dist/chappie-vscode-0.1.20.vsix",
         "tools/vscode-chappie/dist/SHA256SUMS",
     }
 )
@@ -269,7 +269,19 @@ PACKAGE_OWNERSHIP = {
     },
     "app.control_plane": {
         "responsibility": "Read-only local application projection and loopback transport",
-        "allowed": frozenset({"app.ai", "app.control_plane", "app.knowledge", "app.platform"}),
+        "allowed": frozenset(
+            {
+                "app.ai",
+                "app.control_plane",
+                "app.development_analysis",
+                "app.knowledge",
+                "app.platform",
+            }
+        ),
+    },
+    "app.development_analysis": {
+        "responsibility": "Bounded read-only application capability for Development Intelligence",
+        "allowed": frozenset({"app.ai", "app.development_analysis", "app.knowledge"}),
     },
     "app.coordination": {
         "responsibility": "Cross-service trading workflow coordination",

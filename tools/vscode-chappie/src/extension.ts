@@ -152,6 +152,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   let workbenchSnapshotSequence = 0;
   const configuredPort = (): number => vscode.workspace.getConfiguration("chappie").get<number>("controlPlane.port", 8765);
   const selectedModelRole = (): DevelopmentModelRoleV1 => vscode.workspace.getConfiguration("chappie").get<DevelopmentModelRoleV1>("selectedModelRole", "FAST");
+  const selectedWorkbenchMode = (): "CHAT" | "DEVELOPMENT" => vscode.workspace.getConfiguration("chappie").get<"CHAT" | "DEVELOPMENT">("workbenchMode", "CHAT");
   const platform = globalThis.process.platform as "win32" | "darwin" | "linux";
   const localState = (): "UNCONFIGURED" | "DEGRADED" | "READY" => {
     const root = workspaceRoot();
@@ -184,7 +185,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         setupAction,
       );
       const system = String(status.status?.overall_state ?? "UNKNOWN");
-      workbench?.updateConnection({ state: "CONNECTED", system, model: selected.model?.concrete_model ?? ai.model, modelRole: role, models: models.models, knowledge, availability, setupAction });
+      workbench?.updateConnection({ state: "CONNECTED", system, model: selected.model?.concrete_model ?? ai.model, modelRole: role, mode: selectedWorkbenchMode(), models: models.models, knowledge, availability, setupAction });
       renderStatus(bar, "CONNECTED");
       output.appendLine("Control Plane connected.");
       return "CONNECTED";
@@ -200,7 +201,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         availability,
         setupAction,
       );
-      workbench?.updateConnection({ state, system: "UNKNOWN", model: null, modelRole: selectedModelRole(), models: [], knowledge: "UNKNOWN", availability, setupAction });
+      workbench?.updateConnection({ state, system: "UNKNOWN", model: null, modelRole: selectedModelRole(), mode: selectedWorkbenchMode(), models: [], knowledge: "UNKNOWN", availability, setupAction });
       renderStatus(bar, state);
       const message = error instanceof Error ? error.message : "Control Plane request failed";
       output.appendLine(`${state}: ${message}`);
@@ -302,6 +303,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   workbench = new ChappieWorkbenchV1({
     askProject: (question, options, attachments, role) => new ChappieControlPlaneClient(configuredPort()).askProject(question, collectAttachedWorkbenchContext(options, attachments, workbenchSnapshots), role),
+    analyzeDevelopment: (request, options, attachments, role) => new ChappieControlPlaneClient(configuredPort()).analyzeDevelopment({ request, requested_role: role, workspace_context: collectAttachedWorkbenchContext(options, attachments, workbenchSnapshots) ?? null }),
+    prepareCodexTask: (analysis) => new ChappieControlPlaneClient(configuredPort()).prepareCodexTask({ analysis }),
     selectModelRole: async () => {
       const models = (await new ChappieControlPlaneClient(configuredPort()).models()).models.filter((item) => item.role !== null);
       const chosen = await vscode.window.showQuickPick(
@@ -314,6 +317,21 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       output.appendLine(`Selected workspace model role: ${chosen.label}`);
       await connect();
     },
+    selectWorkbenchMode: async () => {
+      const selected = await vscode.window.showQuickPick(
+        [
+          { label: "CHAT", description: "Project QA with canonical Knowledge" },
+          { label: "DEVELOPMENT", description: "Read-only development analysis and advisory Codex task preparation" },
+        ],
+        { title: "Chappie Workbench mode", placeHolder: "Select an explicit interaction mode" },
+      );
+      if (!selected) return selectedWorkbenchMode();
+      const mode = selected.label as "CHAT" | "DEVELOPMENT";
+      await vscode.workspace.getConfiguration("chappie").update("workbenchMode", mode, vscode.ConfigurationTarget.Workspace);
+      output.appendLine(`Selected workspace Workbench mode: ${mode}`);
+      return mode;
+    },
+    workbenchMode: selectedWorkbenchMode,
     attachContext: async (kind) => {
       let editor = vscode.window.activeTextEditor;
       if (kind === "includeFile") {
@@ -409,7 +427,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const root = workspaceRoot();
   if (!root) {
     const availability = projectChatAvailability("DISCONNECTED", undefined, undefined, "UNKNOWN", "UNCONFIGURED");
-    tree.update("DISCONNECTED"); chat.update("DISCONNECTED", null, availability, "Set up"); workbench.updateConnection({ state: "DISCONNECTED", system: "UNKNOWN", model: null, modelRole: selectedModelRole(), models: [], knowledge: "UNKNOWN", availability, setupAction: "Set up" }); renderStatus(bar, "DISCONNECTED");
+    tree.update("DISCONNECTED"); chat.update("DISCONNECTED", null, availability, "Set up"); workbench.updateConnection({ state: "DISCONNECTED", system: "UNKNOWN", model: null, modelRole: selectedModelRole(), mode: selectedWorkbenchMode(), models: [], knowledge: "UNKNOWN", availability, setupAction: "Set up" }); renderStatus(bar, "DISCONNECTED");
     output.appendLine("No recognized Chappie workspace is open.");
   } else if (vscode.workspace.getConfiguration("chappie").get<boolean>("autoConnect", true)) {
     output.appendLine(`Recognized Chappie workspace: ${root}`);
@@ -420,7 +438,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   } else {
     const availability = projectChatAvailability("DISCONNECTED", undefined, undefined, "UNKNOWN", localState());
     const setupAction = setupActionLabel("DISCONNECTED", undefined, undefined, "UNKNOWN", localState());
-    tree.update("DISCONNECTED"); chat.update("DISCONNECTED", null, availability, setupAction); workbench.updateConnection({ state: "DISCONNECTED", system: "UNKNOWN", model: null, modelRole: selectedModelRole(), models: [], knowledge: "UNKNOWN", availability, setupAction }); renderStatus(bar, "DISCONNECTED");
+    tree.update("DISCONNECTED"); chat.update("DISCONNECTED", null, availability, setupAction); workbench.updateConnection({ state: "DISCONNECTED", system: "UNKNOWN", model: null, modelRole: selectedModelRole(), mode: selectedWorkbenchMode(), models: [], knowledge: "UNKNOWN", availability, setupAction }); renderStatus(bar, "DISCONNECTED");
   }
 }
 

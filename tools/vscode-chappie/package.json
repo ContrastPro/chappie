@@ -2,7 +2,7 @@
   "name": "vscode-chappie",
   "displayName": "Chappie",
   "description": "Local Chappie Control Plane companion.",
-  "version": "0.1.19",
+  "version": "0.1.20",
   "publisher": "chappie-local",
   "license": "UNLICENSED",
   "repository": {
@@ -100,10 +100,24 @@
         },
         "chappie.selectedModelRole": {
           "type": "string",
-          "enum": ["FAST", "CODE", "DEEP"],
+          "enum": [
+            "FAST",
+            "CODE",
+            "DEEP"
+          ],
           "default": "FAST",
           "scope": "resource",
           "description": "Workspace-local Chappie development model role. The Control Plane owns its concrete model mapping."
+        },
+        "chappie.workbenchMode": {
+          "type": "string",
+          "enum": [
+            "CHAT",
+            "DEVELOPMENT"
+          ],
+          "default": "CHAT",
+          "scope": "resource",
+          "description": "Workspace-local explicit Chappie Workbench interaction mode."
         }
       }
     },

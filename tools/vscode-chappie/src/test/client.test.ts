@@ -66,6 +66,18 @@ test("Project QA propagates a selected stable role without changing durable mode
   assert.deepEqual(JSON.parse(body), { question: "Architecture", workspace_context: null, requested_model_role: "CODE" });
 });
 
+test("Development Analysis and Codex task use typed read-only Control Plane contracts", async () => {
+  const bodies: string[] = [];
+  const analysis = { identity: "chappie_development_analysis/1.0.0", state: "OK", request: "Plan", evidence: null, facts: [], inferences: [], unknowns: [], architecture_owners: [], affected_contracts: [], likely_files: [], risks: [], required_tests: [], non_goals: [], acceptance_criteria: [], confidence: 1, validation_status: "VALID", reason_code: null };
+  const task = { identity: "chappie_codex_task/1.0.0", task_id: "task_1", state: "ADVISORY", source_analysis_identity: analysis.identity, source_commit: "a".repeat(40), evidence_digest: "b".repeat(64), requested_role: "CODE", problem: "Plan", facts: [], inferences: [], unknowns: [], architecture_owners: [], affected_contracts: [], allowed_files: [], forbidden_scope: [], implementation_objective: "Objective", implementation_constraints: [], risks: [], required_tests: [], non_goals: [], acceptance_criteria: [], approval_status: "HUMAN_APPROVAL_REQUIRED", validation_status: "VALID", reason_code: null, projection: "Advisory task" };
+  let index = 0;
+  const client = new ChappieControlPlaneClient(8765, async (_url, init) => { bodies.push(String(init?.body)); return envelope([analysis, task][index++]); });
+  assert.equal((await client.analyzeDevelopment({ request: "Plan", requested_role: "CODE", workspace_context: null })).identity, analysis.identity);
+  assert.equal((await client.prepareCodexTask({ analysis: analysis as never })).approval_status, "HUMAN_APPROVAL_REQUIRED");
+  assert.deepEqual(JSON.parse(bodies[0]), { request: "Plan", requested_role: "CODE", workspace_context: null });
+  assert.deepEqual(JSON.parse(bodies[1]), { analysis });
+});
+
 test("client is fixed to loopback and configured port", () => {
   assert.equal(new ChappieControlPlaneClient(9123).endpoint, "http://127.0.0.1:9123");
   assert.throws(() => new ChappieControlPlaneClient(0), ControlPlaneClientError);

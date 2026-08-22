@@ -1,4 +1,4 @@
-import { ControlPlaneModelV1, DevelopmentModelRoleV1, ProjectQAResponseV1 } from "../api/contracts";
+import { CodexTaskV1, ControlPlaneModelV1, DevelopmentAnalysisV1, DevelopmentModelRoleV1, ProjectQAResponseV1 } from "../api/contracts";
 
 export const WORKBENCH_PROTOCOL_VERSION = "chappie_workbench/1.4.0";
 /** Local editing capacity, intentionally independent of the request capacity. */
@@ -25,18 +25,21 @@ export interface WorkbenchConnectionSnapshotV1 {
   system: string;
   model: string | null;
   modelRole: DevelopmentModelRoleV1;
+  mode: WorkbenchModeV1;
   models: readonly ControlPlaneModelV1[];
   knowledge: string;
   availability: string | null;
   setupAction: "Set up" | "Repair" | "Reconnect";
 }
 export type WorkbenchActionV1 = "setup" | "repair" | "reconnect" | "diagnostics";
+export type WorkbenchModeV1 = "CHAT" | "DEVELOPMENT";
 export type WorkbenchTurnStatusV1 = "pending" | "complete" | "failed";
 export type WorkbenchFeedbackV1 = "good" | "bad" | null;
 export interface WorkbenchTurnV1 {
   turnId: string; requestId: string; question: string; context: ContextOptionsV1;
   attachments: readonly WorkbenchContextAttachmentV1[];
   status: WorkbenchTurnStatusV1; response?: ProjectQAResponseV1; error?: string;
+  mode: WorkbenchModeV1; development?: DevelopmentAnalysisV1; codexTask?: CodexTaskV1;
   startedAtMs: number; completedAtMs?: number; feedback?: WorkbenchFeedbackV1;
 }
 
@@ -50,7 +53,9 @@ export type WebviewMessageV1 =
   | { type: "retry"; turnId: string }
   | { type: "feedback"; turnId: string; value: Exclude<WorkbenchFeedbackV1, null> }
   | { type: "runAction"; action: WorkbenchActionV1 }
-  | { type: "selectModelRole" };
+  | { type: "selectModelRole" }
+  | { type: "selectWorkbenchMode" }
+  | { type: "prepareCodexTask"; turnId: string };
 
 export type HostMessageV1 =
   | { type: "initialize"; protocol: typeof WORKBENCH_PROTOCOL_VERSION; connection: WorkbenchConnectionSnapshotV1; session: readonly WorkbenchTurnV1[]; sessionRevision: number; attachments: readonly WorkbenchContextAttachmentV1[] }
@@ -72,6 +77,8 @@ export function parseWebviewMessage(value: unknown): WebviewMessageV1 | undefine
   if (value.type === "ready") return value.protocol === WORKBENCH_PROTOCOL_VERSION ? { type: "ready", protocol: WORKBENCH_PROTOCOL_VERSION } : undefined;
   if (value.type === "clearConversation") return Object.keys(value).length === 1 ? { type: "clearConversation" } : undefined;
   if (value.type === "selectModelRole") return Object.keys(value).length === 1 ? { type: "selectModelRole" } : undefined;
+  if (value.type === "selectWorkbenchMode") return Object.keys(value).length === 1 ? { type: "selectWorkbenchMode" } : undefined;
+  if (value.type === "prepareCodexTask" && Object.keys(value).length === 2 && typeof value.turnId === "string" && /^[a-zA-Z0-9_-]{1,64}$/.test(value.turnId)) return { type: "prepareCodexTask", turnId: value.turnId };
   if (value.type === "retry" && Object.keys(value).length === 2 && typeof value.turnId === "string" && /^[a-zA-Z0-9_-]{1,64}$/.test(value.turnId)) return { type: "retry", turnId: value.turnId };
   if (value.type === "feedback" && Object.keys(value).length === 3 && typeof value.turnId === "string" && /^[a-zA-Z0-9_-]{1,64}$/.test(value.turnId) && (value.value === "good" || value.value === "bad")) return { type: "feedback", turnId: value.turnId, value: value.value };
   if ((value.type === "attachContext" || value.type === "previewContext" || value.type === "removeContext") && Object.keys(value).length === 2 && typeof value.kind === "string" && contextKeys.has(value.kind as WorkbenchContextKindV1)) return { type: value.type, kind: value.kind as WorkbenchContextKindV1 };

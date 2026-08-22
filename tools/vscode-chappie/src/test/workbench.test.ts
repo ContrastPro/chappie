@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { ControlPlaneModelV1, ProjectQAResponseV1 } from "../api/contracts";
+import { ControlPlaneModelV1, DevelopmentAnalysisV1, ProjectQAResponseV1 } from "../api/contracts";
 import { workbenchMarkdownRendererScript } from "../ui/markdown";
 import { WORKBENCH_COMPOSER_MAX_HEIGHT_PX, WORKBENCH_COMPOSER_MIN_HEIGHT_PX, workbenchComposerSize } from "../ui/composer";
 import { parseWebviewMessage, WORKBENCH_PROTOCOL_VERSION } from "../ui/workbench_protocol";
@@ -396,4 +396,36 @@ test("Workbench renderer projects status and lifecycle from host-owned snapshots
   assert.doesNotMatch(script, /turnCompleted\|\|data\.type==='turnFailed'/);
   assert.match(script, /connection\.modelRole/);
   assert.match(script, /type:'selectModelRole'/);
+});
+
+test("Workbench Development mode is explicit and renders only advisory Codex task preparation", () => {
+  const script = workbenchRendererScript();
+  const host = readFileSync("src/ui/workbench.ts", "utf8");
+  const manifest = JSON.parse(readFileSync("package.json", "utf8")) as { contributes: { configuration: { properties: Record<string, { default?: string; scope?: string }> } } };
+  assert.deepEqual(parseWebviewMessage({ type: "selectWorkbenchMode" }), { type: "selectWorkbenchMode" });
+  assert.deepEqual(parseWebviewMessage({ type: "prepareCodexTask", turnId: "turn_1" }), { type: "prepareCodexTask", turnId: "turn_1" });
+  assert.equal(manifest.contributes.configuration.properties["chappie.workbenchMode"].default, "CHAT");
+  assert.equal(manifest.contributes.configuration.properties["chappie.workbenchMode"].scope, "resource");
+  assert.match(host, /turn\.mode === "DEVELOPMENT"/);
+  assert.match(host, /analyzeDevelopment/);
+  assert.match(host, /prepareCodexTask/);
+  assert.match(host, /task\.state !== "ADVISORY"/);
+  assert.match(script, /Development analysis/);
+  assert.match(script, /Prepare Codex Task/);
+  assert.match(script, /turn\.codexTask\.approval_status/);
+  assert.doesNotMatch(host, /child_process\.exec|Codex invocation/);
+});
+
+test("Workbench development snapshots are detached and task projection requires a valid analysis", () => {
+  const session = new WorkbenchSessionV1();
+  const turn = session.begin("development_1", "request_1", "Plan an improvement", noContext, 100, [], "DEVELOPMENT");
+  assert.ok(turn);
+  const analysis: DevelopmentAnalysisV1 = {
+    identity: "chappie_development_analysis/1.0.0", state: "OK", request: "Plan an improvement", evidence: null,
+    facts: ["fact"], inferences: [], unknowns: [], architecture_owners: [], affected_contracts: [], likely_files: [], risks: [], required_tests: [], non_goals: [], acceptance_criteria: [], confidence: 1, validation_status: "VALID", reason_code: null,
+  };
+  assert.ok(session.completeDevelopment(turn.turnId, analysis, 200));
+  analysis.facts[0] = "outside mutation";
+  assert.equal(session.find(turn.turnId)?.development?.facts[0], "fact");
+  assert.equal(session.setCodexTask("missing", { identity: "chappie_codex_task/1.0.0" } as never), undefined);
 });

@@ -1,12 +1,16 @@
 import * as vscode from "vscode";
-import { DevelopmentModelRoleV1, ProjectQAResponseV1 } from "../api/contracts";
+import { CodexTaskV1, DevelopmentAnalysisV1, DevelopmentModelRoleV1, ProjectQAResponseV1 } from "../api/contracts";
 import { workbenchHtml } from "./workbench_html";
-import { ContextOptionsV1, HostMessageV1, parseWebviewMessage, RuntimeTelemetryV1, WorkbenchActionV1, WorkbenchConnectionSnapshotV1, WorkbenchContextAttachmentV1, WorkbenchContextKindV1 } from "./workbench_protocol";
+import { ContextOptionsV1, HostMessageV1, parseWebviewMessage, RuntimeTelemetryV1, WorkbenchActionV1, WorkbenchConnectionSnapshotV1, WorkbenchContextAttachmentV1, WorkbenchContextKindV1, WorkbenchModeV1 } from "./workbench_protocol";
 import { WorkbenchSessionV1 } from "./workbench_state";
 
 export interface WorkbenchDependenciesV1 {
   askProject(question: string, context: ContextOptionsV1, attachments: readonly WorkbenchContextAttachmentV1[], role: DevelopmentModelRoleV1): Promise<ProjectQAResponseV1>;
+  analyzeDevelopment(request: string, context: ContextOptionsV1, attachments: readonly WorkbenchContextAttachmentV1[], role: DevelopmentModelRoleV1): Promise<DevelopmentAnalysisV1>;
+  prepareCodexTask(analysis: DevelopmentAnalysisV1): Promise<CodexTaskV1>;
   selectModelRole(): Promise<void>;
+  selectWorkbenchMode(): Promise<WorkbenchModeV1>;
+  workbenchMode(): WorkbenchModeV1;
   attachContext(kind: WorkbenchContextKindV1): Promise<WorkbenchContextAttachmentV1>;
   removeContext(kind: WorkbenchContextKindV1): void;
   clearContexts(): void;
@@ -21,10 +25,11 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
   private contextPreviewPanel: vscode.WebviewPanel | undefined;
   private readonly session = new WorkbenchSessionV1();
   private readonly attachments = new Map<WorkbenchContextKindV1, WorkbenchContextAttachmentV1>();
-  private connection: WorkbenchConnectionSnapshotV1 = { state: "DISCONNECTED", system: "UNKNOWN", model: null, modelRole: "FAST", models: [], knowledge: "UNKNOWN", availability: "Chappie setup is required before the local service can connect.", setupAction: "Set up" };
+  private connection: WorkbenchConnectionSnapshotV1 = { state: "DISCONNECTED", system: "UNKNOWN", model: null, modelRole: "FAST", mode: "CHAT", models: [], knowledge: "UNKNOWN", availability: "Chappie setup is required before the local service can connect.", setupAction: "Set up" };
+  private mode: WorkbenchModeV1;
   private sequence = 0;
 
-  public constructor(private readonly dependencies: WorkbenchDependenciesV1) {}
+  public constructor(private readonly dependencies: WorkbenchDependenciesV1) { this.mode = dependencies.workbenchMode(); this.connection = { ...this.connection, mode: this.mode }; }
 
   public open(): void {
     if (this.panel) { this.panel.reveal(vscode.ViewColumn.Active, true); return; }
@@ -68,6 +73,23 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
     if (message.type === "removeContext") { this.attachments.delete(message.kind); this.dependencies.removeContext(message.kind); this.post({ type: "notice", message: "" }); this.post({ type: "attachmentsChanged", attachments: this.attachmentSnapshot() }); return; }
     if (message.type === "clearConversation") { this.session.clear(); this.clearAttachments(); await this.postSession(); return; }
     if (message.type === "selectModelRole") { await this.dependencies.selectModelRole(); return; }
+    if (message.type === "selectWorkbenchMode") {
+      this.mode = await this.dependencies.selectWorkbenchMode();
+      this.connection = { ...this.connection, mode: this.mode };
+      await this.post({ type: "connectionChanged", connection: this.connection });
+      return;
+    }
+    if (message.type === "prepareCodexTask") {
+      const turn = this.session.find(message.turnId);
+      if (!turn?.development || turn.development.state !== "OK") return;
+      try {
+        const task = await this.dependencies.prepareCodexTask(turn.development);
+        if (task.state !== "ADVISORY") throw new Error(task.reason_code ?? "Codex task preparation was rejected.");
+        if (!this.session.setCodexTask(turn.turnId, task)) throw new Error("The development analysis is no longer available.");
+      } catch (error) { await this.post({ type: "notice", message: this.dependencies.errorMessage(error) }); }
+      await this.postSession();
+      return;
+    }
     if (message.type === "feedback") { const updated = this.session.feedback(message.turnId, message.value); if (updated) await this.post({ type: "turnFeedback", turn: updated }); return; }
     if (message.type === "runAction") { await this.dependencies.runAction(message.action); return; }
     const original = message.type === "retry" ? this.session.find(message.turnId) : undefined;
@@ -80,15 +102,21 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
       await this.post({ type: "notice", message: this.connection.availability });
       return;
     }
-    const turn = this.session.begin(`turn_${++this.sequence}`, requestId, question, context, Date.now(), attachments);
+    const turn = this.session.begin(`turn_${++this.sequence}`, requestId, question, context, Date.now(), attachments, this.mode);
     if (!turn) return;
     if (message.type === "ask") this.clearAttachments();
     await this.postSession();
     const telemetry = setInterval(() => { void this.publishTelemetry(); }, 1_500); void this.publishTelemetry();
     try {
-      const response = await this.dependencies.askProject(turn.question, turn.context, turn.attachments, this.connection.modelRole);
-      if (response.state !== "OK" || !(response.answer ?? "").trim()) throw new Error(response.error?.message ?? "Project QA did not return a final answer.");
-      if (!this.session.complete(turn.turnId, response)) throw new Error("Project QA completed after its Workbench turn was no longer pending.");
+      if (turn.mode === "DEVELOPMENT") {
+        const analysis = await this.dependencies.analyzeDevelopment(turn.question, turn.context, turn.attachments, this.connection.modelRole);
+        if (analysis.state !== "OK") throw new Error(analysis.reason_code ?? "Development analysis did not return a valid result.");
+        if (!this.session.completeDevelopment(turn.turnId, analysis)) throw new Error("Development analysis completed after its Workbench turn was no longer pending.");
+      } else {
+        const response = await this.dependencies.askProject(turn.question, turn.context, turn.attachments, this.connection.modelRole);
+        if (response.state !== "OK" || !(response.answer ?? "").trim()) throw new Error(response.error?.message ?? "Project QA did not return a final answer.");
+        if (!this.session.complete(turn.turnId, response)) throw new Error("Project QA completed after its Workbench turn was no longer pending.");
+      }
     } catch (error) { this.session.fail(turn.turnId, this.dependencies.errorMessage(error)); }
     finally { clearInterval(telemetry); await this.postSession(); }
   }
