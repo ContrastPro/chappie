@@ -93,10 +93,17 @@ Ollama API. This is necessary because the production Control Plane allowlist int
 not yet expose a CODE role.
 
 The runner writes non-canonical local evidence to
-`data/acceptance/code_model/qwen2_5_coder_14b/`. Schema
-`chappie_code_model_benchmark/1.0.0` records separate pre-inference context bindings and
+`data/acceptance/code_model/qwen2_5_coder_14b/focused_1_1/`. Schema
+`chappie_code_model_benchmark/1.1.0` records separate pre-inference context bindings and
 post-inference response evidence, exact requested/effective model identity, status, bounded
 answers, digests, latency, deterministic authority gates, three runs each of `DIFF_REVIEW` and
 `IMPLEMENTATION_PLAN`, and an initially blank `UNSCORED` human 0–2 rubric. It never asks the
 candidate to modify files, invoke Git or shell commands, alter Knowledge, make Risk decisions,
 or submit orders.
+
+The 1.1.0 methodology adds strict JSON contracts only for four semantic cases: explicit
+per-proposal authority decisions, behavior-to-package ownership routing, AI-execution diff review,
+and acceptance-tooling implementation planning. The runner validates decisions and mappings, not
+incidental words in prose. It also bounds plan files and contracts to the supplied tooling scope.
+Historical `1.0.0` evidence remains unchanged and is `LEGACY_UNSCORABLE` under these new structured
+contracts; it may still be used for read-only forensic findings, never converted into a new PASS.
