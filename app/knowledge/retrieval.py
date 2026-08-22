@@ -20,7 +20,7 @@ from app.knowledge.store import (
     detect_conflicts,
 )
 
-RETRIEVAL_IDENTITY = "chappie_knowledge_retrieval/1.0.0"
+RETRIEVAL_IDENTITY = "chappie_knowledge_retrieval/1.1.0"
 AUTHORITY_PRIORITY = (
     KnowledgeAuthorityV1.VERSIONED_CONTRACT,
     KnowledgeAuthorityV1.VERIFIED_RESEARCH_EVIDENCE,
@@ -35,6 +35,7 @@ RETRIEVAL_CONTRACT_DIGEST = digest(
         "status_default": ["ACTIVE", "FROZEN"],
         "authority_priority": [x.value for x in AUTHORITY_PRIORITY],
         "ranking": [
+            "ARCHITECTURE_INTENT_TOKEN_COMPOSITION",
             "EXACT_ID",
             "CANONICAL_ENTITY_TITLE",
             "TITLE_TOKEN_OVERLAP",
@@ -44,6 +45,7 @@ RETRIEVAL_CONTRACT_DIGEST = digest(
             "STATUS",
             "KNOWLEDGE_ID",
         ],
+        "relation_expansion": "EXPLICIT_RELATED_TO_IDS_ONLY",
         "relation_depth_default": 1,
         "context_budget_default": 3000,
     }
@@ -177,7 +179,7 @@ def retrieve(
             _CandidateV1(item, tuple(reasons), title_overlap, tag_overlap, entity_match)
         )
     selected = _rank(candidates, request)
-    if request.relation_depth:
+    if request.relation_depth and request.related_to_ids:
         for candidate in tuple(selected):
             for related in candidate.record.related_record_ids:
                 if related in by_id and all(
@@ -335,6 +337,36 @@ def tokenize_topic(value: str) -> tuple[str, ...]:
             }
         )
     )[:16]
+
+
+def architecture_query_tokens(
+    question: str, *, workspace_path: str | None = None
+) -> tuple[str, ...]:
+    """Add deterministic general architecture dimensions and safe package-path hints."""
+    tokens = set(tokenize_topic(question))
+    if tokens.intersection(
+        {
+            "architecture",
+            "boundary",
+            "package",
+            "ownership",
+            "dependency",
+            "review",
+            "responsibility",
+            "authority",
+            "provider",
+            "external",
+            "risk",
+        }
+    ):
+        tokens.update({"architecture", "ownership", "dependency", "authority"})
+    if {"external", "provider"}.issubset(tokens) or "integration" in tokens:
+        tokens.update({"platform", "infrastructure", "io", "adapter"})
+    if workspace_path:
+        parts = tuple(part for part in workspace_path.casefold().split("/") if part)
+        if len(parts) >= 2 and parts[0] == "app":
+            tokens.update({"architecture", "ownership", *parts[1:]})
+    return tuple(sorted(tokens))[:24]
 
 
 def _tokens(*values: str) -> set[str]:

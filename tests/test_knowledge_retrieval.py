@@ -4,6 +4,7 @@ from app.knowledge.retrieval import (
     RETRIEVAL_CONTRACT_DIGEST,
     RETRIEVAL_IDENTITY,
     KnowledgeRetrievalRequestV1,
+    architecture_query_tokens,
     build_knowledge_request_for_task,
     retrieve,
     tokenize_topic,
@@ -18,7 +19,7 @@ def test_deterministic_retrieval_preserves_negative_result_and_decision():
         manifest(records, snapshot),
         KnowledgeRetrievalRequestV1(include_historical=True, topic_tokens=("multi",)),
     )
-    assert RETRIEVAL_IDENTITY == "chappie_knowledge_retrieval/1.0.0"
+    assert RETRIEVAL_IDENTITY == "chappie_knowledge_retrieval/1.1.0"
     assert len(RETRIEVAL_CONTRACT_DIGEST) == 64
     assert result.selected_record_ids
     assert context.context_digest
@@ -101,3 +102,38 @@ def test_architecture_self_knowledge_answers_direct_ownership_and_boundary_quest
             KnowledgeRetrievalRequestV1(topic_tokens=tokenize_topic(question)),
         )
         assert expected_title in {record.title for record in context.records}
+
+
+def test_architecture_query_composes_general_dimensions_and_safe_package_path_hints():
+    snapshot = RepositorySnapshotV1("a" * 40, True)
+    records = initial_records(snapshot=snapshot)
+    _, context = retrieve(
+        records,
+        manifest(records, snapshot),
+        KnowledgeRetrievalRequestV1(
+            topic_tokens=architecture_query_tokens(
+                "Review the attached file as a Chappie developer and assess dependencies.",
+                workspace_path="app/knowledge/store.py",
+            )
+        ),
+    )
+    assert "Package ownership: Knowledge" in {record.title for record in context.records}
+    assert architecture_query_tokens(
+        "review package architecture", workspace_path="app/knowledge/store.py"
+    ) == architecture_query_tokens(
+        "review package architecture", workspace_path="app/knowledge/store.py"
+    )
+
+
+def test_related_records_do_not_expand_implicit_architecture_queries():
+    snapshot = RepositorySnapshotV1("a" * 40, True)
+    records = initial_records(snapshot=snapshot)
+    _, context = retrieve(
+        records,
+        manifest(records, snapshot),
+        KnowledgeRetrievalRequestV1(
+            topic_tokens=architecture_query_tokens("external provider integration in app.risk")
+        ),
+    )
+    assert "Platform I/O boundary" in {record.title for record in context.records}
+    assert "Setup Engine" not in {record.title for record in context.records}

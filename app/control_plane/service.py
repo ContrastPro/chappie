@@ -447,7 +447,11 @@ def _run_project_qa(
 ) -> ProjectQAControlPlaneResponseV1:
     """Execute one bounded Project QA request over an existing verified Knowledge store."""
     from app.ai.errors import AIProviderError, AIProviderTimeoutError, AIValidationError
-    from app.knowledge.retrieval import KnowledgeRetrievalRequestV1, retrieve, tokenize_topic
+    from app.knowledge.retrieval import (
+        KnowledgeRetrievalRequestV1,
+        architecture_query_tokens,
+        retrieve,
+    )
     from app.knowledge.store import read_store
     from app.platform.setup.ai_smoke import build_configured_chappie_ai, valid_setup_ai_config
 
@@ -459,7 +463,12 @@ def _run_project_qa(
         _result, context = retrieve(
             records,
             knowledge_manifest,
-            KnowledgeRetrievalRequestV1(topic_tokens=tokenize_topic(question)),
+            KnowledgeRetrievalRequestV1(
+                topic_tokens=architecture_query_tokens(
+                    question,
+                    workspace_path=getattr(workspace_context, "active_file_relative_path", None),
+                )
+            ),
         )
     except ValueError:
         return _project_qa_error(
