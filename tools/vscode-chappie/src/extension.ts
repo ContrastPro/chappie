@@ -299,7 +299,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       if (kind === "includeFile") {
         const root = workspaceRoot();
         const picked = root ? await vscode.window.showOpenDialog({ canSelectFiles: true, canSelectFolders: false, canSelectMany: false, defaultUri: vscode.Uri.file(root), title: "Attach workspace file to Chappie" }) : undefined;
-        if (!picked?.[0]) throw new Error("No workspace file was selected.");
+        if (!picked?.[0]) throw new Error("CONTEXT_PICKER_CANCELLED");
         const document = await vscode.workspace.openTextDocument(picked[0]);
         const folder = vscode.workspace.getWorkspaceFolder(document.uri);
         if (!folder || document.isUntitled || document.uri.scheme !== "file") throw new Error("Select a file inside the current workspace.");

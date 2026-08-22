@@ -170,7 +170,7 @@ test("Workbench renderer uses incremental DOM-safe turn rendering", () => {
   assert.match(script, /Preview '\+item\.label\+' context/);
   assert.match(script, /Remove '\+item\.label\+' context/);
   assert.match(script, /turnContextSummary/);
-  assert.match(script, /closePreview/);
+  assert.match(script, /preview\.remove\(\)/);
   assert.match(script, /clearConversation/);
   assert.match(script, /aria-expanded/);
   assert.match(script, /source-list/);
@@ -190,15 +190,34 @@ test("Workbench context UI makes captured attachments explicit without webview f
   const host = readFileSync("src/extension.ts", "utf8");
   assert.match(html, /Add context/);
   assert.match(html, /Attached/);
-  assert.match(html, /close-preview/);
+  assert.match(html, /id="preview"/);
   assert.match(script, /item\.characterCount/);
-  assert.match(script, /item\.preview/);
+  assert.match(script, /type:'previewContext',kind:item\.kind/);
   assert.match(script, /attachmentsLabel\.hidden=!attachments\.length/);
   assert.match(script, /turn\.attachments/);
   assert.match(host, /workbenchSnapshots/);
   assert.match(host, /capturedWorkbenchAttachment/);
   assert.match(host, /collectAttachedWorkbenchContext/);
   assert.doesNotMatch(script, /node:fs|node:child_process|execFileSync/);
+});
+
+test("Workbench uses a compact composer and a dedicated read-only context preview panel", () => {
+  const renderer = workbenchRendererScript();
+  const host = readFileSync("src/ui/workbench.ts", "utf8");
+  assert.match(renderer, /preview\.remove\(\)/);
+  assert.match(renderer, /attachmentsSection\.hidden=!attachments\.length/);
+  assert.match(renderer, /footer\.replaceChildren\(footerSpacer,footerActions\)/);
+  assert.match(renderer, /open\.onclick=\(\)=>post\(\{type:'previewContext',kind:item\.kind\}\)/);
+  assert.match(renderer, /remove\.onclick=event=>\{event\.stopPropagation\(\);post\(\{type:'removeContext'/);
+  assert.match(renderer, /if\(data\.message\).*else clearNotice\(\)/);
+  assert.match(host, /createWebviewPanel\("chappie\.contextPreview"/);
+  assert.match(host, /this\.contextPreviewPanel\.webview\.html = contextPreviewHtml/);
+  assert.match(host, /enableScripts: false, localResourceRoots: \[\]/);
+  assert.match(host, /const escape = \(value: string\): string =>/);
+  assert.match(host, /<pre>\$\{escape\(attachment\.preview\)\}<\/pre>/);
+  assert.match(host, /CONTEXT_PICKER_CANCELLED/);
+  assert.match(host, /if \(error instanceof Error && error\.message === "CONTEXT_PICKER_CANCELLED"\) return/);
+  assert.match(host, /this\.post\(\{ type: "notice", message: "" \}\)/);
 });
 
 test("Workbench context protocol version and host snapshot retry path are intentional", () => {

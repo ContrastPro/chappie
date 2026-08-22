@@ -17,6 +17,7 @@ export interface WorkbenchDependenciesV1 {
 
 export class ChappieWorkbenchV1 implements vscode.Disposable {
   private panel: vscode.WebviewPanel | undefined;
+  private contextPreviewPanel: vscode.WebviewPanel | undefined;
   private readonly session = new WorkbenchSessionV1();
   private readonly attachments = new Map<WorkbenchContextKindV1, WorkbenchContextAttachmentV1>();
   private connection: WorkbenchConnectionSnapshotV1 = { state: "DISCONNECTED", system: "UNKNOWN", model: null, knowledge: "UNKNOWN", availability: "Chappie setup is required before the local service can connect.", setupAction: "Set up" };
@@ -37,11 +38,11 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
   public updateConnection(connection: WorkbenchConnectionSnapshotV1): void { this.connection = connection; this.post({ type: "connectionChanged", connection }); }
   public newChat(): void { if (this.session.active) return; this.session.clear(); this.clearAttachments(); this.open(); this.post({ type: "replaceSession", session: this.session.snapshot(), sessionRevision: this.session.currentRevision }); }
   public focusComposer(): void { this.open(); this.post({ type: "notice", message: "Focus the composer to ask Chappie about this project." }); }
-  public dispose(): void { this.panel?.dispose(); this.panel = undefined; }
+  public dispose(): void { this.panel?.dispose(); this.contextPreviewPanel?.dispose(); this.panel = undefined; this.contextPreviewPanel = undefined; }
 
   private initialize(): void { void this.post({ type: "initialize", protocol: "chappie_workbench/1.4.0", connection: this.connection, session: this.session.snapshot(), sessionRevision: this.session.currentRevision, attachments: this.attachmentSnapshot() }); }
   private attachmentSnapshot(): readonly WorkbenchContextAttachmentV1[] { return [...this.attachments.values()].map((value) => ({ ...value })); }
-  private clearAttachments(): void { this.attachments.clear(); this.dependencies.clearContexts(); this.post({ type: "attachmentsChanged", attachments: [] }); }
+  private clearAttachments(): void { this.attachments.clear(); this.dependencies.clearContexts(); this.post({ type: "notice", message: "" }); this.post({ type: "attachmentsChanged", attachments: [] }); }
 
   private async receive(value: unknown): Promise<void> {
     const message = parseWebviewMessage(value);
@@ -53,14 +54,17 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
         if (message.kind === "includeFile") this.attachments.delete("includeSelection");
         if (message.kind === "includeSelection") this.attachments.delete("includeFile");
         this.attachments.set(message.kind, attachment);
-        this.post({ type: "contextPreview", preview: "" });
+        this.post({ type: "notice", message: "" });
         this.post({ type: "attachmentsChanged", attachments: this.attachmentSnapshot() });
       }
-      catch (error) { this.post({ type: "notice", message: this.dependencies.errorMessage(error) }); }
+      catch (error) {
+        if (error instanceof Error && error.message === "CONTEXT_PICKER_CANCELLED") return;
+        this.post({ type: "notice", message: this.dependencies.errorMessage(error) });
+      }
       return;
     }
-    if (message.type === "previewContext") { this.post({ type: "contextPreview", preview: this.attachments.get(message.kind)?.preview ?? "" }); return; }
-    if (message.type === "removeContext") { this.attachments.delete(message.kind); this.dependencies.removeContext(message.kind); this.post({ type: "contextPreview", preview: "" }); this.post({ type: "attachmentsChanged", attachments: this.attachmentSnapshot() }); return; }
+    if (message.type === "previewContext") { const attachment = this.attachments.get(message.kind); if (attachment) this.openContextPreview(attachment); return; }
+    if (message.type === "removeContext") { this.attachments.delete(message.kind); this.dependencies.removeContext(message.kind); this.post({ type: "notice", message: "" }); this.post({ type: "attachmentsChanged", attachments: this.attachmentSnapshot() }); return; }
     if (message.type === "clearConversation") { this.session.clear(); this.clearAttachments(); await this.postSession(); return; }
     if (message.type === "feedback") { const updated = this.session.feedback(message.turnId, message.value); if (updated) await this.post({ type: "turnFeedback", turn: updated }); return; }
     if (message.type === "runAction") { await this.dependencies.runAction(message.action); return; }
@@ -90,6 +94,23 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
   private async publishTelemetry(): Promise<void> { try { this.post({ type: "runtimeTelemetry", telemetry: await this.dependencies.runtimeTelemetry() }); } catch { /* optional diagnostics never affect Project QA */ } }
   private postSession(): Promise<void> { return this.post({ type: "replaceSession", session: this.session.snapshot(), sessionRevision: this.session.currentRevision }); }
   private async post(message: HostMessageV1): Promise<void> { await this.panel?.webview.postMessage(message); }
+
+  private openContextPreview(attachment: WorkbenchContextAttachmentV1): void {
+    if (!this.contextPreviewPanel) {
+      this.contextPreviewPanel = vscode.window.createWebviewPanel("chappie.contextPreview", "Chappie Context Preview", vscode.ViewColumn.Beside, { enableScripts: false, localResourceRoots: [] });
+      this.contextPreviewPanel.onDidDispose(() => { this.contextPreviewPanel = undefined; });
+    }
+    this.contextPreviewPanel.title = `Context · ${attachment.label}`;
+    this.contextPreviewPanel.webview.html = contextPreviewHtml(attachment);
+    this.contextPreviewPanel.reveal(vscode.ViewColumn.Beside, true);
+  }
+}
+
+function contextPreviewHtml(attachment: WorkbenchContextAttachmentV1): string {
+  const kind = attachment.kind === "includeFile" ? "FILE" : attachment.kind === "includeSelection" ? "SELECTION" : "GIT";
+  const state = attachment.truncated ? "Bounded snapshot" : "Captured snapshot";
+  const escape = (value: string): string => value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'"><style>body{margin:0;padding:24px;color:var(--vscode-foreground);background:var(--vscode-editor-background);font:13px var(--vscode-font-family)}header{border-bottom:1px solid var(--vscode-panel-border);padding-bottom:14px}h1{font-size:16px;margin:0 0 12px}.kind{font-size:11px;font-weight:700;color:var(--vscode-descriptionForeground);letter-spacing:.06em}.meta{color:var(--vscode-descriptionForeground);line-height:1.5;margin-top:6px}.note{margin-top:14px;padding:8px 10px;border-left:2px solid var(--vscode-textLink-foreground);color:var(--vscode-descriptionForeground)}pre{white-space:pre-wrap;overflow-wrap:anywhere;margin:18px 0 0;padding:14px;border:1px solid var(--vscode-panel-border);border-radius:6px;background:var(--vscode-textCodeBlock-background);font:12px var(--vscode-editor-font-family)}</style></head><body><header><h1>Chappie Context Preview</h1><div class="kind">${escape(kind)}</div><div>${escape(attachment.label)}</div><div class="meta">${escape(attachment.detail)} · ${attachment.characterCount} chars · ${escape(state)}</div></header><p class="note">Captured snapshot — this is the context captured for the current Chappie request.</p><pre>${escape(attachment.preview)}</pre></body></html>`;
 }
 
 function contextFor(attachments: readonly WorkbenchContextAttachmentV1[]): ContextOptionsV1 {
