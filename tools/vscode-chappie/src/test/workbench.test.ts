@@ -193,7 +193,7 @@ test("Workbench context UI makes captured attachments explicit without webview f
   assert.match(html, /id="preview"/);
   assert.match(script, /item\.characterCount/);
   assert.match(script, /type:'previewContext',kind:item\.kind/);
-  assert.match(script, /attachmentsLabel\.hidden=!attachments\.length/);
+  assert.match(script, /attachmentsSection\.hidden=!attachments\.length/);
   assert.match(script, /turn\.attachments/);
   assert.match(host, /workbenchSnapshots/);
   assert.match(host, /capturedWorkbenchAttachment/);
@@ -206,7 +206,7 @@ test("Workbench uses a compact composer and a dedicated read-only context previe
   const host = readFileSync("src/ui/workbench.ts", "utf8");
   assert.match(renderer, /preview\.remove\(\)/);
   assert.match(renderer, /attachmentsSection\.hidden=!attachments\.length/);
-  assert.match(renderer, /footer\.replaceChildren\(footerSpacer,footerActions\)/);
+  assert.match(renderer, /footer\.replaceChildren\(contextActions,footerSpacer,footerActions\)/);
   assert.match(renderer, /open\.onclick=\(\)=>post\(\{type:'previewContext',kind:item\.kind\}\)/);
   assert.match(renderer, /remove\.onclick=event=>\{event\.stopPropagation\(\);post\(\{type:'removeContext'/);
   assert.match(renderer, /if\(data\.message\).*else clearNotice\(\)/);
@@ -218,6 +218,19 @@ test("Workbench uses a compact composer and a dedicated read-only context previe
   assert.match(host, /CONTEXT_PICKER_CANCELLED/);
   assert.match(host, /if \(error instanceof Error && error\.message === "CONTEXT_PICKER_CANCELLED"\) return/);
   assert.match(host, /this\.post\(\{ type: "notice", message: "" \}\)/);
+});
+
+test("Workbench keeps all composer actions in one bottom bar while attachments stay above it", () => {
+  const renderer = workbenchRendererScript();
+  assert.match(renderer, /contextLabel\.remove\(\)/);
+  assert.match(renderer, /attachmentsLabel\.remove\(\)/);
+  assert.match(renderer, /footer\.replaceChildren\(contextActions,footerSpacer,footerActions\)/);
+  assert.match(renderer, /contextActions\.setAttribute\('aria-label','Add workspace context'\)/);
+  assert.match(renderer, /button\.setAttribute\('aria-label','Attach '\+name\+' context'\)/);
+  assert.match(renderer, /attachmentsSection\.hidden=!attachments\.length/);
+  assert.match(renderer, /attachmentsSection\.append\(attachmentsNode\)/);
+  assert.match(renderer, /\.composer-footer\{display:flex;align-items:center;gap:8px;width:100%;min-width:0;margin-top:7px;flex-wrap:wrap\}/);
+  assert.match(renderer, /\.footer-actions\{display:flex;align-items:center;gap:6px;margin-left:auto;flex:0 0 auto\}/);
 });
 
 test("Workbench context protocol version and host snapshot retry path are intentional", () => {
