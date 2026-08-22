@@ -2,7 +2,7 @@
 
 Status: approved UI implementation baseline
 Date: 2026-08-21
-Internal protocol: `chappie_workbench/1.3.0`
+Internal protocol: `chappie_workbench/1.4.0`
 
 ## Purpose and principles
 
@@ -22,7 +22,9 @@ Turns render as a document: user question, Chappie answer, safe Markdown, code b
 
 ## Composer and context
 
-The composer auto-grows, submits with Ctrl/Cmd+Enter, and supports explicit File, Selection, and Git context through the existing bounded workspace collector. Context is opt-in, previewed without absolute paths or sensitive content, and never broadens the collector’s security boundary. Web search, Deep Research, autonomous Agent mode, attachments, and cancellation remain unavailable until backed by approved APIs.
+The composer auto-grows, submits with Ctrl/Cmd+Enter, and supports explicit File, Selection, and Git context through the existing bounded workspace collector. The actions and active attachments are visually distinct: each chip identifies the captured workspace-relative locator, actual character count, bounded/truncation state, a preview action, and a separate remove action. Previews render the exact safe snapshot captured by the extension host; the Webview never reads files, editor state, or Git.
+
+The canonical `workspace_context` payload supports one primary editor snapshot plus optional Git metadata. Consequently File and Selection are mutually exclusive (the newest primary capture replaces the other); Git may accompany either. File and Selection snapshots are captured at attach time, not at Send. Git is branch, commit, and dirty-state metadata only—never a diff. A turn stores typed attachment metadata and its host-owned snapshot identifier. Retry uses that original snapshot; Edit restores only question text; New Chat clears active composer attachments and its preview. Context is opt-in, workspace-bound, sensitive-file protected, bounded by the existing collector, and never broadens its security boundary. Web search, Deep Research, autonomous Agent mode, arbitrary uploads, and cancellation remain unavailable until backed by approved APIs.
 
 ## Inspector
 
@@ -61,7 +63,7 @@ The current production components are Header, Conversation, Turn, Safe Markdown,
 
 ## Versioning and packaging
 
-UX-A incremented the extension install identity to 0.1.10 with compact keyboard-accessible per-message actions, local Copy feedback, edit-to-draft without historical mutation, per-turn Sources disclosure, and near-bottom scroll anchoring with a Jump to latest control. The Inspector visual follow-up incremented it to 0.1.11, and the Sources/Inspector hidden-state hotfix to 0.1.12. The Sources-spacing and Inspector-reopen hotfix increments it to 0.1.13. Distribution contains one active versioned VSIX plus `SHA256SUMS`. A same-version replacement is prohibited because VS Code can retain stale installed code and make acceptance ambiguous. The Host-to-Webview session snapshot carries a monotonic revision; Webview discards older snapshots, so a terminal answer cannot be overwritten by a delayed pending snapshot for the same turn.
+UX-A incremented the extension install identity to 0.1.10 with compact keyboard-accessible per-message actions, local Copy feedback, edit-to-draft without historical mutation, per-turn Sources disclosure, and near-bottom scroll anchoring with a Jump to latest control. The Inspector visual follow-up incremented it to 0.1.11, and the Sources/Inspector hidden-state hotfix to 0.1.12. The Sources-spacing and Inspector-reopen hotfix increments it to 0.1.13. UX-B increments it to 0.1.14 and `chappie_workbench/1.4.0` with explicit, immutable typed context attachments. Distribution contains one active versioned VSIX plus `SHA256SUMS`. A same-version replacement is prohibited because VS Code can retain stale installed code and make acceptance ambiguous. The Host-to-Webview session snapshot carries a monotonic revision; Webview discards older snapshots, so a terminal answer cannot be overwritten by a delayed pending snapshot for the same turn.
 
 ## Acceptance gates
 

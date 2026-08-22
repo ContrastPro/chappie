@@ -9,6 +9,7 @@ import { workbenchRendererScript } from "../ui/workbench_render";
 import { MAX_WORKBENCH_TURNS, WorkbenchSessionV1 } from "../ui/workbench_state";
 
 const noContext = { includeFile: false, includeSelection: false, includeGit: false };
+const fileAttachment = { id: "context_1", kind: "includeFile" as const, label: "File · app/runtime/application.py", detail: "app/runtime/application.py · Lines 1–4", preview: "app/runtime/application.py · Lines 1–4\n\nclass Application:", characterCount: 19, truncated: false };
 
 const response = (answer: string): ProjectQAResponseV1 => ({
   identity: "chappie_control_plane/1.2.0",
@@ -69,6 +70,17 @@ test("Workbench clear keeps an in-flight request and returned snapshots are deta
   session.clear();
   assert.equal(session.snapshot().length, 1);
   assert.equal(session.snapshot()[0].turnId, "turn_1");
+});
+
+test("Workbench turns freeze typed attachment snapshots independently from later composer state", () => {
+  const session = new WorkbenchSessionV1();
+  const turn = session.begin("turn_context", "request_context", "Question", { includeFile: true, includeSelection: false, includeGit: false }, 100, [fileAttachment]);
+  assert.ok(turn);
+  fileAttachment.label = "Changed outside";
+  const snapshot = session.find(turn.turnId);
+  assert.equal(snapshot?.attachments[0]?.label, "File · app/runtime/application.py");
+  assert.equal(snapshot?.attachments[0]?.preview, "app/runtime/application.py · Lines 1–4\n\nclass Application:");
+  assert.equal(snapshot?.attachments[0]?.id, "context_1");
 });
 
 test("Workbench terminal snapshots make completed and failed turns internally consistent", () => {
@@ -155,7 +167,10 @@ test("Workbench renderer uses incremental DOM-safe turn rendering", () => {
   assert.match(script, /\.append\(/);
   assert.match(script, /replaceChildren/);
   assert.doesNotMatch(script, /innerHTML/);
-  assert.match(script, /previewContext/);
+  assert.match(script, /Preview '\+item\.label\+' context/);
+  assert.match(script, /Remove '\+item\.label\+' context/);
+  assert.match(script, /turnContextSummary/);
+  assert.match(script, /closePreview/);
   assert.match(script, /clearConversation/);
   assert.match(script, /aria-expanded/);
   assert.match(script, /source-list/);
@@ -167,6 +182,33 @@ test("Workbench renderer uses incremental DOM-safe turn rendering", () => {
   assert.match(script, /aria-expanded/);
   assert.match(script, /\.turn\+\.turn/);
   assert.match(script, /composer-region\{border-top:0/);
+});
+
+test("Workbench context UI makes captured attachments explicit without webview filesystem authority", () => {
+  const script = workbenchRendererScript();
+  const html = readFileSync("src/ui/workbench_html.ts", "utf8");
+  const host = readFileSync("src/extension.ts", "utf8");
+  assert.match(html, /Add context/);
+  assert.match(html, /Attached/);
+  assert.match(html, /close-preview/);
+  assert.match(script, /item\.characterCount/);
+  assert.match(script, /item\.preview/);
+  assert.match(script, /attachmentsLabel\.hidden=!attachments\.length/);
+  assert.match(script, /turn\.attachments/);
+  assert.match(host, /workbenchSnapshots/);
+  assert.match(host, /capturedWorkbenchAttachment/);
+  assert.match(host, /collectAttachedWorkbenchContext/);
+  assert.doesNotMatch(script, /node:fs|node:child_process|execFileSync/);
+});
+
+test("Workbench context protocol version and host snapshot retry path are intentional", () => {
+  const source = readFileSync("src/ui/workbench.ts", "utf8");
+  assert.equal(WORKBENCH_PROTOCOL_VERSION, "chappie_workbench/1.4.0");
+  assert.match(source, /const attachments = message\.type === "retry" \? original!\.attachments : this\.attachmentSnapshot\(\)/);
+  assert.match(source, /this\.dependencies\.askProject\(turn\.question, turn\.context, turn\.attachments\)/);
+  assert.match(source, /if \(message\.type === "ask"\) this\.clearAttachments\(\)/);
+  assert.match(source, /this\.attachments\.delete\("includeSelection"\)/);
+  assert.match(source, /this\.attachments\.delete\("includeFile"\)/);
 });
 
 test("Inspector is a floating responsive surface and close collapses its grid slot", () => {

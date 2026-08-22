@@ -24,6 +24,7 @@ export function contextPreview(context: {
   selected_text_range: { start_line: number; end_line: number } | null;
   excerpt_range: { start_line: number; end_line: number } | null;
   git_branch: string | null;
+  git_commit?: string | null;
   git_dirty: boolean | null;
 } | undefined): string {
   if (!context) return "";
@@ -32,7 +33,7 @@ export function contextPreview(context: {
     const range = context.selected_text_range ?? context.excerpt_range;
     rows.push(range ? `${context.active_file_relative_path} · Lines ${range.start_line + 1}–${range.end_line + 1}` : context.active_file_relative_path);
   }
-  if (context.git_branch) rows.push(`Git · ${context.git_branch}${context.git_dirty ? " · dirty" : ""}`);
+  if (context.git_branch || context.git_commit) rows.push(`Git · ${context.git_branch ?? "detached"}${context.git_commit ? ` · ${context.git_commit.slice(0, 12)}` : ""} · ${context.git_dirty ? "dirty" : "clean"}`);
   return rows.join("\n");
 }
 

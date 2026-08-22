@@ -1,6 +1,6 @@
 import { ProjectQAResponseV1 } from "../api/contracts";
 
-export const WORKBENCH_PROTOCOL_VERSION = "chappie_workbench/1.3.0";
+export const WORKBENCH_PROTOCOL_VERSION = "chappie_workbench/1.4.0";
 /** Local editing capacity, intentionally independent of the request capacity. */
 export const MAX_WORKBENCH_DRAFT_CHARACTERS = 50_000;
 /** Conservative cap for a request to the supported 16K-context local models. */
@@ -8,7 +8,16 @@ export const MAX_WORKBENCH_REQUEST_CHARACTERS = 12_000;
 
 export interface ContextOptionsV1 { includeFile: boolean; includeSelection: boolean; includeGit: boolean; }
 export type WorkbenchContextKindV1 = keyof ContextOptionsV1;
-export interface WorkbenchContextAttachmentV1 { kind: WorkbenchContextKindV1; label: string; detail: string; }
+/** A bounded, host-captured context snapshot. `preview` is exactly the safe text sent for this attachment. */
+export interface WorkbenchContextAttachmentV1 {
+  id: string;
+  kind: WorkbenchContextKindV1;
+  label: string;
+  detail: string;
+  preview: string;
+  characterCount: number;
+  truncated: boolean;
+}
 export interface RuntimeTelemetryV1 { available: boolean; provider: string | null; gpuName: string | null; utilizationPercent: number | null; memoryUsedMb: number | null; memoryTotalMb: number | null; temperatureC: number | null; sampledAtMs: number; }
 export interface WorkbenchConnectionSnapshotV1 {
   state: "DISCONNECTED" | "CONNECTING" | "CONNECTED" | "INCOMPATIBLE" | "ERROR";
@@ -24,6 +33,7 @@ export type WorkbenchTurnStatusV1 = "pending" | "complete" | "failed";
 export type WorkbenchFeedbackV1 = "good" | "bad" | null;
 export interface WorkbenchTurnV1 {
   turnId: string; requestId: string; question: string; context: ContextOptionsV1;
+  attachments: readonly WorkbenchContextAttachmentV1[];
   status: WorkbenchTurnStatusV1; response?: ProjectQAResponseV1; error?: string;
   startedAtMs: number; completedAtMs?: number; feedback?: WorkbenchFeedbackV1;
 }
