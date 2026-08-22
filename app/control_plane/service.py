@@ -525,6 +525,41 @@ class ChappieControlPlaneV1:
                 ProjectQAStateV1.INTERNAL_ERROR, question.strip(), "PROJECT_QA_UNAVAILABLE"
             )
 
+    def analyze_development(
+        self, request: str, *, requested_role: str, workspace_context: object | None = None
+    ):
+        """Return bounded read-only analysis; no implementation or repository mutation path exists."""
+        from app.ai.model_policy import DevelopmentModelRoleV1
+        from app.control_plane.workspace_context import parse_workspace_context
+        from app.development_analysis import (
+            DevelopmentAnalysisRequestV1,
+            DevelopmentAnalysisServiceV1,
+        )
+
+        try:
+            role = DevelopmentModelRoleV1(requested_role)
+            context = parse_workspace_context(workspace_context) if workspace_context else None
+            value = DevelopmentAnalysisRequestV1(request, role, context)
+        except (TypeError, ValueError):
+            from app.development_analysis import DevelopmentAnalysisStateV1, DevelopmentAnalysisV1
+
+            return DevelopmentAnalysisV1(
+                DevelopmentAnalysisStateV1.VALIDATION_ERROR,
+                request if isinstance(request, str) else "",
+                reason_code="INVALID_REQUEST",
+            )
+
+        def available(item: object) -> bool:
+            return any(model.role == item and model.ready for model in self.list_models())
+
+        return DevelopmentAnalysisServiceV1(
+            paths=self._paths,
+            role_available=available,
+            runner=lambda item, knowledge, _evidence: _run_development_analysis_ai(
+                self._paths, item, knowledge
+            ),
+        ).analyze(value)
+
 
 def _run_project_qa(
     paths: object,
@@ -663,6 +698,32 @@ def _run_project_qa(
         workspace_context_digest=workspace_context.context_digest if workspace_context else None,
         workspace_context_used=_workspace_provenance(workspace_context),
     )
+
+
+def _run_development_analysis_ai(paths: object, request: object, knowledge_context: object):
+    """Reuse the configured local AI only as a read-only synthesis engine."""
+    from app.ai.model_policy import resolve_development_model_role
+    from app.platform.setup.ai_smoke import build_configured_chappie_ai, valid_setup_ai_config
+
+    config = load_local_config(paths)
+    if config is None or not valid_setup_ai_config(config):
+        raise RuntimeError("AI_UNAVAILABLE")
+    _role, model = resolve_development_model_role(request.requested_role)
+    ai = build_configured_chappie_ai(
+        config, model=model.concrete_model, timeout_seconds=model.execution_timeout_seconds
+    )
+    try:
+        return ai.answer_project_qa(
+            question=(
+                "Provide a read-only technical analysis of this development request. "
+                "Separate evidence-based facts, inferences, and unknowns; propose no edits: "
+                + request.request
+            ),
+            knowledge_context=knowledge_context,
+            workspace_context=request.workspace_context,
+        )
+    finally:
+        ai.close()
 
 
 def _project_qa_error(

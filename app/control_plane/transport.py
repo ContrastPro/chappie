@@ -231,7 +231,7 @@ class ChappieControlPlaneServerV1:
 
     def _handle_post(self, handler: BaseHTTPRequestHandler) -> None:
         request_id = uuid.uuid4().hex
-        if handler.path != "/v1/project/qa":
+        if handler.path not in {"/v1/project/qa", "/v1/development/analyze"}:
             self._method_not_allowed(handler)
             return
         try:
@@ -268,33 +268,48 @@ class ChappieControlPlaneServerV1:
             return
         try:
             value = json.loads(handler.rfile.read(content_length))
+            development = handler.path == "/v1/development/analyze"
+            allowed = (
+                {"request", "requested_role", "workspace_context"}
+                if development
+                else {"question", "workspace_context", "requested_model_id", "requested_model_role"}
+            )
+            required = "request" if development else "question"
             if (
                 not isinstance(value, dict)
-                or set(value).difference(
-                    {"question", "workspace_context", "requested_model_id", "requested_model_role"}
-                )
-                or "question" not in value
+                or set(value).difference(allowed)
+                or required not in value
             ):
                 raise ValueError
-            question = value["question"]
+            question = value[required]
             if not isinstance(question, str):
                 raise TypeError
-            requested_model_id = value.get("requested_model_id")
-            requested_model_role = value.get("requested_model_role")
-            if requested_model_id is not None and requested_model_role is not None:
-                raise ValueError
-            if requested_model_id is not None:
-                from app.ai.model_policy import LocalModelIdV1
-
-                if not isinstance(requested_model_id, str):
-                    raise TypeError
-                requested_model_id = LocalModelIdV1(requested_model_id).value
-            if requested_model_role is not None:
+            if development:
                 from app.ai.model_policy import DevelopmentModelRoleV1
 
-                if not isinstance(requested_model_role, str):
+                requested_role = value.get("requested_role")
+                if not isinstance(requested_role, str):
                     raise TypeError
-                requested_model_role = DevelopmentModelRoleV1(requested_model_role).value
+                requested_role = DevelopmentModelRoleV1(requested_role).value
+                requested_model_id = requested_model_role = None
+            else:
+                requested_role = None
+                requested_model_id = value.get("requested_model_id")
+                requested_model_role = value.get("requested_model_role")
+                if requested_model_id is not None and requested_model_role is not None:
+                    raise ValueError
+                if requested_model_id is not None:
+                    from app.ai.model_policy import LocalModelIdV1
+
+                    if not isinstance(requested_model_id, str):
+                        raise TypeError
+                    requested_model_id = LocalModelIdV1(requested_model_id).value
+                if requested_model_role is not None:
+                    from app.ai.model_policy import DevelopmentModelRoleV1
+
+                    if not isinstance(requested_model_role, str):
+                        raise TypeError
+                    requested_model_role = DevelopmentModelRoleV1(requested_model_role).value
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             self._write(
                 handler,
@@ -308,6 +323,28 @@ class ChappieControlPlaneServerV1:
             )
             return
         try:
+            if development:
+                response = self._control_plane.analyze_development(
+                    question,
+                    requested_role=requested_role,
+                    workspace_context=value.get("workspace_context"),
+                )
+                payload = response.payload()
+                if response.state.value != "OK":
+                    self._write(
+                        handler,
+                        400 if response.state.value == "VALIDATION_ERROR" else 503,
+                        _envelope(
+                            request_id=request_id,
+                            error=ControlPlaneTransportErrorV1(
+                                response.reason_code or "DEVELOPMENT_ANALYSIS_UNAVAILABLE",
+                                "Development analysis is unavailable",
+                            ),
+                        ),
+                    )
+                    return
+                self._write(handler, 200, _envelope(request_id=request_id, data=payload))
+                return
             if requested_model_id is None and requested_model_role is None:
                 response = self._control_plane.ask_project(question, value.get("workspace_context"))
             elif requested_model_id is not None:

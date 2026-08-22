@@ -26,6 +26,7 @@ from app.control_plane.transport import (
     ChappieControlPlaneServerV1,
     ControlPlaneTransportErrorV1,
 )
+from app.development_analysis.models import DevelopmentAnalysisStateV1, DevelopmentAnalysisV1
 from app.platform.bootstrap import (
     ChappieLocalConfigV1,
     ChappiePaths,
@@ -107,6 +108,21 @@ class _FakeControlPlane:
             "mock",
             "mock-model",
             "VALID",
+        )
+
+    def analyze_development(
+        self, request: str, *, requested_role: str, workspace_context: object | None = None
+    ) -> DevelopmentAnalysisV1:
+        _ = requested_role, workspace_context
+        return DevelopmentAnalysisV1(
+            DevelopmentAnalysisStateV1.OK,
+            request,
+            facts=("bounded fact",),
+            inferences=("bounded inference",),
+            required_tests=("test",),
+            non_goals=("No mutation.",),
+            acceptance_criteria=("criterion",),
+            validation_status="VALID",
         )
 
 
@@ -260,6 +276,18 @@ def test_project_qa_transport_accepts_one_stable_model_role(server) -> None:
     )
     assert status == 400
     assert body["error"]["code"] == "INVALID_REQUEST"
+
+
+def test_development_analysis_transport_round_trip_is_read_only(server) -> None:
+    status, _headers, body = _request(
+        server,
+        "POST",
+        "/v1/development/analyze",
+        json.dumps({"request": "Analyze architecture", "requested_role": "FAST"}),
+    )
+    assert status == 200
+    assert body["data"]["state"] == "OK"
+    assert body["data"]["inferences"] == ["bounded inference"]
 
 
 def test_project_qa_transport_accepts_the_canonical_deep_question_boundary(server) -> None:
