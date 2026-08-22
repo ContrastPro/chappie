@@ -13,6 +13,7 @@ import json
 import re
 import statistics
 import subprocess
+import sys
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -94,8 +95,49 @@ def _model_path_name(model: str) -> str:
     return name
 
 
-def _output_relative(model: str) -> Path:
-    return OUTPUT_BASE_RELATIVE / _model_path_name(model)
+def _run_id_path_name(run_id: str) -> str:
+    """Validate an explicit, one-segment local evidence run identifier."""
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", run_id):
+        raise ValueError("unsafe CODE benchmark run id")
+    return run_id
+
+
+def _output_relative(model: str, *, run_id: str | None = None) -> Path:
+    output = OUTPUT_BASE_RELATIVE / _model_path_name(model)
+    return output / _run_id_path_name(run_id) if run_id else output
+
+
+def _preflight_failure_lines(preflight: dict[str, object]) -> tuple[str, ...]:
+    """Return only bounded operator-safe failure diagnostics."""
+    messages = {
+        "CODE_MODEL_UNSUPPORTED": "requested model is not in the CODE benchmark allowlist",
+        "WORKING_TREE_DIRTY": "repository must be clean",
+        "KNOWLEDGE_NOT_READY": "canonical Knowledge is not bound to the current clean commit",
+        "OLLAMA_NOT_READY": "local Ollama is not reachable",
+        "CODE_MODEL_NOT_INSTALLED": "requested local model is not installed",
+        "DURABLE_DEFAULT_NOT_QWEN3_4B": "durable default must remain qwen3:4b",
+        "KNOWLEDGE_STATUS_NOT_READY": "required Knowledge status is not READY",
+        "EVIDENCE_OUTPUT_COLLISION": "output directory already contains evidence; use --run-id",
+    }
+    failures = preflight.get("failures", [])
+    if not isinstance(failures, list):
+        return ("CODE_BENCHMARK_PREFLIGHT_INVALID",)
+    return tuple(
+        f"{code}: {messages.get(code, 'bounded preflight condition failed')}"
+        for code in failures
+        if isinstance(code, str)
+    ) or ("CODE_BENCHMARK_PREFLIGHT_INVALID",)
+
+
+def _print_preflight_failure(preflight: dict[str, object]) -> None:
+    print("CODE benchmark preflight failed:", file=sys.stderr)
+    for line in _preflight_failure_lines(preflight):
+        print(f"- {line}", file=sys.stderr)
+
+
+def _output_is_available(output: Path) -> bool:
+    """Never implicitly replace any existing local evidence artifact."""
+    return not (output / "result.json").exists()
 
 
 def _read(root: Path, relative: str, *, start: int = 1, end: int = 120) -> str:
@@ -743,6 +785,10 @@ def _arguments() -> argparse.Namespace:
     parser.add_argument(
         "--model", choices=sorted(SUPPORTED_CANDIDATE_MODELS), default=DEFAULT_MODEL
     )
+    parser.add_argument(
+        "--run-id",
+        help="explicit new local evidence directory under the selected model",
+    )
     return parser.parse_args()
 
 
@@ -759,10 +805,12 @@ def main() -> int:
         "pre_inference": {"cases": []},
         "responses": [],
     }
-    output = paths.root / _output_relative(model)
+    output = paths.root / _output_relative(model, run_id=arguments.run_id)
     if preflight["status"] != "OK":
-        result["summary"] = {"status": "PREFLIGHT_FAILED", "winner": "NOT_DECLARED"}
-        _write(output, result)
+        _print_preflight_failure(preflight)
+        return 1
+    if not _output_is_available(output):
+        _print_preflight_failure({"failures": ["EVIDENCE_OUTPUT_COLLISION"]})
         return 1
     cases = _cases(paths.root)
     runs: list[dict[str, object]] = result["responses"]  # type: ignore[assignment]

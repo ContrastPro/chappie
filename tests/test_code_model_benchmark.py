@@ -433,3 +433,105 @@ def test_preflight_fails_closed_when_requested_model_is_missing(monkeypatch) -> 
     assert result["status"] == "FAILED"
     assert "CODE_MODEL_NOT_INSTALLED" in result["failures"]
     assert result["requested_model"] == "qwen3-coder:30b"
+
+
+def _successful_preflight(runner: object) -> dict[str, object]:
+    return {
+        "status": "OK",
+        "failures": [],
+        "source_commit": "a" * 40,
+        "evidence_schema": runner.EVIDENCE_SCHEMA,
+    }
+
+
+def test_failed_preflight_is_visible_and_never_reaches_inference(
+    monkeypatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    runner = _runner()
+    output = tmp_path / runner._output_relative(runner.MODEL)
+    output.mkdir(parents=True)
+    artifact = output / "result.json"
+    original = b'{"summary":{"status":"COMPLETED"}}\n'
+    artifact.write_bytes(original)
+    monkeypatch.setattr(
+        runner, "_arguments", lambda: SimpleNamespace(model=runner.MODEL, run_id=None)
+    )
+    monkeypatch.setattr(runner.ChappiePaths, "resolve", lambda: SimpleNamespace(root=tmp_path))
+    monkeypatch.setattr(
+        runner,
+        "_preflight",
+        lambda *_args, **_kwargs: {
+            "status": "FAILED",
+            "failures": ["KNOWLEDGE_NOT_READY", "KNOWLEDGE_STATUS_NOT_READY"],
+            "source_commit": "a" * 40,
+        },
+    )
+    monkeypatch.setattr(
+        runner,
+        "_call",
+        lambda *_args, **_kwargs: pytest.fail("failed preflight must not invoke inference"),
+    )
+    monkeypatch.setattr(
+        runner, "_write", lambda *_args, **_kwargs: pytest.fail("must not write evidence")
+    )
+
+    assert runner.main() == 1
+    assert "KNOWLEDGE_NOT_READY" in capsys.readouterr().err
+    assert artifact.read_bytes() == original
+
+
+def test_existing_evidence_survives_collision_without_inference(
+    monkeypatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    runner = _runner()
+    output = tmp_path / runner._output_relative(runner.MODEL)
+    output.mkdir(parents=True)
+    artifact = output / "result.json"
+    original = b'{"summary":{"status":"COMPLETED"}}\n'
+    artifact.write_bytes(original)
+    monkeypatch.setattr(
+        runner, "_arguments", lambda: SimpleNamespace(model=runner.MODEL, run_id=None)
+    )
+    monkeypatch.setattr(runner.ChappiePaths, "resolve", lambda: SimpleNamespace(root=tmp_path))
+    monkeypatch.setattr(
+        runner, "_preflight", lambda *_args, **_kwargs: _successful_preflight(runner)
+    )
+    monkeypatch.setattr(
+        runner,
+        "_call",
+        lambda *_args, **_kwargs: pytest.fail("collision must not invoke inference"),
+    )
+
+    assert runner.main() == 1
+    assert artifact.read_bytes() == original
+    assert "EVIDENCE_OUTPUT_COLLISION" in capsys.readouterr().err
+
+
+def test_explicit_new_run_id_uses_new_evidence_directory(monkeypatch, tmp_path: Path) -> None:
+    runner = _runner()
+    default_output = tmp_path / runner._output_relative(runner.MODEL)
+    default_output.mkdir(parents=True)
+    original = b'{"summary":{"status":"COMPLETED"}}\n'
+    (default_output / "result.json").write_bytes(original)
+    monkeypatch.setattr(
+        runner,
+        "_arguments",
+        lambda: SimpleNamespace(model=runner.MODEL, run_id="fresh_run"),
+    )
+    monkeypatch.setattr(runner.ChappiePaths, "resolve", lambda: SimpleNamespace(root=tmp_path))
+    monkeypatch.setattr(
+        runner, "_preflight", lambda *_args, **_kwargs: _successful_preflight(runner)
+    )
+    monkeypatch.setattr(runner, "_cases", lambda _root: ())
+    monkeypatch.setattr(runner, "STABILITY_CASE_IDS", ())
+    monkeypatch.setattr(
+        runner, "load_local_config", lambda _paths: SimpleNamespace(model="qwen3:4b")
+    )
+
+    assert runner.main() == 0
+    assert (default_output / "result.json").read_bytes() == original
+    fresh = tmp_path / runner._output_relative(runner.MODEL, run_id="fresh_run") / "result.json"
+    assert fresh.exists()
+    assert runner._run_id_path_name("fresh_run") == "fresh_run"
+    with pytest.raises(ValueError):
+        runner._run_id_path_name("../unsafe")

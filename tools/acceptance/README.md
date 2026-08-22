@@ -104,6 +104,17 @@ answers, digests, latency, deterministic authority gates, three runs each of `DI
 candidate to modify files, invoke Git or shell commands, alter Knowledge, make Risk decisions,
 or submit orders.
 
+The runner prints bounded preflight failure codes to stderr and performs no inference on a failed
+preflight. It never replaces an existing `result.json`: choose a fresh explicit local run directory
+when evidence already exists, for example:
+
+```powershell
+.\.venv\Scripts\python.exe tools\acceptance\run_code_model_benchmark.py --model qwen2.5-coder:14b --run-id focused_1_1_retry
+```
+
+`--run-id` is a single safe path segment beneath the selected model directory; it preserves
+model-separated local evidence isolation.
+
 The 1.1.0 methodology adds strict JSON contracts only for four semantic cases: explicit
 per-proposal authority decisions, behavior-to-package ownership routing, AI-execution diff review,
 and acceptance-tooling implementation planning. The runner validates decisions and mappings, not
