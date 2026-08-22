@@ -24,7 +24,21 @@ function envelope(data: unknown, overrides: Record<string, unknown> = {}): Respo
 test("health handshake validates exact identities", async () => {
   const client = new ChappieControlPlaneClient(8765, async () => envelope({ status: "OK" }));
   assert.deepEqual(await client.health(), { status: "OK" });
-  await assert.rejects(() => new ChappieControlPlaneClient(8765, async () => envelope({ status: "OK" }, { transport_contract_digest: "wrong" })).health(), ControlPlaneIncompatibleError);
+  await assert.rejects(
+    () => new ChappieControlPlaneClient(8765, async () => envelope({ status: "OK" }, {
+      control_plane_contract: "chappie_control_plane/1.2.0",
+      control_plane_contract_digest: "de09b6c1eb917d95cdc53be3581a9500110fc856f0586e87bea88b95bccf3040",
+    })).health(),
+    ControlPlaneIncompatibleError,
+  );
+  await assert.rejects(
+    () => new ChappieControlPlaneClient(8765, async () => envelope({ status: "OK" }, { transport_contract_digest: "wrong" })).health(),
+    ControlPlaneIncompatibleError,
+  );
+  await assert.rejects(
+    () => new ChappieControlPlaneClient(8765, async () => envelope({ status: "OK" }, { control_plane_contract_digest: "wrong" })).health(),
+    ControlPlaneIncompatibleError,
+  );
 });
 
 test("Project QA has a bounded local-inference timeout longer than health checks", async () => {

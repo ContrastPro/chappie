@@ -1,5 +1,5 @@
-export const CONTROL_PLANE_IDENTITY = "chappie_control_plane/1.2.0";
-export const CONTROL_PLANE_DIGEST = "de09b6c1eb917d95cdc53be3581a9500110fc856f0586e87bea88b95bccf3040";
+export const CONTROL_PLANE_IDENTITY = "chappie_control_plane/1.4.0";
+export const CONTROL_PLANE_DIGEST = "056beea928b723b319250a363153fc2258263ce19b59f59bc0d75cb44fe65775";
 export const TRANSPORT_IDENTITY = "chappie_control_plane_transport/1.2.0";
 export const TRANSPORT_DIGEST = "e2328fc9618a4ad95a728b128cdfb0d003e60fcd2b5473c91dbffff053993a96";
 export const LOOPBACK_HOST = "127.0.0.1";
