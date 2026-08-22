@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from app.ai.schemas import digest
 from app.control_plane import (
     CONTROL_PLANE_CONTRACT_DIGEST,
     CONTROL_PLANE_IDENTITY,
@@ -15,6 +16,11 @@ from app.control_plane import (
     ProjectQAControlPlaneResponseV1,
     ProjectQASourceV1,
     ProjectQAStateV1,
+)
+from app.control_plane.workspace_context import (
+    WORKSPACE_CONTEXT_IDENTITY,
+    WorkspaceContextV1,
+    WorkspaceRangeV1,
 )
 from app.knowledge import RepositorySnapshotV1, initial_records, manifest
 from app.platform.bootstrap import (
@@ -169,6 +175,111 @@ def test_project_qa_is_injected_read_only_and_validates_questions(tmp_path: Path
     assert too_large.error is not None
     assert too_large.error.reason_code == "PROJECT_QA_REQUEST_TOO_LARGE"
     assert calls == ["What owns evidence?"]
+
+
+def test_project_qa_accepts_canonical_file_selection_git_and_combined_context_snapshots(
+    tmp_path: Path,
+) -> None:
+    seen: list[WorkspaceContextV1 | None] = []
+
+    def runner(
+        _paths: object, question: str, workspace_context: WorkspaceContextV1 | None
+    ) -> ProjectQAControlPlaneResponseV1:
+        seen.append(workspace_context)
+        return ProjectQAControlPlaneResponseV1(
+            ProjectQAStateV1.OK,
+            question,
+            "Grounded answer.",
+            ("knowledge.record.statement",),
+            (ProjectQASourceV1("record", "Evidence", "VERSIONED_CONTRACT", "FROZEN"),),
+            (),
+            "a" * 64,
+            "mock",
+            "mock-model",
+            "VALID",
+        )
+
+    plane = ChappieControlPlaneV1(
+        _paths(tmp_path), status_collector=lambda _paths: _status(), project_qa_runner=runner
+    )
+    base = {"workspace_name": "chappie", "workspace_id": "a" * 64}
+    contexts = (
+        WorkspaceContextV1(
+            **base,
+            active_file_relative_path="app/knowledge/store.py",
+            language_id="python",
+            active_file_excerpt="file snapshot",
+            excerpt_range=WorkspaceRangeV1(0, 0),
+        ),
+        WorkspaceContextV1(
+            **base,
+            active_file_relative_path="app/knowledge/store.py",
+            language_id="python",
+            selected_text="selection snapshot",
+            selected_text_range=WorkspaceRangeV1(10, 11),
+        ),
+        WorkspaceContextV1(**base, git_branch="main", git_commit="b" * 40, git_dirty=True),
+        WorkspaceContextV1(
+            **base,
+            active_file_relative_path="app/knowledge/store.py",
+            language_id="python",
+            active_file_excerpt="file snapshot",
+            excerpt_range=WorkspaceRangeV1(0, 0),
+            git_branch="main",
+            git_commit="b" * 40,
+            git_dirty=True,
+        ),
+        WorkspaceContextV1(
+            **base,
+            active_file_relative_path="app/knowledge/store.py",
+            language_id="python",
+            selected_text="selection snapshot",
+            selected_text_range=WorkspaceRangeV1(10, 11),
+            git_branch="main",
+            git_commit="b" * 40,
+            git_dirty=True,
+        ),
+    )
+    for context in contexts:
+        assert (
+            plane.ask_project("Understand architecture", context.payload()).state
+            == ProjectQAStateV1.OK
+        )
+    assert [context.context_digest for context in seen if context] == [
+        context.context_digest for context in contexts
+    ]
+
+
+def test_project_qa_rejects_invalid_or_over_limit_workspace_context_without_running_qa(
+    tmp_path: Path,
+) -> None:
+    calls: list[str] = []
+    plane = ChappieControlPlaneV1(
+        _paths(tmp_path),
+        status_collector=lambda _paths: _status(),
+        project_qa_runner=lambda _paths, question, _context: calls.append(question),
+    )
+    invalid = {"schema": "workspace_context/1.0.0"}
+    over_limit = WorkspaceContextV1(
+        "chappie",
+        "a" * 64,
+        active_file_relative_path="app/knowledge/store.py",
+        language_id="python",
+    ).payload()
+    over_limit["selected_text"] = "x" * 12_001
+    over_limit["selected_text_range"] = {"start_line": 0, "end_line": 0}
+    over_limit["context_digest"] = digest(
+        {
+            "identity": WORKSPACE_CONTEXT_IDENTITY,
+            **{key: value for key, value in over_limit.items() if key != "context_digest"},
+        }
+    )
+    for payload in (invalid, over_limit):
+        response = plane.ask_project("Understand architecture", payload)
+        assert response.state == ProjectQAStateV1.VALIDATION_ERROR
+        assert response.error is not None
+        assert response.error.reason_code == "WORKSPACE_CONTEXT_INVALID"
+    assert calls == []
 
 
 def test_ready_knowledge_with_no_relevant_records_is_not_reported_as_unconfigured(

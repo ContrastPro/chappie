@@ -24,7 +24,7 @@ export class WorkspaceContextCollector {
     const selectedRange = selection && input.selection ? linesFor(input.text ?? "", input.selection.start, input.selection.end) : null;
     const excerpt = !selection && options.includeFile && input.text ? excerptAround(input.text, input.cursorLine ?? 0) : undefined;
     const payload: Omit<WorkspaceContextV1, "context_digest"> = { schema: WORKSPACE_CONTEXT_IDENTITY, workspace_name: input.workspaceName, workspace_id: digest(relative ?? input.workspaceName), active_file_relative_path: relative, language_id: input.languageId ?? null, selected_text: selection?.text ?? null, selected_text_range: selectedRange, active_file_excerpt: excerpt?.text ?? null, excerpt_range: excerpt?.range ?? null, git_branch: options.includeGit ? input.git?.branch ?? null : null, git_commit: options.includeGit ? input.git?.commit ?? null : null, git_dirty: options.includeGit ? input.git?.dirty ?? null : null, selection_truncated: selection?.truncated ?? false, excerpt_truncated: excerpt?.truncated ?? false };
-    return { ...payload, context_digest: digest(payload) };
+    return { ...payload, context_digest: digest({ identity: WORKSPACE_CONTEXT_IDENTITY, ...payload }) };
   }
 }
 
@@ -37,4 +37,13 @@ function sensitive(relative: string): boolean { const name = path.basename(relat
 function bounded(text: string): { text: string; truncated: boolean } { return { text: text.slice(0, MAX_CONTEXT_CHARACTERS), truncated: text.length > MAX_CONTEXT_CHARACTERS }; }
 function excerptAround(text: string, cursor: number): { text: string; range: ContextRangeV1; truncated: boolean } { const lines = text.split("\n"); const start = Math.max(0, cursor - 40); const end = Math.min(lines.length, cursor + 41); const value = bounded(lines.slice(start, end).join("\n")); return { text: value.text, range: { start_line: start, end_line: end - 1 }, truncated: value.truncated || start > 0 || end < lines.length }; }
 function linesFor(text: string, start: number, end: number): ContextRangeV1 { return { start_line: text.slice(0, start).split("\n").length - 1, end_line: text.slice(0, end).split("\n").length - 1 }; }
-function digest(value: unknown): string { return createHash("sha256").update(JSON.stringify(value)).digest("hex"); }
+/** Must stay byte-for-byte aligned with Python's app.ai.schemas.canonical_json. */
+function digest(value: unknown): string { return createHash("sha256").update(canonicalJson(value)).digest("hex"); }
+function canonicalJson(value: unknown): string { return JSON.stringify(canonicalValue(value)); }
+function canonicalValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(canonicalValue);
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0).map(([key, item]) => [key, canonicalValue(item)]));
+  }
+  return value;
+}

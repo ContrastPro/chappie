@@ -235,6 +235,21 @@ test("typed Project QA HTTP 400 reasons are preserved for the Workbench", async 
   );
 });
 
+test("invalid attached workspace context remains a safe typed Workbench failure", async () => {
+  const invalidContext = JSON.stringify({
+    transport_contract: TRANSPORT_IDENTITY,
+    transport_contract_digest: TRANSPORT_DIGEST,
+    control_plane_contract: CONTROL_PLANE_IDENTITY,
+    control_plane_contract_digest: CONTROL_PLANE_DIGEST,
+    request_id: "a".repeat(32), status: "ERROR", data: null,
+    error: { code: "WORKSPACE_CONTEXT_INVALID", message: "Project QA is unavailable" },
+  });
+  await assert.rejects(
+    () => new ChappieControlPlaneClient(8765, async () => new Response(invalidContext, { status: 400, headers: { "content-type": "application/json" } })).askProject("Understand architecture"),
+    (error: unknown) => error instanceof ControlPlaneRequestError && error.reasonCode === "WORKSPACE_CONTEXT_INVALID" && error.message === "Attached workspace context is invalid or exceeds the canonical context limit. Capture it again before sending.",
+  );
+});
+
 test("empty canonical retrieval is not projected as missing Knowledge configuration", async () => {
   const noMatch = JSON.stringify({
     transport_contract: TRANSPORT_IDENTITY,
@@ -293,6 +308,18 @@ test("workspace context is explicit, bounded, relative, and non-sensitive", () =
   assert.equal(context?.context_digest, collector.collect(input, { includeFile: true, includeSelection: true, includeGit: true })?.context_digest);
   assert.throws(() => collector.collect({ ...input, filePath: "/outside/.env" }, { includeFile: true, includeSelection: false, includeGit: false }), /OUTSIDE/);
   assert.throws(() => collector.collect({ ...input, filePath: "/repo/.env" }, { includeFile: true, includeSelection: false, includeGit: false }), /SENSITIVE/);
+});
+
+test("workspace context digest is canonical and accepted by the Python Control Plane contract", () => {
+  const collector = new WorkspaceContextCollector();
+  const context = collector.collect(
+    { workspaceRoot: "/repo", workspaceName: "repo", filePath: "/repo/app/knowledge/store.py", languageId: "python", text: "one\ntwo\nthree", cursorLine: 0 },
+    { includeFile: true, includeSelection: false, includeGit: false },
+  );
+  assert.equal(context?.workspace_id, "ffcf2889ac334e0cbe389de3b2819d7537e95f0bffbd7a545ba152735579c088");
+  assert.equal(context?.context_digest, "4c296d1c7362c774c6ed2c883136d746c13dbef8c2d87c0e92313f885cdaddb7");
+  assert.equal(context?.active_file_relative_path, "app/knowledge/store.py");
+  assert.equal(context?.active_file_excerpt, "one\ntwo\nthree");
 });
 
 test("git metadata is argv-bounded, opt-in data only, and omits unsafe output", () => {

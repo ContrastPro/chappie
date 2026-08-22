@@ -428,6 +428,13 @@ class ChappieControlPlaneV1:
                 if workspace_context is not None
                 else None
             )
+        except (TypeError, ValueError):
+            return _project_qa_error(
+                ProjectQAStateV1.VALIDATION_ERROR,
+                question.strip(),
+                "WORKSPACE_CONTEXT_INVALID",
+            )
+        try:
             return self._project_qa_runner(self._paths, question.strip(), context)
         except (OSError, RuntimeError, TypeError, ValueError):
             return _project_qa_error(
