@@ -459,9 +459,12 @@ def test_project_qa_resolves_policy_budget_with_the_selected_model(
         provider="ollama", model="qwen3:4b", enabled_capabilities=("LIGHT",)
     )
     captured: list[tuple[str, float]] = []
+    retrieved: list[tuple[str, ...]] = []
 
     class TimeoutAI:
         def answer_project_qa(self, **_kwargs: object) -> object:
+            context = _kwargs["knowledge_context"]
+            retrieved.append(tuple(item.knowledge_id for item in context.records))
             raise AIProviderTimeoutError("fixture timeout")
 
         def close(self) -> None:
@@ -491,3 +494,4 @@ def test_project_qa_resolves_policy_budget_with_the_selected_model(
         ("qwen3:14b", 75.0),
         ("qwen3:4b", 45.0),
     ]
+    assert len(set(retrieved)) == 1

@@ -19,7 +19,15 @@ from run_qwen3_14b_diagnostic import (
 
 from app.ai.tasks import AITask, task_contract
 from app.control_plane.service import CONTROL_PLANE_CONTRACT_DIGEST, CONTROL_PLANE_IDENTITY
-from app.knowledge.retrieval import RETRIEVAL_CONTRACT_DIGEST, RETRIEVAL_IDENTITY
+from app.knowledge.retrieval import (
+    RETRIEVAL_CONTRACT_DIGEST,
+    RETRIEVAL_IDENTITY,
+    KnowledgeRetrievalRequestV1,
+    architecture_query_tokens,
+    retrieve,
+    review_record_ids,
+)
+from app.knowledge.store import read_store
 from app.platform.bootstrap import ChappiePaths, load_local_config
 
 OUTPUT_RELATIVE = Path("data/acceptance/model_ab/focused")
@@ -57,10 +65,14 @@ def _cases():
 
 def _write(output: Path, result: dict[str, object]) -> None:
     output.mkdir(parents=True, exist_ok=True)
-    (output / "result.json").write_text(
-        json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
-    (output / "report.md").write_text(_report(result), encoding="utf-8")
+    _atomic_write(output / "result.json", json.dumps(result, indent=2, sort_keys=True) + "\n")
+    _atomic_write(output / "report.md", _report(result))
+
+
+def _atomic_write(path: Path, content: str) -> None:
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(content, encoding="utf-8")
+    temporary.replace(path)
 
 
 def _report(result: dict[str, object]) -> str:
@@ -99,7 +111,7 @@ def _report(result: dict[str, object]) -> str:
         f"- {json.dumps(result.get('state_isolation', {}), sort_keys=True)}",
         "",
         "## Raw evidence summary",
-        "- Every comparison records exact selected sources, context identity, effective model, and bounded answer text in result.json.",
+        "- Every comparison records pre-inference retrieval IDs, model-supported citation IDs, context identity, effective model, and bounded answer text in result.json.",
         "",
         "## Next decision",
         "- Manual review must score correctness, relevance, grounding, completeness, and authority discipline; this runner declares no winner.",
@@ -107,7 +119,44 @@ def _report(result: dict[str, object]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def _call(client: httpx.Client, case, model_id: str | None, context) -> dict[str, object]:
+def _retrieval_evidence(paths: ChappiePaths, case, context) -> dict[str, object]:
+    """Mirror the read-only service retrieval that supplies this one model input."""
+    records, knowledge_manifest = read_store(paths.knowledge_file)
+    workspace_path = getattr(context, "active_file_relative_path", None)
+    record_ids = review_record_ids(records, workspace_path)
+    _result, knowledge_context = retrieve(
+        records,
+        knowledge_manifest,
+        KnowledgeRetrievalRequestV1(
+            topic_tokens=architecture_query_tokens(case.question, workspace_path=workspace_path),
+            record_ids=record_ids,
+            maximum_records=4 if record_ids else 8,
+        ),
+    )
+    return {
+        "retrieved_record_ids": tuple(record.knowledge_id for record in knowledge_context.records),
+        "retrieved_record_digests": tuple(
+            record.record_digest for record in knowledge_context.records
+        ),
+        "expected_retrieval_context_digest": knowledge_context.context_digest,
+        "expected_workspace_context_digest": context.context_digest if context else None,
+    }
+
+
+def _call(
+    client: httpx.Client,
+    case,
+    model_id: str | None,
+    context,
+    *,
+    retrieval_evidence: dict[str, object] | None = None,
+) -> dict[str, object]:
+    retrieval_evidence = retrieval_evidence or {
+        "retrieved_record_ids": (),
+        "retrieved_record_digests": (),
+        "expected_retrieval_context_digest": None,
+        "expected_workspace_context_digest": None,
+    }
     started = time.monotonic()
     body: dict[str, object] = {"question": case.question}
     if model_id is not None:
@@ -122,6 +171,7 @@ def _call(client: httpx.Client, case, model_id: str | None, context) -> dict[str
                 "status": "TRANSPORT_ERROR",
                 "elapsed_ms": round((time.monotonic() - started) * 1000),
                 "error": wire.get("error") if isinstance(wire, dict) else None,
+                **retrieval_evidence,
             }
         answer = str(data.get("answer") or "")
         status = str(data.get("state", "UNKNOWN"))
@@ -147,7 +197,12 @@ def _call(client: httpx.Client, case, model_id: str | None, context) -> dict[str
             )
             if context
             else 0,
-            "sources": [
+            **retrieval_evidence,
+            "retrieved_record_ids": list(retrieval_evidence["retrieved_record_ids"]),
+            "retrieved_record_digests": list(retrieval_evidence["retrieved_record_digests"]),
+            "retrieval_context_digest": data.get("context_digest"),
+            "workspace_context_digest": data.get("workspace_context_digest"),
+            "supporting_record_ids": [
                 item.get("record_id")
                 for item in data.get("supporting_records", [])
                 if isinstance(item, dict)
@@ -171,6 +226,7 @@ def _call(client: httpx.Client, case, model_id: str | None, context) -> dict[str
             "status": "OUTER_TIMEOUT",
             "elapsed_ms": round((time.monotonic() - started) * 1000),
             "error": "OUTER_TIMEOUT",
+            **retrieval_evidence,
         }
     except (httpx.HTTPError, ValueError) as error:
         return {
@@ -179,6 +235,7 @@ def _call(client: httpx.Client, case, model_id: str | None, context) -> dict[str
             "status": "TRANSPORT_ERROR",
             "elapsed_ms": round((time.monotonic() - started) * 1000),
             "error": type(error).__name__,
+            **retrieval_evidence,
         }
 
 
@@ -193,16 +250,52 @@ def _compare(left: dict[str, object], right: dict[str, object]) -> dict[str, obj
             "context_character_count",
         )
     )
-    retrieval_equal = left.get("sources") == right.get("sources")
+    case_equal = left.get("case_id") == right.get("case_id")
+    retrieved_records_equal = left.get("retrieved_record_ids") == right.get("retrieved_record_ids")
+    retrieved_digests_equal = left.get("retrieved_record_digests") == right.get(
+        "retrieved_record_digests"
+    )
+    actual_retrieval_context_equal = left.get("retrieval_context_digest") == right.get(
+        "retrieval_context_digest"
+    )
+    actual_retrieval_matches_expected = all(
+        item.get("retrieval_context_digest")
+        and item.get("retrieval_context_digest") == item.get("expected_retrieval_context_digest")
+        for item in (left, right)
+    )
+    actual_workspace_matches_expected = all(
+        item.get("workspace_context_digest") == item.get("expected_workspace_context_digest")
+        for item in (left, right)
+    )
+    supporting_records_equal = left.get("supporting_record_ids") == right.get(
+        "supporting_record_ids"
+    )
     model_ok = (
         left.get("effective_model_id") == "QWEN3_4B"
         and right.get("effective_model_id") == "QWEN3_14B"
     )
     return {
         "case_id": left.get("case_id"),
-        "valid": context_equal and retrieval_equal and model_ok,
+        "valid": (
+            left.get("status") == "OK"
+            and right.get("status") == "OK"
+            and case_equal
+            and context_equal
+            and retrieved_records_equal
+            and retrieved_digests_equal
+            and actual_retrieval_context_equal
+            and actual_retrieval_matches_expected
+            and actual_workspace_matches_expected
+            and model_ok
+        ),
+        "case_equal": case_equal,
         "context_equal": context_equal,
-        "retrieval_equal": retrieval_equal,
+        "retrieved_records_equal": retrieved_records_equal,
+        "retrieved_digests_equal": retrieved_digests_equal,
+        "actual_retrieval_context_equal": actual_retrieval_context_equal,
+        "actual_retrieval_matches_expected": actual_retrieval_matches_expected,
+        "actual_workspace_matches_expected": actual_workspace_matches_expected,
+        "supporting_records_equal": supporting_records_equal,
         "effective_model_gate": model_ok,
     }
 
@@ -224,6 +317,7 @@ def main() -> int:
     preflight, failures = _preflight(paths)
     config = load_local_config(paths)
     result: dict[str, object] = {
+        "evidence_schema": "chappie_model_ab/2.0.0",
         "source_commit": preflight.get("snapshot_commit"),
         "preflight": preflight,
         "default_model": config.model if config else None,
@@ -273,9 +367,22 @@ def main() -> int:
                 ],
             ):
                 context = _context(paths.root, case)
+                retrieval_evidence = _retrieval_evidence(paths, case, context)
                 left, right = (
-                    _call(client, case, "QWEN3_4B", context),
-                    _call(client, case, "QWEN3_14B", context),
+                    _call(
+                        client,
+                        case,
+                        "QWEN3_4B",
+                        context,
+                        retrieval_evidence=retrieval_evidence,
+                    ),
+                    _call(
+                        client,
+                        case,
+                        "QWEN3_14B",
+                        context,
+                        retrieval_evidence=retrieval_evidence,
+                    ),
                 )
                 runs.extend((left, right))
                 comparisons.append(_compare(left, right))

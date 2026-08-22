@@ -33,12 +33,39 @@ def test_pair_gates_context_retrieval_and_effective_model():
         "locator": "a",
         "context_digest": "d",
         "context_character_count": 1,
-        "sources": ["r"],
+        "status": "OK",
+        "retrieved_record_ids": ["retrieved-a", "retrieved-b"],
+        "retrieved_record_digests": ["digest-a", "digest-b"],
+        "expected_retrieval_context_digest": "retrieval",
+        "retrieval_context_digest": "retrieval",
+        "expected_workspace_context_digest": "workspace",
+        "workspace_context_digest": "workspace",
+        "supporting_record_ids": ["cited"],
         "effective_model_id": "QWEN3_4B",
     }
     right = {**left, "effective_model_id": "QWEN3_14B"}
     assert runner._compare(left, right)["valid"] is True
-    assert runner._compare(left, {**right, "sources": ["other"]})["retrieval_equal"] is False
+    comparison = runner._compare(left, {**right, "supporting_record_ids": ["other"]})
+    assert comparison["valid"] is True
+    assert comparison["supporting_records_equal"] is False
+    assert (
+        runner._compare(left, {**right, "retrieved_record_ids": ["other"]})[
+            "retrieved_records_equal"
+        ]
+        is False
+    )
+    for key, value in (
+        ("case_id", "other-case"),
+        ("retrieved_record_ids", ["retrieved-b", "retrieved-a"]),
+        ("retrieved_record_ids", ["retrieved-a", "retrieved-a"]),
+        ("retrieved_record_digests", ["digest-a", "other-digest"]),
+        ("retrieval_context_digest", "other-retrieval"),
+        ("retrieval_context_digest", None),
+        ("workspace_context_digest", "other-workspace"),
+        ("status", "TIMEOUT"),
+        ("status", "VALIDATION_ERROR"),
+    ):
+        assert runner._compare(left, {**right, key: value})["valid"] is False
     assert (
         runner._compare(left, {**right, "effective_model_id": "QWEN3_4B"})["effective_model_gate"]
         is False
@@ -85,3 +112,13 @@ def test_runner_forwards_only_explicit_model_selection() -> None:
 
     assert bodies[0]["requested_model_id"] == "QWEN3_14B"
     assert "requested_model_id" not in bodies[1]
+
+
+def test_runner_output_replaces_prior_evidence(tmp_path: Path):
+    runner = _runner()
+    runner._write(tmp_path, {"source_commit": "old", "summary": {"stale": True}})
+    runner._write(tmp_path, {"source_commit": "new", "summary": {"fresh": True}})
+
+    assert '"source_commit": "new"' in (tmp_path / "result.json").read_text()
+    assert "old" not in (tmp_path / "report.md").read_text()
+    assert not list(tmp_path.glob("*.tmp"))
