@@ -24,10 +24,10 @@ def test_code_benchmark_identity_cases_and_stability_are_explicit(tmp_path: Path
     runner = _runner()
     root = Path(__file__).parents[1]
     cases = runner._cases(root)
-    assert runner.EVIDENCE_SCHEMA == "chappie_code_model_benchmark/1.1.0"
+    assert runner.EVIDENCE_SCHEMA == "chappie_code_model_benchmark/1.2.0"
     assert runner.DEFAULT_MODEL == "qwen2.5-coder:14b"
     assert runner.SUPPORTED_CANDIDATE_MODELS == {"qwen2.5-coder:14b", "qwen3-coder:30b"}
-    assert runner.OUTPUT_BASE_RELATIVE == Path("data/acceptance/code_model/focused_1_1")
+    assert runner.OUTPUT_BASE_RELATIVE == Path("data/acceptance/code_model/focused_1_2")
     assert {case.category for case in cases} == {
         "FILE_COMPREHENSION",
         "SELECTION_COMPREHENSION",
@@ -186,6 +186,7 @@ def _valid_payload(runner, case_id: str) -> dict[str, object]:
             "unknowns": [],
         }
     return {
+        "target": runner.PLAN_TARGET,
         "problem": "Acceptance-only benchmark tooling.",
         "evidence": ["bounded runner evidence"],
         "owner": "tools/acceptance",
@@ -301,6 +302,7 @@ def test_diff_review_allows_quoted_forbidden_code_but_requires_rejection() -> No
 def test_plan_rejects_invented_files_production_scope_and_missing_sections() -> None:
     runner = _runner()
     valid = {
+        "target": runner.PLAN_TARGET,
         "problem": "Create acceptance-only benchmark tooling.",
         "evidence": ["bounded existing acceptance runner"],
         "owner": "tools/acceptance",
@@ -317,6 +319,41 @@ def test_plan_rejects_invented_files_production_scope_and_missing_sections() -> 
         _grade(runner, "implementation_plan", {**valid, "likely_files": ["_context.py"]})["grade"]
         == "FAIL"
     )
+
+
+def test_schema_1_2_normalizes_only_one_bounded_json_fence() -> None:
+    runner = _runner()
+    raw = runner.json.dumps(_valid_payload(runner, "diff_review"))
+    assert runner._normalized_structured_payload(raw)[1] == "RAW_JSON"
+    assert runner._normalized_structured_payload(f"```json\n{raw}\n```")[1] == "JSON_FENCE"
+    rejected = (
+        f"prose\n```json\n{raw}\n```",
+        f"```json\n{raw}\n```\nprose",
+        f"```text\n{raw}\n```",
+        f"```json\n[{raw}]\n```",
+        "```json\n\n```",
+        f"```json\n{raw}\n```\n```json\n{raw}\n```",
+        f"```json\n```json\n{raw}\n```\n```",
+        "```json\n{bad}\n```",
+        raw + raw,
+        "x" * (runner.MAX_ANSWER_CHARACTERS + 1),
+    )
+    assert all(runner._normalized_structured_payload(answer) == (None, None) for answer in rejected)
+
+
+def test_schema_1_2_plan_and_bug_gates_reject_known_semantic_defects() -> None:
+    runner = _runner()
+    valid = _valid_payload(runner, "implementation_plan")
+    assert _grade(runner, "implementation_plan", valid)["grade"] == "PASS"
+    stale = {**valid, "target": {**runner.PLAN_TARGET, "model_scope": "MODEL_AB_PAIR"}}
+    assert _grade(runner, "implementation_plan", stale)["grade"] == "FAIL"
+    stale_problem = {**valid, "problem": "Compare qwen3:4b versus qwen3:14b."}
+    assert _grade(runner, "implementation_plan", stale_problem)["grade"] == "FAIL"
+    bug = runner.CodeCase("bug_localization", "TEST", "Q", "x", "x", "x")
+    correct = f"The safe boundary is `{runner.MIGRATION_LF_POLICY}`."
+    wrong = correct + " Required fix: core.autocrlf=input."
+    assert runner._deterministic_grade(bug, correct, "OK", runner.MODEL)["grade"] == "PASS"
+    assert runner._deterministic_grade(bug, wrong, "OK", runner.MODEL)["grade"] == "FAIL"
     assert _grade(runner, "implementation_plan", {**valid, "owner": "app.ai"})["grade"] == "FAIL"
     assert (
         _grade(
@@ -373,7 +410,7 @@ def test_models_are_bound_to_request_and_use_isolated_safe_output_paths() -> Non
     assert runner._model_path_name(second) == "qwen3-coder_30b"
     assert runner._output_relative(first) != runner._output_relative(second)
     assert runner._output_relative(second) == Path(
-        "data/acceptance/code_model/focused_1_1/qwen3-coder_30b"
+        "data/acceptance/code_model/focused_1_2/qwen3-coder_30b"
     )
     with pytest.raises(ValueError):
         runner._model_path_name("../../unsafe")

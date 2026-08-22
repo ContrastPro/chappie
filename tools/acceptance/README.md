@@ -95,9 +95,9 @@ Ollama API. This is necessary because the production Control Plane allowlist int
 not yet expose a CODE role.
 
 The runner writes non-canonical local evidence under
-`data/acceptance/code_model/focused_1_1/<sanitized-model>/`, for example
+`data/acceptance/code_model/focused_1_2/<sanitized-model>/`, for example
 `qwen3-coder_30b`. Schema
-`chappie_code_model_benchmark/1.1.0` records separate pre-inference context bindings and
+`chappie_code_model_benchmark/1.2.0` records separate pre-inference context bindings and
 post-inference response evidence, exact requested/effective model identity, status, bounded
 answers, digests, latency, deterministic authority gates, three runs each of `DIFF_REVIEW` and
 `IMPLEMENTATION_PLAN`, and an initially blank `UNSCORED` human 0–2 rubric. It never asks the
@@ -114,6 +114,20 @@ when evidence already exists, for example:
 
 `--run-id` is a single safe path segment beneath the selected model directory; it preserves
 model-separated local evidence isolation.
+
+Schema 1.2 accepts either one raw JSON object or exactly one outer `json` fence containing that
+object; prose, other fence labels, multiple objects, arrays, nested fences, and oversized payloads
+remain fail-closed. Its plan contract explicitly identifies a single-candidate CODE benchmark,
+the CODE schema/output root, reference-only supplied Model A/B evidence, and no production CODE
+role. Historical 1.0/1.1 evidence is never rewritten. A completed 1.1 artifact may be derived
+offline into a fresh 1.2 directory without provider access:
+
+```powershell
+.\.venv\Scripts\python.exe tools\acceptance\run_code_model_benchmark.py --regrade-from <path-to-1.1-result.json> --run-id derived_1_2
+```
+
+The derived artifact records its source schema, source-artifact SHA-256, `OFFLINE_DERIVED`, and
+`inference_rerun: false`; it preserves each original response and response digest.
 
 The 1.1.0 methodology adds strict JSON contracts only for four semantic cases: explicit
 per-proposal authority decisions, behavior-to-package ownership routing, AI-execution diff review,

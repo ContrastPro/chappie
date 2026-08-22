@@ -8,6 +8,7 @@ Chappie's configured model, Knowledge, Git state, files, or trading state.
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
 import re
@@ -24,13 +25,12 @@ import httpx
 from app.knowledge.store import committed_snapshot, read_store
 from app.platform.bootstrap import ChappiePaths, collect_status, load_local_config
 
-EVIDENCE_SCHEMA = "chappie_code_model_benchmark/1.1.0"
+EVIDENCE_SCHEMA = "chappie_code_model_benchmark/1.2.0"
 DEFAULT_MODEL = "qwen2.5-coder:14b"
 # Compatibility alias for acceptance fixtures; production never imports this module.
 MODEL = DEFAULT_MODEL
 SUPPORTED_CANDIDATE_MODELS = frozenset({DEFAULT_MODEL, "qwen3-coder:30b"})
-# Never overwrite a 1.0.0 result: its free-form responses cannot satisfy 1.1.0.
-OUTPUT_BASE_RELATIVE = Path("data/acceptance/code_model/focused_1_1")
+OUTPUT_BASE_RELATIVE = Path("data/acceptance/code_model/focused_1_2")
 OLLAMA_URL = "http://127.0.0.1:11434"
 TIMEOUT_SECONDS = 180.0
 MAX_CONTEXT_CHARACTERS = 12_000
@@ -65,7 +65,16 @@ PLAN_ALLOWED_FILES = frozenset(
         "tools/acceptance/README.md",
     }
 )
-PLAN_ALLOWED_CONTRACTS = frozenset({"chappie_code_model_benchmark/1.1.0"})
+PLAN_ALLOWED_CONTRACTS = frozenset({EVIDENCE_SCHEMA})
+PLAN_TARGET = {
+    "kind": "CODE_BENCHMARK",
+    "schema": EVIDENCE_SCHEMA,
+    "output_root": "data/acceptance/code_model/focused_1_2",
+    "model_scope": "SINGLE_REQUESTED_CANDIDATE",
+    "supplied_evidence_role": "REFERENCE_ONLY",
+    "production_code_role": "NON_GOAL",
+}
+MIGRATION_LF_POLICY = "app/persistence/migrations/*.sql text eol=lf"
 
 
 @dataclass(frozen=True, slots=True)
@@ -279,10 +288,11 @@ def _structured_contract(case: CodeCase) -> dict[str, object] | None:
         }
     if case.case_id == "implementation_plan":
         return {
+            "target": PLAN_TARGET,
             "problem": "string",
             "evidence": ["string"],
             "owner": "tools/acceptance",
-            "affected_contracts": ["chappie_code_model_benchmark/1.1.0"],
+            "affected_contracts": [EVIDENCE_SCHEMA],
             "likely_files": sorted(PLAN_ALLOWED_FILES),
             "tests": ["string"],
             "risks": ["string"],
@@ -306,13 +316,25 @@ def _bounded_strings(value: object, *, allow_empty: bool = False) -> bool:
     )
 
 
-def _structured_payload(answer: str) -> dict[str, object] | None:
-    """Accept only one JSON object; prose/fenced legacy answers are unscorable."""
+def _normalized_structured_payload(answer: str) -> tuple[dict[str, object] | None, str | None]:
+    """Accept one bounded object, raw or in exactly one outer ``json`` fence."""
+    if len(answer) > MAX_ANSWER_CHARACTERS:
+        return None, None
+    form, body = "RAW_JSON", answer
+    fence = re.fullmatch(r"```json\r?\n(?P<body>.*)\r?\n```", answer, re.DOTALL)
+    if fence is not None:
+        form, body = "JSON_FENCE", fence.group("body")
+        if "```" in body:
+            return None, None
     try:
-        payload = json.loads(answer)
+        payload = json.loads(body)
     except json.JSONDecodeError:
-        return None
-    return payload if isinstance(payload, dict) else None
+        return None, None
+    return (payload, form) if isinstance(payload, dict) else (None, None)
+
+
+def _structured_payload(answer: str) -> dict[str, object] | None:
+    return _normalized_structured_payload(answer)[0]
 
 
 def _exact_entries(
@@ -372,6 +394,7 @@ def _validate_diff(payload: dict[str, object]) -> dict[str, bool]:
 
 def _validate_plan(payload: dict[str, object]) -> dict[str, bool]:
     required = {
+        "target",
         "problem",
         "evidence",
         "owner",
@@ -408,17 +431,30 @@ def _validate_plan(payload: dict[str, object]) -> dict[str, bool]:
         for item in non_goals
         if isinstance(item, str)
     )
+    target = payload.get("target")
+    stale_model_ab_claim = (
+        ("qwen3:4b" in text and "qwen3:14b" in text)
+        or "model_ab/focused_2_1" in text
+        or "chappie_model_ab/2.1.0" in text
+    )
     scope = (
-        payload.get("owner") == "tools/acceptance"
+        target == PLAN_TARGET
+        and payload.get("owner") == "tools/acceptance"
         and isinstance(files, list)
         and set(files).issubset(PLAN_ALLOWED_FILES)
         and isinstance(contracts, list)
         and set(contracts).issubset(PLAN_ALLOWED_CONTRACTS)
         and no_production_role
+        and not stale_model_ab_claim
         and "app/" not in text
         and "current code benchmark runner is designed for production" not in text
     )
     return {"structured_plan_sections": bool(sections), "acceptance_tooling_scope": scope}
+
+
+def _validate_bug_localization(answer: str) -> bool:
+    normalized = answer.casefold().replace("`", "")
+    return MIGRATION_LF_POLICY in normalized and "core.autocrlf=input" not in normalized
 
 
 def _classify_legacy_semantics(case_id: str, answer: str) -> dict[str, object]:
@@ -530,7 +566,7 @@ def _deterministic_grade(
     *,
     requested_model: str = DEFAULT_MODEL,
 ) -> dict[str, object]:
-    payload = _structured_payload(answer)
+    payload, transport_form = _normalized_structured_payload(answer)
     structured = _structured_contract(case)
     if structured is not None:
         semantic_gates = (
@@ -554,6 +590,7 @@ def _deterministic_grade(
             "grade": "PASS" if all(gates.values()) else "FAIL",
             "gates": gates,
             "structured_payload": payload,
+            "structured_transport_form": transport_form,
         }
     normalized = answer.casefold()
     required_terms = {term: term.casefold() in normalized for term in case.required_terms}
@@ -570,6 +607,8 @@ def _deterministic_grade(
         "authority_rejection": rejected,
         "no_forbidden_write_or_execution_authority": not forbidden_authority,
     }
+    if case.case_id == "bug_localization":
+        gates["repository_lf_policy_boundary"] = _validate_bug_localization(answer)
     return {
         "grade": "PASS" if all(gates.values()) else "FAIL",
         "gates": gates,
@@ -780,6 +819,67 @@ def _write(output: Path, result: dict[str, object]) -> None:
     _atomic_write(output / "report.md", "\n".join(lines) + "\n")
 
 
+def _offline_regrade(source: Path, output: Path) -> int:
+    """Derive 1.2 evidence from completed 1.1 evidence without provider access."""
+    raw = source.read_bytes()
+    original = json.loads(raw)
+    if (
+        original.get("evidence_schema") != "chappie_code_model_benchmark/1.1.0"
+        or original.get("summary", {}).get("status") != "COMPLETED"
+        or not isinstance(original.get("responses"), list)
+        or not isinstance(original.get("pre_inference", {}).get("cases"), list)
+        or not _output_is_available(output)
+    ):
+        raise ValueError("invalid, incomplete, or colliding offline regrade evidence")
+    cases: dict[str, CodeCase] = {}
+    for stored in original["pre_inference"]["cases"]:
+        if not isinstance(stored, dict):
+            raise TypeError("invalid stored case")
+        fields = {key: stored[key] for key in CodeCase.__dataclass_fields__}
+        fields["required_terms"] = tuple(fields["required_terms"])
+        case = CodeCase(**fields)
+        if stored.get("context_digest") != _sha({"locator": case.locator, "context": case.context}):
+            raise ValueError("stored context binding mismatch")
+        cases[case.case_id] = case
+    result = copy.deepcopy(original)
+    result.update(
+        {
+            "evidence_schema": EVIDENCE_SCHEMA,
+            "source_evidence_schema": original["evidence_schema"],
+            "source_artifact_digest": hashlib.sha256(raw).hexdigest(),
+            "regrade_method": "OFFLINE_DERIVED",
+            "inference_rerun": False,
+        }
+    )
+    responses = result["responses"]
+    for item in responses:
+        if not isinstance(item, dict) or not _response_evidence_valid(item):
+            raise ValueError("invalid response evidence")
+        case = cases.get(item.get("case_id"))
+        if case is None or item.get("answer_digest") != _sha(item.get("answer_bounded")):
+            raise ValueError("response binding mismatch")
+        item["deterministic_grade"] = _deterministic_grade(
+            case,
+            item["answer_bounded"],
+            item["status"],
+            item["effective_model"],
+            requested_model=item["requested_model"],
+        )
+    result["stability"] = _stability(responses)
+    result["timing_summary"] = _timing(responses)
+    result["summary"] = {
+        "status": "COMPLETED",
+        "unique_cases": len(cases),
+        "call_count": len(responses),
+        "deterministic_passes": sum(
+            item["deterministic_grade"]["grade"] == "PASS" for item in responses
+        ),
+        "winner": "NOT_DECLARED",
+    }
+    _write(output, result)
+    return 0
+
+
 def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run one bounded local Chappie CODE benchmark.")
     parser.add_argument(
@@ -789,11 +889,25 @@ def _arguments() -> argparse.Namespace:
         "--run-id",
         help="explicit new local evidence directory under the selected model",
     )
+    parser.add_argument(
+        "--regrade-from", type=Path, help="completed 1.1 result.json to derive offline"
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     arguments = _arguments()
+    if getattr(arguments, "regrade_from", None) is not None:
+        source = arguments.regrade_from.resolve()
+        original = json.loads(source.read_text(encoding="utf-8"))
+        model = original.get("candidate_model")
+        if not isinstance(model, str):
+            raise ValueError("offline regrade source has no candidate model")
+        if not arguments.run_id:
+            raise ValueError("offline regrade requires --run-id")
+        return _offline_regrade(
+            source, ChappiePaths.resolve().root / _output_relative(model, run_id=arguments.run_id)
+        )
     model = str(arguments.model)
     paths = ChappiePaths.resolve()
     preflight = _preflight(paths, model=model)
