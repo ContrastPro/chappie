@@ -1,11 +1,12 @@
 import * as vscode from "vscode";
-import { ProjectQAResponseV1 } from "../api/contracts";
+import { DevelopmentModelRoleV1, ProjectQAResponseV1 } from "../api/contracts";
 import { workbenchHtml } from "./workbench_html";
 import { ContextOptionsV1, HostMessageV1, parseWebviewMessage, RuntimeTelemetryV1, WorkbenchActionV1, WorkbenchConnectionSnapshotV1, WorkbenchContextAttachmentV1, WorkbenchContextKindV1 } from "./workbench_protocol";
 import { WorkbenchSessionV1 } from "./workbench_state";
 
 export interface WorkbenchDependenciesV1 {
-  askProject(question: string, context: ContextOptionsV1, attachments: readonly WorkbenchContextAttachmentV1[]): Promise<ProjectQAResponseV1>;
+  askProject(question: string, context: ContextOptionsV1, attachments: readonly WorkbenchContextAttachmentV1[], role: DevelopmentModelRoleV1): Promise<ProjectQAResponseV1>;
+  selectModelRole(): Promise<void>;
   attachContext(kind: WorkbenchContextKindV1): Promise<WorkbenchContextAttachmentV1>;
   removeContext(kind: WorkbenchContextKindV1): void;
   clearContexts(): void;
@@ -20,7 +21,7 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
   private contextPreviewPanel: vscode.WebviewPanel | undefined;
   private readonly session = new WorkbenchSessionV1();
   private readonly attachments = new Map<WorkbenchContextKindV1, WorkbenchContextAttachmentV1>();
-  private connection: WorkbenchConnectionSnapshotV1 = { state: "DISCONNECTED", system: "UNKNOWN", model: null, knowledge: "UNKNOWN", availability: "Chappie setup is required before the local service can connect.", setupAction: "Set up" };
+  private connection: WorkbenchConnectionSnapshotV1 = { state: "DISCONNECTED", system: "UNKNOWN", model: null, modelRole: "FAST", models: [], knowledge: "UNKNOWN", availability: "Chappie setup is required before the local service can connect.", setupAction: "Set up" };
   private sequence = 0;
 
   public constructor(private readonly dependencies: WorkbenchDependenciesV1) {}
@@ -66,6 +67,7 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
     if (message.type === "previewContext") { const attachment = this.attachments.get(message.kind); if (attachment) this.openContextPreview(attachment); return; }
     if (message.type === "removeContext") { this.attachments.delete(message.kind); this.dependencies.removeContext(message.kind); this.post({ type: "notice", message: "" }); this.post({ type: "attachmentsChanged", attachments: this.attachmentSnapshot() }); return; }
     if (message.type === "clearConversation") { this.session.clear(); this.clearAttachments(); await this.postSession(); return; }
+    if (message.type === "selectModelRole") { await this.dependencies.selectModelRole(); return; }
     if (message.type === "feedback") { const updated = this.session.feedback(message.turnId, message.value); if (updated) await this.post({ type: "turnFeedback", turn: updated }); return; }
     if (message.type === "runAction") { await this.dependencies.runAction(message.action); return; }
     const original = message.type === "retry" ? this.session.find(message.turnId) : undefined;
@@ -84,7 +86,7 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
     await this.postSession();
     const telemetry = setInterval(() => { void this.publishTelemetry(); }, 1_500); void this.publishTelemetry();
     try {
-      const response = await this.dependencies.askProject(turn.question, turn.context, turn.attachments);
+      const response = await this.dependencies.askProject(turn.question, turn.context, turn.attachments, this.connection.modelRole);
       if (response.state !== "OK" || !(response.answer ?? "").trim()) throw new Error(response.error?.message ?? "Project QA did not return a final answer.");
       if (!this.session.complete(turn.turnId, response)) throw new Error("Project QA completed after its Workbench turn was no longer pending.");
     } catch (error) { this.session.fail(turn.turnId, this.dependencies.errorMessage(error)); }

@@ -21,6 +21,9 @@ export interface TransportEnvelopeV1<T> {
 export interface HealthV1 { status: "OK"; }
 export interface ControlPlaneStatusV1 { identity: string; contract_digest: string; state: string; status: Record<string, unknown> | null; error: TransportErrorV1 | null; }
 export interface ControlPlaneAIStatusV1 { identity: string; contract_digest: string; state: string; provider: string | null; profile: string | null; model: string | null; provider_state: string | null; model_state: string | null; error: TransportErrorV1 | null; }
+export type DevelopmentModelRoleV1 = "FAST" | "CODE" | "DEEP";
+export interface ControlPlaneModelV1 { model_id: string; concrete_model: string; installed: boolean; ready: boolean; default: boolean; role: DevelopmentModelRoleV1 | null; profile_identity: string | null; capability_identity: string | null; availability: "AVAILABLE" | "UNAVAILABLE"; }
+export interface ControlPlaneModelsV1 { models: ControlPlaneModelV1[]; }
 export interface CapabilityV1 { capability_id: string; category: string; status: string; authority: string; read_only: boolean; requires_ai: boolean; requires_knowledge: boolean; description: string; }
 export interface ControlPlaneCapabilitiesV1 { identity: string; contract_digest: string; state: string; capabilities: CapabilityV1[]; error: TransportErrorV1 | null; }
 export interface ControlPlaneDiagnosticsV1 { identity: string; contract_digest: string; state: string; diagnostics: Record<string, unknown> | null; error: TransportErrorV1 | null; }

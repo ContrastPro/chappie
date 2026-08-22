@@ -1,14 +1,20 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { ProjectQAResponseV1 } from "../api/contracts";
+import { ControlPlaneModelV1, ProjectQAResponseV1 } from "../api/contracts";
 import { workbenchMarkdownRendererScript } from "../ui/markdown";
 import { WORKBENCH_COMPOSER_MAX_HEIGHT_PX, WORKBENCH_COMPOSER_MIN_HEIGHT_PX, workbenchComposerSize } from "../ui/composer";
 import { parseWebviewMessage, WORKBENCH_PROTOCOL_VERSION } from "../ui/workbench_protocol";
 import { workbenchRendererScript } from "../ui/workbench_render";
 import { MAX_WORKBENCH_TURNS, WorkbenchSessionV1 } from "../ui/workbench_state";
+import { roleLabel, roleUnavailableMessage, selectRole } from "../ui/model_roles";
 
 const noContext = { includeFile: false, includeSelection: false, includeGit: false };
+const roles: ControlPlaneModelV1[] = [
+  { model_id: "QWEN3_4B", concrete_model: "qwen3:4b", installed: true, ready: true, default: true, role: "FAST", profile_identity: "FAST", capability_identity: "development_model_role/FAST", availability: "AVAILABLE" },
+  { model_id: "QWEN3_CODER_30B", concrete_model: "qwen3-coder:30b", installed: true, ready: true, default: false, role: "CODE", profile_identity: "CODE_ADVISORY", capability_identity: "development_model_role/CODE_ADVISORY", availability: "AVAILABLE" },
+  { model_id: "QWEN3_14B", concrete_model: "qwen3:14b", installed: true, ready: true, default: false, role: "DEEP", profile_identity: "DEEP", capability_identity: "development_model_role/DEEP", availability: "AVAILABLE" },
+];
 const fileAttachment = { id: "context_1", kind: "includeFile" as const, label: "File · app/runtime/application.py", detail: "app/runtime/application.py · Lines 1–4", preview: "app/runtime/application.py · Lines 1–4\n\nclass Application:", characterCount: 19, truncated: false };
 
 const response = (answer: string): ProjectQAResponseV1 => ({
@@ -39,6 +45,22 @@ test("Workbench protocol accepts only bounded typed webview messages", () => {
   assert.deepEqual(parseWebviewMessage({ type: "feedback", turnId: "turn_1", value: "good" }), { type: "feedback", turnId: "turn_1", value: "good" });
   assert.equal(parseWebviewMessage({ type: "feedback", turnId: "turn_1", value: "maybe" }), undefined);
   assert.equal(parseWebviewMessage({ type: "ready", protocol: "wrong" }), undefined);
+  assert.deepEqual(parseWebviewMessage({ type: "selectModelRole" }), { type: "selectModelRole" });
+});
+
+test("Workbench displays backend-projected stable roles without owning model policy", () => {
+  assert.equal(roleLabel(selectRole(roles, "FAST")), "FAST — qwen3:4b");
+  assert.equal(roleLabel(selectRole(roles, "CODE")), "CODE — qwen3-coder:30b");
+  assert.equal(roleLabel(selectRole(roles, "DEEP")), "DEEP — qwen3:14b");
+  const remapped = [{ ...roles[1], concrete_model: "backend-remapped-coder" }];
+  assert.equal(roleLabel(selectRole(remapped, "CODE")), "CODE — backend-remapped-coder");
+  assert.match(roleUnavailableMessage(selectRole([{ ...roles[1], ready: false, availability: "UNAVAILABLE" }], "CODE")) ?? "", /will not fall back automatically/);
+  const manifest = JSON.parse(readFileSync("package.json", "utf8")) as { contributes: { configuration: { properties: Record<string, { scope?: string }> } } };
+  assert.equal(manifest.contributes.configuration.properties["chappie.selectedModelRole"].scope, "resource");
+  const host = readFileSync("src/extension.ts", "utf8");
+  assert.match(host, /ConfigurationTarget\.Workspace/);
+  assert.match(host, /askProject\(question, collectAttachedWorkbenchContext\(options, attachments, workbenchSnapshots\), role\)/);
+  assert.doesNotMatch(host, /ollama pull|selectedModelRole.*\.env/);
 });
 
 test("Workbench session permits one active request and preserves it when trimming", () => {
@@ -237,7 +259,8 @@ test("Workbench context protocol version and host snapshot retry path are intent
   const source = readFileSync("src/ui/workbench.ts", "utf8");
   assert.equal(WORKBENCH_PROTOCOL_VERSION, "chappie_workbench/1.4.0");
   assert.match(source, /const attachments = message\.type === "retry" \? original!\.attachments : this\.attachmentSnapshot\(\)/);
-  assert.match(source, /this\.dependencies\.askProject\(turn\.question, turn\.context, turn\.attachments\)/);
+  assert.match(source, /this\.dependencies\.askProject\(turn\.question, turn\.context, turn\.attachments, this\.connection\.modelRole\)/);
+  assert.match(source, /selectModelRole/);
   assert.match(source, /if \(message\.type === "ask"\) this\.clearAttachments\(\)/);
   assert.match(source, /this\.attachments\.delete\("includeSelection"\)/);
   assert.match(source, /this\.attachments\.delete\("includeFile"\)/);
@@ -305,14 +328,16 @@ test("Workbench message actions remain local, accessible, and preserve canonical
   assert.match(script, /canvas\.addEventListener\('scroll',updateJumpLatest\)/);
 });
 
-test("Inspector close and header toggle share one Webview-local visibility state", () => {
+test("Inspector is closed initially and its header toggle opens it without affecting model selection", () => {
   const script = workbenchRendererScript();
   const html = readFileSync("src/ui/workbench_html.ts", "utf8");
-  assert.match(script, /let inspectorOpen=true/);
+  assert.match(script, /let inspectorOpen=false/);
   assert.match(script, /const setInspectorOpen=open=>/);
   assert.match(script, /newChat\.after\(toggle\)/);
   assert.match(script, /toggle\.onclick=\(\)=>setInspectorOpen\(!inspectorOpen\)/);
   assert.match(script, /close\.onclick=\(\)=>setInspectorOpen\(false\)/);
+  assert.match(script, /close\.onclick=\(\)=>setInspectorOpen\(false\);setInspectorOpen\(false\)/);
+  assert.match(script, /type:'selectModelRole'/);
   assert.match(script, /aria-label','Toggle Inspector'/);
   assert.match(script, /title='Toggle Inspector'/);
   assert.match(html, /\.header \.open-inspector\{display:inline-flex/);
@@ -369,4 +394,6 @@ test("Workbench renderer projects status and lifecycle from host-owned snapshots
   assert.match(script, /question\.scrollHeight/);
   assert.match(script, /overflowY=scrollHeight>220\?'auto':'hidden'/);
   assert.doesNotMatch(script, /turnCompleted\|\|data\.type==='turnFailed'/);
+  assert.match(script, /connection\.modelRole/);
+  assert.match(script, /type:'selectModelRole'/);
 });

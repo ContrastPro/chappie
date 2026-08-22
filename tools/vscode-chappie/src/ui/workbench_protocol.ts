@@ -1,4 +1,4 @@
-import { ProjectQAResponseV1 } from "../api/contracts";
+import { ControlPlaneModelV1, DevelopmentModelRoleV1, ProjectQAResponseV1 } from "../api/contracts";
 
 export const WORKBENCH_PROTOCOL_VERSION = "chappie_workbench/1.4.0";
 /** Local editing capacity, intentionally independent of the request capacity. */
@@ -24,6 +24,8 @@ export interface WorkbenchConnectionSnapshotV1 {
   /** Overall local Chappie system state, distinct from transport connection. */
   system: string;
   model: string | null;
+  modelRole: DevelopmentModelRoleV1;
+  models: readonly ControlPlaneModelV1[];
   knowledge: string;
   availability: string | null;
   setupAction: "Set up" | "Repair" | "Reconnect";
@@ -47,7 +49,8 @@ export type WebviewMessageV1 =
   | { type: "clearConversation" }
   | { type: "retry"; turnId: string }
   | { type: "feedback"; turnId: string; value: Exclude<WorkbenchFeedbackV1, null> }
-  | { type: "runAction"; action: WorkbenchActionV1 };
+  | { type: "runAction"; action: WorkbenchActionV1 }
+  | { type: "selectModelRole" };
 
 export type HostMessageV1 =
   | { type: "initialize"; protocol: typeof WORKBENCH_PROTOCOL_VERSION; connection: WorkbenchConnectionSnapshotV1; session: readonly WorkbenchTurnV1[]; sessionRevision: number; attachments: readonly WorkbenchContextAttachmentV1[] }
@@ -68,6 +71,7 @@ export function parseWebviewMessage(value: unknown): WebviewMessageV1 | undefine
   if (!isRecord(value) || typeof value.type !== "string") return undefined;
   if (value.type === "ready") return value.protocol === WORKBENCH_PROTOCOL_VERSION ? { type: "ready", protocol: WORKBENCH_PROTOCOL_VERSION } : undefined;
   if (value.type === "clearConversation") return Object.keys(value).length === 1 ? { type: "clearConversation" } : undefined;
+  if (value.type === "selectModelRole") return Object.keys(value).length === 1 ? { type: "selectModelRole" } : undefined;
   if (value.type === "retry" && Object.keys(value).length === 2 && typeof value.turnId === "string" && /^[a-zA-Z0-9_-]{1,64}$/.test(value.turnId)) return { type: "retry", turnId: value.turnId };
   if (value.type === "feedback" && Object.keys(value).length === 3 && typeof value.turnId === "string" && /^[a-zA-Z0-9_-]{1,64}$/.test(value.turnId) && (value.value === "good" || value.value === "bad")) return { type: "feedback", turnId: value.turnId, value: value.value };
   if ((value.type === "attachContext" || value.type === "previewContext" || value.type === "removeContext") && Object.keys(value).length === 2 && typeof value.kind === "string" && contextKeys.has(value.kind as WorkbenchContextKindV1)) return { type: value.type, kind: value.kind as WorkbenchContextKindV1 };

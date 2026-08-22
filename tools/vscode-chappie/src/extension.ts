@@ -6,13 +6,16 @@ import {
   ConnectionState,
   ControlPlaneAIStatusV1,
   ControlPlaneCapabilitiesV1,
+  ControlPlaneModelsV1,
   ControlPlaneStatusV1,
+  DevelopmentModelRoleV1,
 } from "./api/contracts";
 import { ChappieControlPlaneClient, ControlPlaneClientError, ControlPlaneDependencyError, ControlPlaneIncompatibleError } from "./api/client";
 import { appendTurn, ChatTurnV1, renderTurns } from "./ui/chat";
 import { capabilitySummary, contextPreview, humanState, projectChatAvailability, projectQaFailureMessage, setupActionLabel } from "./ui/presentation";
 import { ChappieStatusSidebarV1, StatusRefreshGateV1 } from "./ui/status";
 import { ChappieWorkbenchV1 } from "./ui/workbench";
+import { roleUnavailableMessage, selectRole } from "./ui/model_roles";
 import { WorkbenchContextAttachmentV1, WorkbenchContextKindV1 } from "./ui/workbench_protocol";
 import { EditorContextInputV1, WorkspaceContextCollector } from "./workspace/context";
 import { collectGitMetadata } from "./workspace/git_metadata";
@@ -26,6 +29,7 @@ interface Snapshot {
   status?: ControlPlaneStatusV1;
   ai?: ControlPlaneAIStatusV1;
   capabilities?: ControlPlaneCapabilitiesV1;
+  models?: ControlPlaneModelsV1;
 }
 
 class ChappieTree implements vscode.TreeDataProvider<vscode.TreeItem> {
@@ -147,6 +151,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const workbenchSnapshots = new Map<string, EditorContextInputV1>();
   let workbenchSnapshotSequence = 0;
   const configuredPort = (): number => vscode.workspace.getConfiguration("chappie").get<number>("controlPlane.port", 8765);
+  const selectedModelRole = (): DevelopmentModelRoleV1 => vscode.workspace.getConfiguration("chappie").get<DevelopmentModelRoleV1>("selectedModelRole", "FAST");
   const platform = globalThis.process.platform as "win32" | "darwin" | "linux";
   const localState = (): "UNCONFIGURED" | "DEGRADED" | "READY" => {
     const root = workspaceRoot();
@@ -162,12 +167,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const client = new ChappieControlPlaneClient(configuredPort());
     try {
       await client.health();
-      const [status, ai, capabilities] = await Promise.all([client.status(), client.aiStatus(), client.capabilities()]);
+      const [status, ai, capabilities, models] = await Promise.all([client.status(), client.aiStatus(), client.capabilities(), client.models()]);
       if (!statusRefreshGate.isCurrent(generation)) return "CONNECTED";
-      tree.update("CONNECTED", { status, ai, capabilities });
       const projectQa = capabilities.capabilities.find((item) => item.capability_id === "project.qa");
       const knowledge = componentState(status, "KNOWLEDGE");
-      const availability = projectChatAvailability("CONNECTED", projectQa?.status, ai.provider_state, knowledge, localState());
+      const role = selectedModelRole();
+      const selected = selectRole(models.models, role);
+      tree.update("CONNECTED", { status, ai, capabilities, models, modelRole: role, selectedModel: selected.model?.concrete_model ?? null });
+      const roleAvailability = roleUnavailableMessage(selected);
+      const availability = roleAvailability ?? projectChatAvailability("CONNECTED", projectQa?.status, ai.provider_state, knowledge, localState());
       const setupAction = setupActionLabel("CONNECTED", projectQa?.status, ai.provider_state, knowledge, localState());
       chat.update(
         "CONNECTED",
@@ -176,7 +184,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         setupAction,
       );
       const system = String(status.status?.overall_state ?? "UNKNOWN");
-      workbench?.updateConnection({ state: "CONNECTED", system, model: ai.model, knowledge, availability, setupAction });
+      workbench?.updateConnection({ state: "CONNECTED", system, model: selected.model?.concrete_model ?? ai.model, modelRole: role, models: models.models, knowledge, availability, setupAction });
       renderStatus(bar, "CONNECTED");
       output.appendLine("Control Plane connected.");
       return "CONNECTED";
@@ -192,7 +200,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         availability,
         setupAction,
       );
-      workbench?.updateConnection({ state, system: "UNKNOWN", model: null, knowledge: "UNKNOWN", availability, setupAction });
+      workbench?.updateConnection({ state, system: "UNKNOWN", model: null, modelRole: selectedModelRole(), models: [], knowledge: "UNKNOWN", availability, setupAction });
       renderStatus(bar, state);
       const message = error instanceof Error ? error.message : "Control Plane request failed";
       output.appendLine(`${state}: ${message}`);
@@ -293,7 +301,19 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   };
 
   workbench = new ChappieWorkbenchV1({
-    askProject: (question, options, attachments) => new ChappieControlPlaneClient(configuredPort()).askProject(question, collectAttachedWorkbenchContext(options, attachments, workbenchSnapshots)),
+    askProject: (question, options, attachments, role) => new ChappieControlPlaneClient(configuredPort()).askProject(question, collectAttachedWorkbenchContext(options, attachments, workbenchSnapshots), role),
+    selectModelRole: async () => {
+      const models = (await new ChappieControlPlaneClient(configuredPort()).models()).models.filter((item) => item.role !== null);
+      const chosen = await vscode.window.showQuickPick(
+        models.map((item) => ({ label: `${item.role} — ${item.concrete_model}`, description: item.ready ? "Available" : "Unavailable", detail: item.ready ? "Select this backend-approved role" : "Unavailable; no automatic fallback", role: item.role!, disabled: !item.ready })),
+        { title: "Chappie development model role", placeHolder: "Select an available backend-approved role" },
+      );
+      if (!chosen) return;
+      if (chosen.disabled) { await vscode.window.showErrorMessage(`Selected model role ${chosen.role} is unavailable. Chappie will not fall back automatically.`); return; }
+      await vscode.workspace.getConfiguration("chappie").update("selectedModelRole", chosen.role, vscode.ConfigurationTarget.Workspace);
+      output.appendLine(`Selected workspace model role: ${chosen.label}`);
+      await connect();
+    },
     attachContext: async (kind) => {
       let editor = vscode.window.activeTextEditor;
       if (kind === "includeFile") {
@@ -389,7 +409,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   const root = workspaceRoot();
   if (!root) {
     const availability = projectChatAvailability("DISCONNECTED", undefined, undefined, "UNKNOWN", "UNCONFIGURED");
-    tree.update("DISCONNECTED"); chat.update("DISCONNECTED", null, availability, "Set up"); workbench.updateConnection({ state: "DISCONNECTED", system: "UNKNOWN", model: null, knowledge: "UNKNOWN", availability, setupAction: "Set up" }); renderStatus(bar, "DISCONNECTED");
+    tree.update("DISCONNECTED"); chat.update("DISCONNECTED", null, availability, "Set up"); workbench.updateConnection({ state: "DISCONNECTED", system: "UNKNOWN", model: null, modelRole: selectedModelRole(), models: [], knowledge: "UNKNOWN", availability, setupAction: "Set up" }); renderStatus(bar, "DISCONNECTED");
     output.appendLine("No recognized Chappie workspace is open.");
   } else if (vscode.workspace.getConfiguration("chappie").get<boolean>("autoConnect", true)) {
     output.appendLine(`Recognized Chappie workspace: ${root}`);
@@ -400,7 +420,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
   } else {
     const availability = projectChatAvailability("DISCONNECTED", undefined, undefined, "UNKNOWN", localState());
     const setupAction = setupActionLabel("DISCONNECTED", undefined, undefined, "UNKNOWN", localState());
-    tree.update("DISCONNECTED"); chat.update("DISCONNECTED", null, availability, setupAction); workbench.updateConnection({ state: "DISCONNECTED", system: "UNKNOWN", model: null, knowledge: "UNKNOWN", availability, setupAction }); renderStatus(bar, "DISCONNECTED");
+    tree.update("DISCONNECTED"); chat.update("DISCONNECTED", null, availability, setupAction); workbench.updateConnection({ state: "DISCONNECTED", system: "UNKNOWN", model: null, modelRole: selectedModelRole(), models: [], knowledge: "UNKNOWN", availability, setupAction }); renderStatus(bar, "DISCONNECTED");
   }
 }
 

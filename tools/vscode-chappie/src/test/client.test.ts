@@ -56,6 +56,16 @@ test("Project QA has a bounded local-inference timeout longer than health checks
   assert.equal(projectQaFailureMessage("AI_TIMEOUT"), "Chappie Project QA timed out before local inference completed.");
 });
 
+test("Project QA propagates a selected stable role without changing durable model policy", async () => {
+  let body = "";
+  const client = new ChappieControlPlaneClient(8765, async (_url, init) => {
+    body = String(init?.body);
+    return envelope({ identity: CONTROL_PLANE_IDENTITY, contract_digest: CONTROL_PLANE_DIGEST, state: "OK", question: "Architecture", answer: "Grounded", supporting_knowledge_fact_ids: [], supporting_records: [], unknowns: [], context_digest: null, provider: "ollama", model: "qwen3-coder:30b", authority: "AI_WITH_KNOWLEDGE_READ_ONLY", validation_status: "VALID", error: null });
+  });
+  await client.askProject("Architecture", undefined, "CODE");
+  assert.deepEqual(JSON.parse(body), { question: "Architecture", workspace_context: null, requested_model_role: "CODE" });
+});
+
 test("client is fixed to loopback and configured port", () => {
   assert.equal(new ChappieControlPlaneClient(9123).endpoint, "http://127.0.0.1:9123");
   assert.throws(() => new ChappieControlPlaneClient(0), ControlPlaneClientError);

@@ -1,8 +1,8 @@
 import * as vscode from "vscode";
-import { ConnectionState, ControlPlaneAIStatusV1, ControlPlaneCapabilitiesV1, ControlPlaneStatusV1 } from "../api/contracts";
+import { ConnectionState, ControlPlaneAIStatusV1, ControlPlaneCapabilitiesV1, ControlPlaneModelsV1, ControlPlaneStatusV1 } from "../api/contracts";
 import { capabilitySummary, humanState } from "./presentation";
 
-export interface StatusSnapshotV1 { status?: ControlPlaneStatusV1; ai?: ControlPlaneAIStatusV1; capabilities?: ControlPlaneCapabilitiesV1; }
+export interface StatusSnapshotV1 { status?: ControlPlaneStatusV1; ai?: ControlPlaneAIStatusV1; capabilities?: ControlPlaneCapabilitiesV1; models?: ControlPlaneModelsV1; modelRole?: string; selectedModel?: string | null; }
 
 /** Rejects late status responses without reinterpreting their payload. */
 export class StatusRefreshGateV1 {
@@ -16,7 +16,7 @@ export class ChappieStatusSidebarV1 implements vscode.WebviewViewProvider {
   public constructor(private readonly runAction: (action: SidebarActionV1) => void) {}
   public resolveWebviewView(view: vscode.WebviewView): void { this.view = view; view.webview.options = { enableScripts: true }; view.webview.html = sidebarHtml(); view.webview.onDidReceiveMessage((value: unknown) => { if (isAction(value)) this.runAction(value.action); }); this.render(); }
   public update(state: ConnectionState, snapshot: StatusSnapshotV1 = {}): void { this.state = state; this.snapshot = snapshot; this.render(); }
-  private render(): void { void this.view?.webview.postMessage({ type: "render", connection: humanState(this.state), ready: this.state === "CONNECTED", system: humanState(String(this.snapshot.status?.status?.overall_state ?? "UNKNOWN")), model: this.snapshot.ai?.model ?? humanState(this.snapshot.ai?.provider_state), knowledge: componentState(this.snapshot.status, "KNOWLEDGE"), capabilities: capabilitySummary(this.snapshot.capabilities?.capabilities ?? []) }); }
+  private render(): void { void this.view?.webview.postMessage({ type: "render", connection: humanState(this.state), ready: this.state === "CONNECTED", system: humanState(String(this.snapshot.status?.status?.overall_state ?? "UNKNOWN")), model: this.snapshot.modelRole ? `${this.snapshot.modelRole} — ${this.snapshot.selectedModel ?? "unavailable"}` : this.snapshot.ai?.model ?? humanState(this.snapshot.ai?.provider_state), knowledge: componentState(this.snapshot.status, "KNOWLEDGE"), capabilities: capabilitySummary(this.snapshot.capabilities?.capabilities ?? []) }); }
 }
 function isAction(value: unknown): value is { type: "action"; action: SidebarActionV1 } { return typeof value === "object" && value !== null && (value as { type?: unknown }).type === "action" && ["newChat", "refresh", "diagnostics"].includes(String((value as { action?: unknown }).action)); }
 function componentState(status: ControlPlaneStatusV1 | undefined, component: string): string { const found = (Array.isArray(status?.status?.components) ? status.status.components : []).find((item) => typeof item === "object" && item !== null && (item as { component?: string }).component === component) as { state?: string } | undefined; return humanState(found?.state); }

@@ -4,6 +4,7 @@ import {
   ControlPlaneAIStatusV1,
   ControlPlaneCapabilitiesV1,
   ControlPlaneDiagnosticsV1,
+  ControlPlaneModelsV1,
   ControlPlaneStatusV1,
   HealthV1,
   LOOPBACK_HOST,
@@ -65,14 +66,15 @@ export class ChappieControlPlaneClient {
   public status(): Promise<ControlPlaneStatusV1> { return this.data("/v1/status", { method: "GET" }, CONTROL_PLANE_REFRESH_TIMEOUT_MS); }
   public diagnostics(): Promise<ControlPlaneDiagnosticsV1> { return this.data("/v1/diagnostics", { method: "GET" }, CONTROL_PLANE_REFRESH_TIMEOUT_MS); }
   public aiStatus(): Promise<ControlPlaneAIStatusV1> { return this.data("/v1/ai/status", { method: "GET" }, CONTROL_PLANE_REFRESH_TIMEOUT_MS); }
+  public models(): Promise<ControlPlaneModelsV1> { return this.data("/v1/ai/models", { method: "GET" }, CONTROL_PLANE_REFRESH_TIMEOUT_MS); }
   public capabilities(): Promise<ControlPlaneCapabilitiesV1> { return this.data("/v1/capabilities", { method: "GET" }, CONTROL_PLANE_REFRESH_TIMEOUT_MS); }
-  public async askProject(question: string, workspaceContext?: WorkspaceContextV1): Promise<ProjectQAResponseV1> {
+  public async askProject(question: string, workspaceContext?: WorkspaceContextV1, requestedModelRole?: "FAST" | "CODE" | "DEEP"): Promise<ProjectQAResponseV1> {
     if (!question.trim() || question.length > PROJECT_QA_MAX_REQUEST_CHARACTERS) {
       throw new ControlPlaneClientError(`Project question must be between 1 and ${PROJECT_QA_MAX_REQUEST_CHARACTERS} characters`);
     }
     return parseProjectQA(await this.data(
       "/v1/project/qa",
-      { method: "POST", body: JSON.stringify({ question, workspace_context: workspaceContext ?? null }) },
+      { method: "POST", body: JSON.stringify({ question, workspace_context: workspaceContext ?? null, ...(requestedModelRole ? { requested_model_role: requestedModelRole } : {}) }) },
       this.projectQaTimeoutMs,
     ));
   }
