@@ -80,11 +80,15 @@ class _DummySetupEngine:
         self.installed_profiles = installed_profiles
         self.executed: list[AIModelProfileV1 | None] = []
         self.approvals: list[SetupApprovalV1] = []
+        self.external_preflight_developer_modes: list[bool] = []
 
     def plan(self, *, developer: bool = False, ai_profile: AIModelProfileV1 | None = None):
         return ()
 
-    def required_external_actions(self, *, ai_profile: AIModelProfileV1 | None = None):
+    def required_external_actions(
+        self, *, developer: bool = False, ai_profile: AIModelProfileV1 | None = None
+    ):
+        self.external_preflight_developer_modes.append(developer)
         return self.profile_to_actions.get(ai_profile or AIModelProfileV1.BALANCED, ())
 
     def installed_catalog_profiles(self):
@@ -125,7 +129,10 @@ class _ResultSetupEngine:
             SetupActionV1(item.code, ActionSafetyV1.SAFE, item.message, None) for item in self.steps
         )
 
-    def required_external_actions(self, *, ai_profile: AIModelProfileV1 | None = None):
+    def required_external_actions(
+        self, *, developer: bool = False, ai_profile: AIModelProfileV1 | None = None
+    ):
+        del developer
         del ai_profile
         return ()
 
@@ -436,6 +443,19 @@ def test_cli_reuses_verified_existing_ai_config_without_profile_prompt(
     assert "External work   NOT REQUIRED" in output
     assert "CHAPPIE SETUP COMPLETE" in output
     assert engine.executed == [AIModelProfileV1.BALANCED]
+
+
+def test_cli_developer_mode_uses_the_developer_plan_for_external_preflight(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app import cli
+
+    engine = _DummySetupEngine({AIModelProfileV1.BALANCED: ()})
+    monkeypatch.setattr(cli, "_setup_engine", lambda *_args, **_kwargs: engine)
+
+    assert main(["setup", "--yes", "--developer", "--non-interactive"], paths=_paths(tmp_path)) == 0
+    assert engine.external_preflight_developer_modes == [True]
+    assert engine.executed == [None]
 
 
 @pytest.mark.parametrize(

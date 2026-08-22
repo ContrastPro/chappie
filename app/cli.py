@@ -420,7 +420,9 @@ def main(argv: Sequence[str] | None = None, *, paths: ChappiePaths | None = None
                 elif args.interactive and not args.non_interactive:
                     profile = _interactive_ai_profile(paths, parser)
         actions = engine.plan(developer=args.developer, ai_profile=profile)
-        needs_external = engine.required_external_actions(ai_profile=profile)
+        needs_external = engine.required_external_actions(
+            developer=args.developer, ai_profile=profile
+        )
         allow_external = args.allow_external
         if args.plan:
             print(

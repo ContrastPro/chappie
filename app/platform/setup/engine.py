@@ -330,7 +330,7 @@ class SetupEngineV1:
         )
 
     def required_external_actions(
-        self, *, ai_profile: AIModelProfileV1 | None = None
+        self, *, developer: bool = False, ai_profile: AIModelProfileV1 | None = None
     ) -> tuple[SetupActionCodeV1, ...]:
         """Return only download/install actions still required by the current plan.
 
@@ -341,10 +341,11 @@ class SetupEngineV1:
 
         previous_profile = getattr(self, "_profile", None)
         try:
-            profile = ai_profile or AIModelProfileV1.BALANCED
-            self._profile = profile
+            profile = ai_profile
+            if profile is not None:
+                self._profile = profile
             required: list[SetupActionCodeV1] = []
-            for action in self.plan(ai_profile=profile):
+            for action in self.plan(developer=developer, ai_profile=profile):
                 if action.code == SetupActionCodeV1.INSTALL_AI_PROVIDER:
                     if (
                         action.safety == ActionSafetyV1.EXTERNAL

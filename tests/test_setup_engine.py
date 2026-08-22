@@ -77,6 +77,19 @@ def test_engine_identity_and_safe_external_action_classification() -> None:
     )
 
 
+def test_developer_plan_and_external_preflight_share_the_same_action_set(tmp_path: Path) -> None:
+    engine = FakeSetupEngine(_paths(tmp_path))
+    planned = engine.plan(developer=True)
+
+    assert SetupActionCodeV1.BUILD_KNOWLEDGE in {action.code for action in planned}
+    assert SetupActionCodeV1.INSTALL_AI_PROVIDER not in {action.code for action in planned}
+    assert engine.required_external_actions(developer=True) == ()
+
+    result = engine.execute(approval=SetupApprovalV1(allow_safe=True), developer=True)
+    assert SetupActionCodeV1.BUILD_KNOWLEDGE in engine.applied
+    assert all(step.state != SetupStepStateV1.FAILED for step in result.steps)
+
+
 def test_vscode_workstation_stage_is_optional_and_only_added_with_local_integration(
     tmp_path: Path,
 ) -> None:
