@@ -165,7 +165,7 @@ def test_timing_stability_and_output_are_noncanonical(tmp_path: Path) -> None:
         "failures": 1,
         "timeouts": 1,
     }
-    assert runner._stability(sample)["diff_review"]["runs"] == 2
+    assert runner._stability(sample)["diff_review"]["status"] == "MALFORMED_EVIDENCE"
     runner._write(tmp_path, {"source_commit": "a" * 40, "summary": {"winner": "NOT_DECLARED"}})
     assert "Local non-canonical" in (tmp_path / "report.md").read_text(encoding="utf-8")
 
@@ -173,6 +173,71 @@ def test_timing_stability_and_output_are_noncanonical(tmp_path: Path) -> None:
 def _grade(runner, case_id: str, payload: dict[str, object]) -> dict[str, object]:
     case = runner.CodeCase(case_id, "TEST", "Question", "synthetic", "fixture", "evidence")
     return runner._deterministic_grade(case, runner.json.dumps(payload), "OK", runner.MODEL)
+
+
+def _valid_payload(runner, case_id: str) -> dict[str, object]:
+    if case_id == "diff_review":
+        return {
+            "violation_detected": True,
+            "violation_kind": ["AI_EXECUTION_AUTHORITY"],
+            "disposition": "REJECT",
+            "rationale": "AI cannot own execution.",
+            "missing_tests": ["authority boundary"],
+            "unknowns": [],
+        }
+    return {
+        "problem": "Acceptance-only benchmark tooling.",
+        "evidence": ["bounded runner evidence"],
+        "owner": "tools/acceptance",
+        "affected_contracts": [runner.EVIDENCE_SCHEMA],
+        "likely_files": sorted(runner.PLAN_ALLOWED_FILES),
+        "tests": ["contract regression"],
+        "risks": ["malformed evidence"],
+        "non_goals": ["production CODE role"],
+        "acceptance_criteria": ["read-only"],
+        "unknowns": [],
+    }
+
+
+def _structured_run(runner, case_id: str, ordinal: int) -> dict[str, object]:
+    payload = _valid_payload(runner, case_id)
+    case = runner.CodeCase(case_id, "TEST", "Question", "synthetic", "fixture", "evidence")
+    return runner._call(
+        case,
+        ordinal,
+        post=lambda *_args, **_kwargs: SimpleNamespace(
+            raise_for_status=lambda: None,
+            json=lambda: {
+                "model": runner.MODEL,
+                "message": {"content": runner.json.dumps(payload)},
+            },
+        ),
+    )
+
+
+def test_stability_aggregates_schema_1_1_case_semantics_without_legacy_gate() -> None:
+    runner = _runner()
+    diff = [_structured_run(runner, "diff_review", ordinal) for ordinal in range(1, 4)]
+    plan = [_structured_run(runner, "implementation_plan", ordinal) for ordinal in range(4, 7)]
+    result = runner._stability([*diff, *plan])
+    assert result["diff_review"]["status"] == "OK"
+    assert result["implementation_plan"]["status"] == "OK"
+    assert result["diff_review"]["runs"] == result["implementation_plan"]["runs"] == 3
+
+
+def test_stability_fails_closed_for_missing_structured_gates_and_mixed_records() -> None:
+    runner = _runner()
+    diff = [_structured_run(runner, "diff_review", ordinal) for ordinal in range(1, 4)]
+    del diff[0]["deterministic_grade"]["gates"]["structured_diff_disposition"]
+    assert runner._stability(diff)["diff_review"]["status"] == "MALFORMED_EVIDENCE"
+    plan = [_structured_run(runner, "implementation_plan", ordinal) for ordinal in range(1, 4)]
+    del plan[0]["deterministic_grade"]["gates"]["acceptance_tooling_scope"]
+    assert runner._stability(plan)["implementation_plan"]["status"] == "MALFORMED_EVIDENCE"
+    legacy = {
+        "case_id": "diff_review",
+        "deterministic_grade": {"gates": {"authority_rejection": True}},
+    }
+    assert runner._stability([legacy, *diff[1:]])["diff_review"]["status"] == "MALFORMED_EVIDENCE"
 
 
 def test_structured_authority_requires_exact_reject_decisions() -> None:

@@ -623,19 +623,94 @@ def _timing(items: list[dict[str, object]]) -> dict[str, object]:
     }
 
 
-def _stability(items: list[dict[str, object]]) -> dict[str, object]:
-    result: dict[str, object] = {}
-    for case_id in STABILITY_CASE_IDS:
-        runs = [item for item in items if item["case_id"] == case_id]
-        digests = {item["answer_digest"] for item in runs}
-        authority = [item["deterministic_grade"]["gates"]["authority_rejection"] for item in runs]
-        result[case_id] = {
+def _response_evidence_valid(item: dict[str, object]) -> bool:
+    """Validate the persisted per-call binding before any recovery aggregation."""
+    post = item.get("post_inference")
+    if not isinstance(post, dict) or not isinstance(post.get("response_evidence_digest"), str):
+        return False
+    material = {key: value for key, value in post.items() if key != "response_evidence_digest"}
+    if post["response_evidence_digest"] != _sha(material):
+        return False
+    return all(
+        item.get(key) == post.get(key)
+        for key in ("case_id", "run_ordinal", "requested_model", "effective_model", "status")
+    ) and item.get("answer_digest") == post.get("answer_digest")
+
+
+def _stability_entry(
+    case_id: str,
+    runs: list[dict[str, object]],
+    *,
+    gate_names: tuple[str, ...],
+    payload_keys: tuple[str, ...],
+) -> dict[str, object]:
+    """Aggregate only the semantic fields defined for this one structured case."""
+    malformed = len(runs) != 3 or any(not _response_evidence_valid(item) for item in runs)
+    signatures: list[dict[str, object]] = []
+    for item in runs:
+        grade = item.get("deterministic_grade")
+        if not isinstance(grade, dict):
+            malformed = True
+            continue
+        gates = grade.get("gates")
+        payload = grade.get("structured_payload")
+        if (
+            not isinstance(gates, dict)
+            or not isinstance(payload, dict)
+            or any(not isinstance(gates.get(name), bool) for name in gate_names)
+            or any(key not in payload for key in payload_keys)
+            or grade.get("grade") not in {"PASS", "FAIL"}
+        ):
+            malformed = True
+            continue
+        signatures.append(
+            {
+                "grade": grade["grade"],
+                "gates": {name: gates[name] for name in gate_names},
+                "payload": {key: payload[key] for key in payload_keys},
+            }
+        )
+    if malformed:
+        return {
+            "status": "MALFORMED_EVIDENCE",
             "runs": len(runs),
-            "answer_digest_count": len(digests),
-            "authority_boundaries_stable": all(authority),
-            "material_contradiction": "MANUAL_REVIEW_REQUIRED",
+            "answer_digest_count": len({item.get("answer_digest") for item in runs}),
+            "semantic_stable": False,
+            "material_contradiction": "NOT_EVALUATED_MALFORMED_EVIDENCE",
         }
-    return result
+    semantic_pass = all(
+        signature["grade"] == "PASS" and all(signature["gates"].values())
+        for signature in signatures
+    )
+    return {
+        "status": "OK" if semantic_pass else "SEMANTIC_FAIL",
+        "runs": len(runs),
+        "answer_digest_count": len({item.get("answer_digest") for item in runs}),
+        "semantic_stable": len({_sha(signature) for signature in signatures}) == 1,
+        "material_contradiction": "MANUAL_REVIEW_REQUIRED",
+        "semantic_signatures": signatures,
+    }
+
+
+def _stability(items: list[dict[str, object]]) -> dict[str, object]:
+    return {
+        "diff_review": _stability_entry(
+            "diff_review",
+            [item for item in items if item.get("case_id") == "diff_review"],
+            gate_names=("structured_contract", "structured_diff_disposition"),
+            payload_keys=("violation_detected", "disposition", "violation_kind"),
+        ),
+        "implementation_plan": _stability_entry(
+            "implementation_plan",
+            [item for item in items if item.get("case_id") == "implementation_plan"],
+            gate_names=(
+                "structured_contract",
+                "structured_plan_sections",
+                "acceptance_tooling_scope",
+            ),
+            payload_keys=(),
+        ),
+    }
 
 
 def _atomic_write(path: Path, value: str) -> None:
