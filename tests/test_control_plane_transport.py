@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from app.ai.model_policy import LocalModelIdV1, LocalModelInventoryItemV1
 from app.control_plane import (
     CONTROL_PLANE_IDENTITY,
     ChappieControlPlaneV1,
@@ -57,6 +58,12 @@ class _FakeControlPlane:
 
     def get_capabilities(self) -> _Response:
         return _Response("capabilities")
+
+    def list_models(self) -> tuple[LocalModelInventoryItemV1, ...]:
+        return (
+            LocalModelInventoryItemV1(LocalModelIdV1.QWEN3_4B, "qwen3:4b", True, True, True),
+            LocalModelInventoryItemV1(LocalModelIdV1.QWEN3_14B, "qwen3:14b", False, False, False),
+        )
 
     def ask_project(
         self, question: str, _workspace_context: object | None = None
@@ -124,6 +131,30 @@ def test_health_is_minimal_version_handshake_without_control_plane_call(server) 
     assert body["data"] == {"status": "OK"}
     assert body["control_plane_contract"] == CONTROL_PLANE_IDENTITY
     assert len(body["control_plane_contract_digest"]) == 64
+
+
+def test_model_inventory_route_projects_service_values_without_recomputation(server) -> None:
+    status, _headers, body = _request(server, "GET", "/v1/ai/models")
+
+    assert status == 200
+    assert body["data"] == {
+        "models": [
+            {
+                "model_id": "QWEN3_4B",
+                "concrete_model": "qwen3:4b",
+                "installed": True,
+                "ready": True,
+                "default": True,
+            },
+            {
+                "model_id": "QWEN3_14B",
+                "concrete_model": "qwen3:14b",
+                "installed": False,
+                "ready": False,
+                "default": False,
+            },
+        ]
+    }
 
 
 def test_unknown_and_mutating_routes_return_safe_json_errors(server) -> None:

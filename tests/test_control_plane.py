@@ -382,3 +382,64 @@ def test_cli_ai_status_uses_control_plane_adapter(tmp_path: Path, monkeypatch, c
         "PROFILE: BALANCED",
         "MODEL: qwen3:8b",
     ]
+
+
+def test_list_models_projects_only_policy_models_without_mutation(tmp_path: Path) -> None:
+    from app.platform.ollama.model_state import LocalOllamaModelStateV1
+
+    config = ChappieLocalConfigV1(
+        provider="ollama", model="qwen3:4b", enabled_capabilities=("LIGHT",)
+    )
+    plane = ChappieControlPlaneV1(
+        _paths(tmp_path),
+        status_collector=lambda _paths: _status(),
+        config_loader=lambda _paths: config,
+        model_state_reader=lambda: LocalOllamaModelStateV1(
+            ("qwen3:4b", "qwen3:14b", "random-model:latest"), True
+        ),
+    )
+    items = plane.list_models()
+    assert [(x.model_id.value, x.installed, x.ready, x.default) for x in items] == [
+        ("QWEN3_4B", True, True, True),
+        ("QWEN3_14B", True, True, False),
+    ]
+    assert config.model == "qwen3:4b"
+
+
+def test_list_models_is_honest_when_runtime_is_not_ready(tmp_path: Path) -> None:
+    from app.platform.ollama.model_state import LocalOllamaModelStateV1
+
+    plane = ChappieControlPlaneV1(
+        _paths(tmp_path),
+        status_collector=lambda _paths: _status(),
+        config_loader=lambda _paths: ChappieLocalConfigV1(
+            provider="ollama", model="qwen3:4b", enabled_capabilities=("LIGHT",)
+        ),
+        model_state_reader=lambda: LocalOllamaModelStateV1(("qwen3:4b",), False),
+    )
+    assert [(x.installed, x.ready, x.default) for x in plane.list_models()] == [
+        (True, False, True),
+        (False, False, False),
+    ]
+
+
+def test_project_qa_response_serializes_execution_model_metadata() -> None:
+    response = ProjectQAControlPlaneResponseV1(
+        ProjectQAStateV1.OK,
+        "Understand architecture",
+        "Grounded answer.",
+        provider="ollama",
+        model="qwen3:14b",
+        requested_model_id="QWEN3_14B",
+        effective_model_id="QWEN3_14B",
+        effective_model="qwen3:14b",
+        validation_status="VALID",
+    )
+
+    payload = response.payload()
+
+    assert payload["provider"] == "ollama"
+    assert payload["model"] == "qwen3:14b"
+    assert payload["requested_model_id"] == "QWEN3_14B"
+    assert payload["effective_model_id"] == "QWEN3_14B"
+    assert payload["effective_model"] == "qwen3:14b"

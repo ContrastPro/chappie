@@ -160,6 +160,7 @@ class ChappieControlPlaneServerV1:
             "/v1/status": "get_status",
             "/v1/diagnostics": "get_diagnostics",
             "/v1/ai/status": "get_ai_status",
+            "/v1/ai/models": "list_models",
             "/v1/capabilities": "get_capabilities",
         }
         if handler.path == "/v1/health":
@@ -180,6 +181,16 @@ class ChappieControlPlaneServerV1:
             return
         try:
             response = getattr(self._control_plane, method)()
+            if method == "list_models":
+                self._write(
+                    handler,
+                    200,
+                    _envelope(
+                        request_id=request_id,
+                        data={"models": [item.payload() for item in response]},
+                    ),
+                )
+                return
             error = getattr(response, "error", None)
             if error is not None:
                 self._write(
@@ -259,13 +270,20 @@ class ChappieControlPlaneServerV1:
             value = json.loads(handler.rfile.read(content_length))
             if (
                 not isinstance(value, dict)
-                or set(value).difference({"question", "workspace_context"})
+                or set(value).difference({"question", "workspace_context", "requested_model_id"})
                 or "question" not in value
             ):
                 raise ValueError
             question = value["question"]
             if not isinstance(question, str):
                 raise TypeError
+            requested_model_id = value.get("requested_model_id")
+            if requested_model_id is not None:
+                from app.ai.model_policy import LocalModelIdV1
+
+                if not isinstance(requested_model_id, str):
+                    raise TypeError
+                requested_model_id = LocalModelIdV1(requested_model_id).value
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             self._write(
                 handler,
@@ -279,7 +297,12 @@ class ChappieControlPlaneServerV1:
             )
             return
         try:
-            response = self._control_plane.ask_project(question, value.get("workspace_context"))
+            if requested_model_id is None:
+                response = self._control_plane.ask_project(question, value.get("workspace_context"))
+            else:
+                response = self._control_plane.ask_project(
+                    question, value.get("workspace_context"), requested_model_id=requested_model_id
+                )
             payload = response.payload()
             if response.error is not None:
                 status = 400 if response.state.value == "VALIDATION_ERROR" else 503

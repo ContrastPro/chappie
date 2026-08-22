@@ -102,10 +102,14 @@ def valid_setup_ai_config(config: ChappieLocalConfigV1) -> bool:
     )
 
 
-def build_configured_chappie_ai(config: ChappieLocalConfigV1) -> ChappieAI:
+def build_configured_chappie_ai(
+    config: ChappieLocalConfigV1, *, model: str | None = None
+) -> ChappieAI:
+    """Build one independent runtime; an override never mutates durable config."""
+    effective_model = model or config.model or ""
     provider = OllamaProvider(
         endpoint=LOCAL_OLLAMA_ENDPOINT,
-        model=config.model or "",
+        model=effective_model,
         timeout_seconds=SETUP_SMOKE_TIMEOUT_SECONDS,
     )
     return ChappieAI(
@@ -114,6 +118,6 @@ def build_configured_chappie_ai(config: ChappieLocalConfigV1) -> ChappieAI:
             profile=ModelProfile.LOCAL_DEFAULT,
             timeout_seconds=SETUP_SMOKE_TIMEOUT_SECONDS,
             endpoint=LOCAL_OLLAMA_ENDPOINT,
-            model=config.model or "",
+            model=effective_model,
         ),
     )

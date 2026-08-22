@@ -208,8 +208,8 @@ DYNAMIC_IMPORT_OWNERS = {
 
 FROZEN_CONTRACT_SNAPSHOT = {
     "control_plane": (
-        "chappie_control_plane/1.2.0",
-        "de09b6c1eb917d95cdc53be3581a9500110fc856f0586e87bea88b95bccf3040",
+        "chappie_control_plane/1.4.0",
+        "056beea928b723b319250a363153fc2258263ce19b59f59bc0d75cb44fe65775",
     ),
     "control_plane_transport": (
         "chappie_control_plane_transport/1.2.0",
@@ -225,7 +225,7 @@ FROZEN_CONTRACT_SNAPSHOT = {
     ),
     "setup_engine": (
         "chappie_setup_engine/1.0.0",
-        "d9bcee88b380bf666b8d81ce349078d8d642849ab1a583bf78801a8d24baeb75",
+        "cbdf53a01757eba5da84dfc6129dfcf2f3cdfc667aafd1d481ca516a60182788",
     ),
     "macos_ollama": (
         "ollama_macos_install_policy/1.0.0",

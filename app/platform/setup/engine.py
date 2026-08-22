@@ -18,6 +18,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
+from app.ai.model_policy import LocalModelIdV1, resolve_local_model
 from app.ai.schemas import canonical_json, digest
 from app.platform.bootstrap import (
     AIModelProfileV1,
@@ -79,6 +80,7 @@ class SetupActionCodeV1(StrEnum):
     BUILD_KNOWLEDGE = "BUILD_KNOWLEDGE"
     INSTALL_AI_PROVIDER = "INSTALL_AI_PROVIDER"
     INSTALL_AI_MODEL = "INSTALL_AI_MODEL"
+    ENSURE_OPTIONAL_AI_MODEL = "ENSURE_OPTIONAL_AI_MODEL"
     VERIFY_AI = "VERIFY_AI"
     PROJECT_QA_SMOKE = "PROJECT_QA_SMOKE"
     INSTALL_VSCODE_EXTENSION = "INSTALL_VSCODE_EXTENSION"
@@ -327,6 +329,56 @@ class SetupEngineV1:
                 depends_on=(SetupActionCodeV1.PROJECT_QA_SMOKE,),
                 optional=True,
             ),
+        )
+
+    def plan_optional_model(self, model_id: LocalModelIdV1) -> tuple[SetupActionV1, ...]:
+        """Plan one allowlisted additional model without changing configured AI."""
+        descriptor = resolve_local_model(model_id)
+        installer = self._ollama_installer()
+        if installer is not None and installer.model_available(descriptor.concrete_model):
+            return ()
+        return (
+            SetupActionV1(
+                SetupActionCodeV1.ENSURE_OPTIONAL_AI_MODEL,
+                ActionSafetyV1.EXTERNAL,
+                f"Download optional local model {descriptor.concrete_model}.",
+                "provider model catalog",
+            ),
+        )
+
+    def ensure_optional_model(
+        self, model_id: LocalModelIdV1, *, approval: SetupApprovalV1
+    ) -> SetupStepResultV1:
+        """Pull and verify one policy model; never bind or alter durable config."""
+        descriptor = resolve_local_model(model_id)
+        actions = self.plan_optional_model(model_id)
+        if not actions:
+            return SetupStepResultV1(
+                SetupActionCodeV1.ENSURE_OPTIONAL_AI_MODEL,
+                SetupStepStateV1.SKIPPED,
+                "ALREADY_READY",
+            )
+        action = actions[0]
+        if not approval.permits(ActionSafetyV1.EXTERNAL):
+            return SetupStepResultV1(
+                action.code, SetupStepStateV1.FAILED, "APPROVAL_REQUIRED:EXTERNAL"
+            )
+        installer = self._ollama_installer()
+        if installer is None:
+            return SetupStepResultV1(action.code, SetupStepStateV1.FAILED, "OLLAMA_UNAVAILABLE")
+        started = time.monotonic()
+        result = installer.pull_model(descriptor.concrete_model, allow_external=True)
+        if result.status.value != "COMPLETED" or not installer.model_available(
+            descriptor.concrete_model
+        ):
+            return SetupStepResultV1(
+                action.code, SetupStepStateV1.FAILED, "OPTIONAL_MODEL_VERIFICATION_FAILED"
+            )
+        return SetupStepResultV1(
+            action.code,
+            SetupStepStateV1.COMPLETED,
+            "VERIFIED",
+            round((time.monotonic() - started) * 1000),
         )
 
     def required_external_actions(

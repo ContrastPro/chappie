@@ -23,7 +23,7 @@ from app.platform.bootstrap import (
     load_local_config,
 )
 
-CONTROL_PLANE_IDENTITY = "chappie_control_plane/1.2.0"
+CONTROL_PLANE_IDENTITY = "chappie_control_plane/1.4.0"
 PROJECT_QA_MAX_QUESTION_CHARACTERS = 12_000
 
 
@@ -57,10 +57,12 @@ CONTROL_PLANE_CONTRACT_DIGEST = digest(
         "capability_states": [item.value for item in CapabilityStatusV1],
         "project_qa_states": [item.value for item in ProjectQAStateV1],
         "project_qa_workspace_context": "workspace_context/1.0.0",
+        "project_qa_effective_model_metadata": "1.0.0",
         "methods": [
             "get_status",
             "get_diagnostics",
             "get_ai_status",
+            "list_models",
             "get_capabilities",
             "ask_project",
         ],
@@ -210,6 +212,9 @@ class ProjectQAControlPlaneResponseV1:
     error: ControlPlaneErrorV1 | None = None
     workspace_context_digest: str | None = None
     workspace_context_used: tuple[str, ...] = ()
+    requested_model_id: str | None = None
+    effective_model_id: str | None = None
+    effective_model: str | None = None
 
     def payload(self) -> dict[str, object]:
         return {
@@ -226,6 +231,9 @@ class ProjectQAControlPlaneResponseV1:
             "workspace_context_used": list(self.workspace_context_used),
             "provider": self.provider,
             "model": self.model,
+            "requested_model_id": self.requested_model_id,
+            "effective_model_id": self.effective_model_id,
+            "effective_model": self.effective_model,
             "authority": "AI_WITH_KNOWLEDGE_READ_ONLY",
             "validation_status": self.validation_status,
             "error": self.error.payload() if self.error else None,
@@ -260,6 +268,7 @@ class ChappieControlPlaneV1:
         status_collector: Callable[[object], ChappieStatusV1],
         diagnostics_collector: Callable[[object], ChappieDoctorReportV1] = doctor,
         config_loader: Callable[[object], ChappieLocalConfigV1 | None] = load_local_config,
+        model_state_reader: Callable[[], object] | None = None,
         project_qa_runner: Callable[[object, str, object | None], ProjectQAControlPlaneResponseV1]
         | None = None,
     ) -> None:
@@ -267,7 +276,29 @@ class ChappieControlPlaneV1:
         self._status_collector = status_collector
         self._diagnostics_collector = diagnostics_collector
         self._config_loader = config_loader
+        self._model_state_reader = model_state_reader
         self._project_qa_runner = project_qa_runner or _run_project_qa
+
+    def list_models(self):
+        """Project backend-approved local models without provider mutation."""
+        from app.ai.model_policy import project_local_inventory
+        from app.platform.ollama.model_state import LocalOllamaModelStateAdapterV1
+
+        config = self._config_loader(self._paths)
+        if self._model_state_reader is not None:
+            state = self._model_state_reader()
+        else:
+            import httpx
+
+            with httpx.Client(base_url="http://localhost:11434", timeout=2.0) as client:
+                state = LocalOllamaModelStateAdapterV1(client).read()
+        installed = set(state.installed_models)
+        ready = installed if state.runtime_ready else set()
+        return project_local_inventory(
+            installed_models=installed,
+            ready_models=ready,
+            default_model=config.model if config else None,
+        )
 
     def get_status(self) -> ControlPlaneStatusV1:
         try:
@@ -402,7 +433,11 @@ class ChappieControlPlaneV1:
         return ControlPlaneCapabilitiesV1(_state(status), capabilities)
 
     def ask_project(
-        self, question: str, workspace_context: object | None = None
+        self,
+        question: str,
+        workspace_context: object | None = None,
+        *,
+        requested_model_id: str | None = None,
     ) -> ProjectQAControlPlaneResponseV1:
         if not isinstance(question, str) or not question.strip():
             return ProjectQAControlPlaneResponseV1(
@@ -435,7 +470,11 @@ class ChappieControlPlaneV1:
                 "WORKSPACE_CONTEXT_INVALID",
             )
         try:
-            return self._project_qa_runner(self._paths, question.strip(), context)
+            if requested_model_id is None:
+                return self._project_qa_runner(self._paths, question.strip(), context)
+            return self._project_qa_runner(
+                self._paths, question.strip(), context, requested_model_id=requested_model_id
+            )
         except (OSError, RuntimeError, TypeError, ValueError):
             return _project_qa_error(
                 ProjectQAStateV1.INTERNAL_ERROR, question.strip(), "PROJECT_QA_UNAVAILABLE"
@@ -443,10 +482,19 @@ class ChappieControlPlaneV1:
 
 
 def _run_project_qa(
-    paths: object, question: str, workspace_context: object | None = None
+    paths: object,
+    question: str,
+    workspace_context: object | None = None,
+    *,
+    requested_model_id: str | None = None,
 ) -> ProjectQAControlPlaneResponseV1:
     """Execute one bounded Project QA request over an existing verified Knowledge store."""
     from app.ai.errors import AIProviderError, AIProviderTimeoutError, AIValidationError
+    from app.ai.model_policy import (
+        LocalModelIdV1,
+        local_model_id_for_concrete_model,
+        resolve_local_model,
+    )
     from app.knowledge.retrieval import (
         KnowledgeRetrievalRequestV1,
         architecture_query_tokens,
@@ -481,9 +529,17 @@ def _run_project_qa(
         )
     if not context.records:
         return _zero_knowledge_response(question, workspace_context)
+    try:
+        requested = LocalModelIdV1(requested_model_id) if requested_model_id else None
+        effective = resolve_local_model(requested).concrete_model if requested else config.model
+        effective_model_id = requested or local_model_id_for_concrete_model(effective)
+    except ValueError:
+        return _project_qa_error(
+            ProjectQAStateV1.VALIDATION_ERROR, question, "MODEL_SELECTION_INVALID"
+        )
     ai = None
     try:
-        ai = build_configured_chappie_ai(config)
+        ai = build_configured_chappie_ai(config, model=effective)
         answer = ai.answer_project_qa(
             question=question, knowledge_context=context, workspace_context=workspace_context
         )
@@ -511,19 +567,21 @@ def _run_project_qa(
         if item.knowledge_id in supported_ids
     )
     return ProjectQAControlPlaneResponseV1(
-        ProjectQAStateV1.OK,
-        question,
-        answer.answer,
-        answer.supporting_knowledge_fact_ids,
-        sources,
-        answer.unknowns,
-        answer.context_digest,
-        config.provider,
-        config.model,
-        "VALID",
-        None,
-        workspace_context.context_digest if workspace_context else None,
-        _workspace_provenance(workspace_context),
+        state=ProjectQAStateV1.OK,
+        question=question,
+        answer=answer.answer,
+        supporting_knowledge_fact_ids=answer.supporting_knowledge_fact_ids,
+        supporting_records=sources,
+        unknowns=answer.unknowns,
+        context_digest=answer.context_digest,
+        provider=config.provider,
+        model=effective,
+        requested_model_id=requested.value if requested else None,
+        effective_model_id=effective_model_id.value if effective_model_id else None,
+        effective_model=effective,
+        validation_status="VALID",
+        workspace_context_digest=workspace_context.context_digest if workspace_context else None,
+        workspace_context_used=_workspace_provenance(workspace_context),
     )
 
 
