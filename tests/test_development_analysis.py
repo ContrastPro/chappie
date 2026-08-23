@@ -1,3 +1,4 @@
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -5,13 +6,19 @@ import pytest
 from app.ai.errors import AIProviderTimeoutError, AIValidationError
 from app.ai.model_policy import DevelopmentModelRoleV1
 from app.development_analysis.models import (
+    DevelopmentAnalysisReadinessV1,
     DevelopmentAnalysisRequestV1,
     DevelopmentAnalysisStateV1,
     DevelopmentAnalysisV1,
+    assess_development_analysis_readiness,
     validate_development_analysis,
 )
-from app.development_analysis.service import DevelopmentAnalysisServiceV1
+from app.development_analysis.service import (
+    DevelopmentAnalysisServiceV1,
+    _development_retrieval_request,
+)
 from app.knowledge import RepositorySnapshotV1, initial_records, manifest
+from app.knowledge.retrieval import retrieve
 from app.platform.bootstrap import ChappiePaths
 
 
@@ -51,6 +58,7 @@ def test_analysis_builds_evidence_before_stubbed_inference(tmp_path, monkeypatch
     assert result.evidence.evidence_digest
     assert result.payload()["evidence"]["requested_role"] == role.value
     assert observed and observed[0][2] == result.evidence
+    assert result.readiness == DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE
 
 
 def test_unavailable_role_fails_closed_without_running_inference(tmp_path) -> None:
@@ -115,3 +123,126 @@ def test_validator_rejects_unsafe_likely_files(unsafe: str) -> None:
     )
     with pytest.raises(ValueError, match="evidence"):
         validate_development_analysis(value)
+
+
+def test_exact_dogfood_identifiers_select_development_records_deterministically() -> None:
+    snapshot = RepositorySnapshotV1("a" * 40, True)
+    records = initial_records(snapshot=snapshot)
+    store_manifest = manifest(records, snapshot)
+    request = "Design a bounded post-implementation diff review workflow using DevelopmentAnalysisV1 and CodexTaskV1."
+    first, _ = retrieve(
+        records, store_manifest, _development_retrieval_request(records, request, None)
+    )
+    second, _ = retrieve(
+        records, store_manifest, _development_retrieval_request(records, request, None)
+    )
+    selected = {
+        record.title for record in records if record.knowledge_id in first.selected_record_ids
+    }
+    assert first.selected_record_ids == second.selected_record_ids
+    assert {
+        "DevelopmentAnalysisV1",
+        "CodexTaskV1",
+        "Package ownership: Development Intelligence",
+        "POST /v1/development/analyze",
+        "POST /v1/development/task",
+        "Development Intelligence advisory boundary",
+        "Development Intelligence analysis tests",
+    } <= selected
+    assert "Package ownership: Market" not in selected
+    assert "Package ownership: Trading" not in selected
+
+
+@pytest.mark.parametrize(
+    "identifier",
+    ("DevelopmentAnalysisV1", "CodexTaskV1", "app.development_analysis", "/v1/development/analyze"),
+)
+def test_development_identifier_has_exact_retrieval_priority(identifier: str) -> None:
+    snapshot = RepositorySnapshotV1("a" * 40, True)
+    records = initial_records(snapshot=snapshot)
+    result, _ = retrieve(
+        records,
+        manifest(records, snapshot),
+        _development_retrieval_request(records, f"Review {identifier}", None),
+    )
+    assert result.selected_record_ids
+    assert result.selection_reasons[0][1][0].value == "EXACT_ID"
+
+
+def _ready_analysis(**changes) -> DevelopmentAnalysisV1:
+    base = DevelopmentAnalysisV1(
+        DevelopmentAnalysisStateV1.OK,
+        "Design a bounded diff review for DevelopmentAnalysisV1.",
+        evidence=object(),  # type: ignore[arg-type]
+        facts=(
+            "app.development_analysis owns read-only development analysis.",
+            "DevelopmentAnalysisV1 is the contract for the requested diff review.",
+        ),
+        inferences=("The requested diff review must remain advisory.",),
+        unknowns=(
+            "The exact future diff-review endpoint cannot be determined from current evidence.",
+        ),
+        architecture_owners=("MODULE_RESPONSIBILITY",),
+        affected_contracts=("DevelopmentAnalysisV1",),
+        likely_files=("app/development_analysis/models.py",),
+        risks=("The requested diff review must preserve its advisory boundary.",),
+        required_tests=("Test the requested diff review readiness gate.",),
+        non_goals=("No mutation.",),
+        acceptance_criteria=("The requested diff review remains evidence-bound.",),
+        validation_status="VALID",
+    )
+    return replace(base, **changes)
+
+
+def test_structural_validity_is_distinct_from_task_readiness() -> None:
+    assert (
+        assess_development_analysis_readiness(_ready_analysis())
+        == DevelopmentAnalysisReadinessV1.READY_FOR_TASK
+    )
+    assert (
+        assess_development_analysis_readiness(_ready_analysis(likely_files=()))
+        == DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE
+    )
+    assert (
+        assess_development_analysis_readiness(_ready_analysis(affected_contracts=()))
+        == DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE
+    )
+    assert (
+        assess_development_analysis_readiness(
+            _ready_analysis(required_tests=("Focused deterministic analysis and boundary tests.",))
+        )
+        == DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE
+    )
+    assert (
+        assess_development_analysis_readiness(
+            _ready_analysis(
+                acceptance_criteria=("Analysis remains bound to the returned evidence digest.",)
+            )
+        )
+        == DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE
+    )
+    assert (
+        assess_development_analysis_readiness(
+            _ready_analysis(unknowns=("No unknowns identified based on provided facts.",))
+        )
+        == DevelopmentAnalysisReadinessV1.NEEDS_REVIEW
+    )
+
+
+def test_grounded_unknowns_allow_ready_analysis_without_invented_scope() -> None:
+    no_contract = _ready_analysis(
+        affected_contracts=(),
+        unknowns=("The exact contract cannot be determined from current evidence.",),
+    )
+    no_file = _ready_analysis(
+        likely_files=(),
+        unknowns=("The exact file cannot be determined from current evidence.",),
+    )
+    assert (
+        assess_development_analysis_readiness(no_contract)
+        == DevelopmentAnalysisReadinessV1.READY_FOR_TASK
+    )
+    assert (
+        assess_development_analysis_readiness(no_file)
+        == DevelopmentAnalysisReadinessV1.READY_FOR_TASK
+    )

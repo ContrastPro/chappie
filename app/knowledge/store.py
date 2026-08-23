@@ -58,6 +58,11 @@ SOURCE_ALLOWLIST = frozenset(
         "docs/architecture/PACKAGE_BOUNDARIES.md",
         "docs/architecture/ARCHITECTURE_DECISIONS.md",
         "docs/architecture/REFACTOR_FINAL_REPORT.md",
+        "app/development_analysis/__init__.py",
+        "app/development_analysis/models.py",
+        "app/development_analysis/task.py",
+        "app/control_plane/transport.py",
+        "tests/test_development_analysis.py",
     }
 )
 
@@ -509,6 +514,41 @@ def initial_records(
                 related,
             )
         )
+    existing_ids = {record.title: record.knowledge_id for record in records}
+    for (
+        kind,
+        title,
+        statement,
+        path,
+        locator,
+        tags,
+        related_titles,
+    ) in _development_record_definitions():
+        source = _source(root, snapshot, path, KnowledgeAuthorityV1.SOURCE_CODE, locator)
+        related = tuple(existing_ids[item] for item in related_titles)
+        records.append(
+            KnowledgeRecordV1(
+                knowledge_id(
+                    kind,
+                    title,
+                    statement,
+                    KnowledgeAuthorityV1.SOURCE_CODE,
+                    KnowledgeStatusV1.ACTIVE,
+                    (source,),
+                    tags,
+                    related,
+                ),
+                kind,
+                title,
+                statement,
+                KnowledgeAuthorityV1.SOURCE_CODE,
+                KnowledgeStatusV1.ACTIVE,
+                (source,),
+                tags,
+                related,
+            )
+        )
+        existing_ids[title] = records[-1].knowledge_id
     return tuple(records)
 
 
@@ -804,6 +844,118 @@ def _architecture_record_definitions() -> tuple[
         ),
     )
     return packages + governance
+
+
+def _development_record_definitions() -> tuple[
+    tuple[KnowledgeTypeV1, str, str, str, str, tuple[str, ...], tuple[str, ...]], ...
+]:
+    """Source-backed facts for the implemented read-only development capability."""
+    return (
+        (
+            KnowledgeTypeV1.MODULE_RESPONSIBILITY,
+            "Package ownership: Development Intelligence",
+            "app.development_analysis owns read-only development analysis, evidence packs, and advisory Codex task preparation.",
+            "app/development_analysis/__init__.py",
+            "package public API",
+            (
+                "app",
+                "development",
+                "development_analysis",
+                "intelligence",
+                "ownership",
+                "read-only",
+            ),
+            ("Chappie Architecture",),
+        ),
+        (
+            KnowledgeTypeV1.CONTRACT,
+            "DevelopmentAnalysisRequestV1",
+            "DevelopmentAnalysisRequestV1 binds a bounded request, explicit development model role, and optional workspace context.",
+            "app/development_analysis/models.py",
+            "DevelopmentAnalysisRequestV1",
+            ("development", "request", "contract", "developmentanalysisrequestv1"),
+            ("Package ownership: Development Intelligence",),
+        ),
+        (
+            KnowledgeTypeV1.CONTRACT,
+            "DevelopmentEvidencePackV1",
+            "DevelopmentEvidencePackV1 binds a clean source commit, canonical Knowledge provenance, selected records, and requested/effective model identity before inference.",
+            "app/development_analysis/models.py",
+            "DevelopmentEvidencePackV1",
+            ("development", "evidence", "contract", "provenance", "developmentevidencepackv1"),
+            ("Package ownership: Development Intelligence",),
+        ),
+        (
+            KnowledgeTypeV1.CONTRACT,
+            "DevelopmentAnalysisV1",
+            "DevelopmentAnalysisV1 separates facts, inferences, unknowns, scope, risks, tests, acceptance criteria, structural validation, and task readiness.",
+            "app/development_analysis/models.py",
+            "DevelopmentAnalysisV1",
+            ("development", "analysis", "contract", "developmentanalysisv1", "readiness"),
+            ("Package ownership: Development Intelligence",),
+        ),
+        (
+            KnowledgeTypeV1.CONTRACT,
+            "CodexTaskPreparationRequestV1",
+            "CodexTaskPreparationRequestV1 accepts only a validated development analysis as the source for advisory task preparation.",
+            "app/development_analysis/task.py",
+            "CodexTaskPreparationRequestV1",
+            ("development", "codex", "task", "contract", "codextaskpreparationrequestv1"),
+            ("DevelopmentAnalysisV1",),
+        ),
+        (
+            KnowledgeTypeV1.CONTRACT,
+            "CodexTaskV1",
+            "CodexTaskV1 is a deterministic advisory projection from validated, ready development analysis and requires human approval before Codex receives a task.",
+            "app/development_analysis/task.py",
+            "CodexTaskV1",
+            ("development", "codex", "task", "contract", "codextaskv1", "advisory"),
+            ("DevelopmentAnalysisV1", "CodexTaskPreparationRequestV1"),
+        ),
+        (
+            KnowledgeTypeV1.CONTRACT,
+            "POST /v1/development/analyze",
+            "POST /v1/development/analyze exposes bounded read-only DevelopmentAnalysisV1 through the local Control Plane transport.",
+            "app/control_plane/transport.py",
+            "development analysis route",
+            ("development", "endpoint", "control", "plane", "analyze", "v1"),
+            ("DevelopmentAnalysisV1",),
+        ),
+        (
+            KnowledgeTypeV1.CONTRACT,
+            "POST /v1/development/task",
+            "POST /v1/development/task exposes bounded advisory CodexTaskV1 preparation through the local Control Plane transport.",
+            "app/control_plane/transport.py",
+            "development task route",
+            ("development", "endpoint", "control", "plane", "task", "v1"),
+            ("CodexTaskV1",),
+        ),
+        (
+            KnowledgeTypeV1.AUTHORITY_BOUNDARY,
+            "Development Intelligence advisory boundary",
+            "Development Intelligence is read-only and advisory: it has no file, shell, Git, Knowledge, trading, Risk, or execution mutation authority, and CodexTaskV1 requires HUMAN_APPROVAL_REQUIRED.",
+            "app/development_analysis/task.py",
+            "CodexTaskV1 approval boundary",
+            (
+                "development",
+                "authority",
+                "advisory",
+                "human_approval_required",
+                "read-only",
+                "non-mutation",
+            ),
+            ("CodexTaskV1",),
+        ),
+        (
+            KnowledgeTypeV1.MODULE_RESPONSIBILITY,
+            "Development Intelligence analysis tests",
+            "tests/test_development_analysis.py verifies evidence construction, fail-closed unavailable or stale inputs, and bounded development analysis validation.",
+            "tests/test_development_analysis.py",
+            "development analysis tests",
+            ("development", "tests", "analysis", "readiness", "boundary"),
+            ("DevelopmentAnalysisV1",),
+        ),
+    )
 
 
 def manifest(

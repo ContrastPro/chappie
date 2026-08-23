@@ -5,6 +5,7 @@ import pytest
 from app.ai.model_policy import DevelopmentModelRoleV1
 from app.control_plane import ChappieControlPlaneV1
 from app.development_analysis.models import (
+    DevelopmentAnalysisReadinessV1,
     DevelopmentAnalysisStateV1,
     DevelopmentAnalysisV1,
     DevelopmentEvidencePackV1,
@@ -47,6 +48,7 @@ def _analysis(**changes):
         non_goals=("No mutation.",),
         acceptance_criteria=("Task remains advisory.",),
         validation_status="VALID",
+        readiness=DevelopmentAnalysisReadinessV1.READY_FOR_TASK,
     )
     return replace(base, **changes)
 
@@ -88,3 +90,16 @@ def test_unsafe_or_incomplete_analysis_fails_closed(changes, reason) -> None:
     task = prepare_codex_task(CodexTaskPreparationRequestV1(_analysis(**changes)))
     assert task.state == CodexTaskStateV1.VALIDATION_ERROR
     assert task.reason_code == reason
+
+
+@pytest.mark.parametrize(
+    "readiness",
+    (
+        DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE,
+        DevelopmentAnalysisReadinessV1.NEEDS_REVIEW,
+    ),
+)
+def test_non_ready_analysis_cannot_prepare_codex_task(readiness) -> None:
+    task = prepare_codex_task(CodexTaskPreparationRequestV1(_analysis(readiness=readiness)))
+    assert task.state == CodexTaskStateV1.VALIDATION_ERROR
+    assert task.reason_code == "SOURCE_ANALYSIS_NOT_READY"

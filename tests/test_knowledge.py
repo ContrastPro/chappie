@@ -32,7 +32,7 @@ def test_contract_and_initial_records_are_deterministic() -> None:
     assert KNOWLEDGE_IDENTITY == "chappie_knowledge/1.0.0"
     assert len(KNOWLEDGE_CONTRACT_DIGEST) == 64
     assert first == second
-    assert len(first) == 62
+    assert len(first) == 72
     architecture_records = [
         record for record in first if record.sources[0].path.startswith("docs/architecture/")
     ]

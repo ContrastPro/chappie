@@ -8,6 +8,7 @@ from enum import StrEnum
 from app.ai.schemas import digest
 from app.development_analysis.models import (
     DEVELOPMENT_ANALYSIS_IDENTITY,
+    DevelopmentAnalysisReadinessV1,
     DevelopmentAnalysisStateV1,
     DevelopmentAnalysisV1,
     validate_development_analysis,
@@ -149,6 +150,8 @@ def prepare_codex_task(request: CodexTaskPreparationRequestV1) -> CodexTaskV1:
         ):
             raise ValueError("UNRELATED_BENCHMARK_ASSUMPTION")
         validate_development_analysis(analysis)
+        if analysis.readiness != DevelopmentAnalysisReadinessV1.READY_FOR_TASK:
+            raise ValueError("SOURCE_ANALYSIS_NOT_READY")
     except ValueError as error:
         return _invalid(analysis, str(error))
     task_id = digest(

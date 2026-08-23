@@ -24,6 +24,14 @@ class DevelopmentAnalysisStateV1(StrEnum):
     ANALYSIS_INVALID = "ANALYSIS_INVALID"
 
 
+class DevelopmentAnalysisReadinessV1(StrEnum):
+    """Task-readiness is distinct from structural evidence validation."""
+
+    READY_FOR_TASK = "READY_FOR_TASK"
+    INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
+    NEEDS_REVIEW = "NEEDS_REVIEW"
+
+
 @dataclass(frozen=True, slots=True)
 class DevelopmentAnalysisRequestV1:
     request: str
@@ -70,6 +78,7 @@ class DevelopmentAnalysisV1:
     acceptance_criteria: tuple[str, ...] = ()
     confidence: float | None = None
     validation_status: str = "UNAVAILABLE"
+    readiness: DevelopmentAnalysisReadinessV1 | None = None
     reason_code: str | None = None
 
     def payload(self) -> dict[str, object]:
@@ -90,6 +99,7 @@ class DevelopmentAnalysisV1:
             "acceptance_criteria": list(self.acceptance_criteria),
             "confidence": self.confidence,
             "validation_status": self.validation_status,
+            "readiness": self.readiness.value if self.readiness else None,
             "reason_code": self.reason_code,
         }
 
@@ -116,6 +126,35 @@ def validate_development_analysis(value: DevelopmentAnalysisV1) -> DevelopmentAn
     ):
         raise ValueError("development analysis claims forbidden authority")
     return value
+
+
+def assess_development_analysis_readiness(
+    value: DevelopmentAnalysisV1,
+) -> DevelopmentAnalysisReadinessV1:
+    """Fail closed when an otherwise valid analysis is too generic for task preparation."""
+    if value.state != DevelopmentAnalysisStateV1.OK or value.validation_status != "VALID":
+        return DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE
+    if value.evidence is None or not value.facts or not _task_specific_evidence(value):
+        return DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE
+    if not _concrete_owner(value):
+        return DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE
+    if not value.affected_contracts and not _grounded_unknown(value, "contract"):
+        return DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE
+    if not value.likely_files and not _grounded_unknown(value, "file"):
+        return DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE
+    if not all(
+        (
+            _task_specific(value.request, value.risks),
+            _task_specific(value.request, value.required_tests),
+            _task_specific(value.request, value.acceptance_criteria),
+        )
+    ):
+        return DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE
+    if not value.unknowns or any(
+        item.casefold().strip().startswith("no unknowns identified") for item in value.unknowns
+    ):
+        return DevelopmentAnalysisReadinessV1.NEEDS_REVIEW
+    return DevelopmentAnalysisReadinessV1.READY_FOR_TASK
 
 
 def evidence_digest(payload: dict[str, object]) -> str:
@@ -181,6 +220,11 @@ def development_analysis_from_payload(value: object) -> DevelopmentAnalysisV1:
         acceptance_criteria=tuple(_strings(value.get("acceptance_criteria"))),
         confidence=value.get("confidence"),
         validation_status=str(value.get("validation_status", "")),
+        readiness=(
+            DevelopmentAnalysisReadinessV1(value["readiness"])
+            if value.get("readiness") is not None
+            else None
+        ),
     )
 
 
@@ -193,6 +237,39 @@ def _strings(value: object) -> tuple[str, ...]:
 def _relative_path(value: str) -> bool:
     path = PurePosixPath(value.replace("\\", "/"))
     return bool(value) and not path.is_absolute() and ".." not in path.parts and ":" not in value
+
+
+def _task_specific_evidence(value: DevelopmentAnalysisV1) -> bool:
+    request_tokens = {token.casefold() for token in value.request.replace("/", " ").split()}
+    evidence_tokens = {
+        token.casefold().strip(".,:;()[]")
+        for item in value.facts
+        for token in item.replace("/", " ").split()
+    }
+    return bool(request_tokens.intersection(evidence_tokens)) or any(
+        "app.development_analysis" in item or "codextask" in item.casefold() for item in value.facts
+    )
+
+
+def _concrete_owner(value: DevelopmentAnalysisV1) -> bool:
+    return any("app.development_analysis owns" in item.casefold() for item in value.facts)
+
+
+def _grounded_unknown(value: DevelopmentAnalysisV1, subject: str) -> bool:
+    return any(
+        subject in item.casefold() and "cannot" in item.casefold() for item in value.unknowns
+    )
+
+
+def _task_specific(request: str, values: tuple[str, ...]) -> bool:
+    request_tokens = {
+        token.casefold().strip(".,:;()[]") for token in request.split() if len(token) > 2
+    }
+    return bool(
+        request_tokens.intersection(
+            {token.casefold().strip(".,:;()[]") for item in values for token in item.split()}
+        )
+    )
 
 
 def _evidence_payload(value: DevelopmentEvidencePackV1 | None) -> dict[str, object] | None:
