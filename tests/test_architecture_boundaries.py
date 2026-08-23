@@ -293,6 +293,12 @@ PACKAGE_OWNERSHIP = {
         "responsibility": "Consumer-neutral immutable implementation-context contracts",
         "allowed": frozenset({"app.implementation_context"}),
     },
+    "app.targeted_context": {
+        "responsibility": "Bounded read-only exact repository inspection for implementation-context gaps",
+        "allowed": frozenset(
+            {"app.implementation_context", "app.knowledge", "app.targeted_context"}
+        ),
+    },
     "app.coordination": {
         "responsibility": "Cross-service trading workflow coordination",
         "allowed": frozenset(
