@@ -107,6 +107,35 @@ def test_proposed_new_file_is_not_treated_as_current_evidence() -> None:
 
 
 @pytest.mark.parametrize(
+    ("value", "path", "category"),
+    (
+        ({"proposal_unknowns": []}, "$.proposed_scope", "MISSING_REQUIRED_FIELD"),
+        (
+            {"proposed_scope": _scope(), "proposal_unknowns": [], "extra": True},
+            "$.extra",
+            "UNEXPECTED_FIELD",
+        ),
+        ({"proposed_scope": None, "proposal_unknowns": []}, "$.proposed_scope", "INVALID_NULL"),
+        (
+            {"proposed_scope": _scope(), "proposal_unknowns": None},
+            "$.proposal_unknowns",
+            "INVALID_NULL",
+        ),
+    ),
+)
+def test_proposal_schema_failures_expose_only_bounded_structure(value, path, category) -> None:
+    with pytest.raises(DevelopmentStageError) as error:
+        parse_development_proposal(value, _context_map(), response_length=123)
+    diagnostics = error.value.proposal_diagnostics
+    assert diagnostics is not None
+    assert diagnostics.parser_stage == "PROPOSAL_PARSE"
+    assert diagnostics.response_length == 123
+    assert diagnostics.bounded_error_path == path
+    assert diagnostics.bounded_error_category == category
+    assert "statement" not in str(diagnostics.payload())
+
+
+@pytest.mark.parametrize(
     ("tests", "criteria", "code"),
     (
         (["Run focused tests."], ["Diff review works."], "REVIEW_TESTS_NOT_SPECIFIC"),

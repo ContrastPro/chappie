@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 from app.ai.errors import AIProviderError, AIProviderTimeoutError, AIValidationError
 from app.ai.models import ModelRequest
 from app.ai.project_qa import knowledge_facts
-from app.ai.schemas import digest
+from app.ai.schemas import canonical_json, digest
 from app.ai.tasks import AITask
 from app.development_analysis.context import DevelopmentContextMapV1, build_development_context_map
 from app.development_analysis.models import (
@@ -188,11 +188,57 @@ class DevelopmentStageError(AIValidationError):
     """A bounded stage failure; no model output is retained in the exception."""
 
     def __init__(
-        self, stage: str, code: str, *, stage_elapsed_ms: tuple[tuple[str, int], ...] = ()
+        self,
+        stage: str,
+        code: str,
+        *,
+        stage_elapsed_ms: tuple[tuple[str, int], ...] = (),
+        proposal_diagnostics: ProposalParseDiagnosticsV1 | None = None,
     ) -> None:
         super().__init__("development staged synthesis failed", code=code)
         self.stage = stage
         self.stage_elapsed_ms = stage_elapsed_ms
+        self.proposal_diagnostics = proposal_diagnostics
+
+
+@dataclass(frozen=True, slots=True)
+class ProposalParseDiagnosticsV1:
+    """Safe structural-only metadata for an acceptance-only rejected Proposal."""
+
+    parser_stage: str
+    reason_code: str
+    transport_form: str
+    response_length: int | None
+    parsed_top_level_type: str
+    parsed_top_level_keys: tuple[str, ...]
+    missing_top_level_keys: tuple[str, ...]
+    unexpected_top_level_keys: tuple[str, ...]
+    proposed_scope_type: str | None
+    proposed_scope_keys: tuple[str, ...]
+    missing_scope_keys: tuple[str, ...]
+    unexpected_scope_keys: tuple[str, ...]
+    field_type_map: tuple[tuple[str, str], ...]
+    bounded_error_path: str
+    bounded_error_category: str
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "parser_stage": self.parser_stage,
+            "reason_code": self.reason_code,
+            "transport_form": self.transport_form,
+            "response_length": self.response_length,
+            "parsed_top_level_type": self.parsed_top_level_type,
+            "parsed_top_level_keys": list(self.parsed_top_level_keys),
+            "missing_top_level_keys": list(self.missing_top_level_keys),
+            "unexpected_top_level_keys": list(self.unexpected_top_level_keys),
+            "proposed_scope_type": self.proposed_scope_type,
+            "proposed_scope_keys": list(self.proposed_scope_keys),
+            "missing_scope_keys": list(self.missing_scope_keys),
+            "unexpected_scope_keys": list(self.unexpected_scope_keys),
+            "field_type_map": dict(self.field_type_map),
+            "bounded_error_path": self.bounded_error_path,
+            "bounded_error_category": self.bounded_error_category,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -277,6 +323,27 @@ def parse_development_grounding(
 
 
 def parse_development_proposal(
+    value: object,
+    context_map: DevelopmentContextMapV1,
+    *,
+    transport_form: str = "RAW_JSON",
+    response_length: int | None = None,
+) -> DevelopmentProposalV1:
+    try:
+        return _parse_development_proposal(value, context_map)
+    except DevelopmentStageError as error:
+        if error.proposal_diagnostics is None:
+            error.proposal_diagnostics = _proposal_parse_diagnostics(
+                value,
+                reason_code=error.code,
+                transport_form=transport_form,
+                response_length=response_length,
+                owner_candidates=context_map.owner_candidates,
+            )
+        raise
+
+
+def _parse_development_proposal(
     value: object, context_map: DevelopmentContextMapV1
 ) -> DevelopmentProposalV1:
     if not isinstance(value, dict) or set(value) != set(PROPOSAL_SCHEMA["required"]):
@@ -303,6 +370,131 @@ def parse_development_proposal(
     ):
         raise DevelopmentStageError("PROPOSAL", "PROPOSAL_AUTHORITY_VIOLATION")
     return DevelopmentProposalV1(scope, tuple(unknowns))
+
+
+def _proposal_parse_diagnostics(
+    value: object,
+    *,
+    reason_code: str,
+    transport_form: str,
+    response_length: int | None,
+    owner_candidates: tuple[str, ...],
+) -> ProposalParseDiagnosticsV1:
+    required_top = frozenset(PROPOSAL_SCHEMA["required"])
+    required_scope = frozenset(
+        {
+            "proposed_owner",
+            "proposed_modified_files",
+            "proposed_new_files",
+            "proposed_contract_changes",
+            "proposed_components",
+            "proposed_behavior",
+            "rationale",
+        }
+    )
+    if not isinstance(value, dict):
+        return ProposalParseDiagnosticsV1(
+            "PROPOSAL_PARSE",
+            reason_code,
+            transport_form,
+            response_length,
+            type(value).__name__,
+            (),
+            (),
+            (),
+            None,
+            (),
+            (),
+            (),
+            (),
+            "$",
+            "NON_OBJECT_TOP_LEVEL",
+        )
+    keys = tuple(sorted(str(key) for key in value))
+    missing = tuple(sorted(required_top.difference(value)))
+    unexpected = tuple(sorted(set(value).difference(required_top)))
+    scope = value.get("proposed_scope")
+    scope_keys = tuple(sorted(str(key) for key in scope)) if isinstance(scope, dict) else ()
+    missing_scope = (
+        tuple(sorted(required_scope.difference(scope))) if isinstance(scope, dict) else ()
+    )
+    unexpected_scope = (
+        tuple(sorted(set(scope).difference(required_scope))) if isinstance(scope, dict) else ()
+    )
+    types = {f"$.{key}": type(item).__name__ for key, item in value.items()}
+    if isinstance(scope, dict):
+        types.update(
+            {f"$.proposed_scope.{key}": type(item).__name__ for key, item in scope.items()}
+        )
+    path, category = "$", "OTHER_SCHEMA_FAILURE"
+    if missing:
+        path, category = f"$.{missing[0]}", "MISSING_REQUIRED_FIELD"
+    elif unexpected:
+        path, category = f"$.{unexpected[0]}", "UNEXPECTED_FIELD"
+    elif not isinstance(scope, dict):
+        path, category = "$.proposed_scope", "INVALID_NULL" if scope is None else "WRONG_FIELD_TYPE"
+    elif missing_scope:
+        path, category = f"$.proposed_scope.{missing_scope[0]}", "MISSING_REQUIRED_FIELD"
+    elif unexpected_scope:
+        path, category = f"$.proposed_scope.{unexpected_scope[0]}", "UNEXPECTED_FIELD"
+    elif value.get("proposal_unknowns") is None:
+        path, category = "$.proposal_unknowns", "INVALID_NULL"
+    elif not isinstance(value.get("proposal_unknowns"), list):
+        path, category = "$.proposal_unknowns", "WRONG_FIELD_TYPE"
+    else:
+        invalid_unknown = next(
+            (
+                index
+                for index, entry in enumerate(value["proposal_unknowns"])
+                if not isinstance(entry, str) or not entry.strip()
+            ),
+            None,
+        )
+        if invalid_unknown is not None:
+            path, category = f"$.proposal_unknowns[{invalid_unknown}]", "INVALID_ARRAY_ITEM"
+        elif scope.get("proposed_owner") is not None and (
+            not isinstance(scope["proposed_owner"], str)
+            or scope["proposed_owner"] not in owner_candidates
+        ):
+            path, category = "$.proposed_scope.proposed_owner", "INVALID_OWNER"
+        for field in sorted(required_scope - {"proposed_owner"}):
+            if category != "OTHER_SCHEMA_FAILURE":
+                break
+            item = scope[field]
+            if item is None:
+                path, category = f"$.proposed_scope.{field}", "INVALID_NULL"
+                break
+            if not isinstance(item, list):
+                path, category = f"$.proposed_scope.{field}", "WRONG_FIELD_TYPE"
+                break
+            invalid = next(
+                (
+                    index
+                    for index, entry in enumerate(item)
+                    if not isinstance(entry, str) or not entry.strip()
+                ),
+                None,
+            )
+            if invalid is not None:
+                path, category = f"$.proposed_scope.{field}[{invalid}]", "INVALID_ARRAY_ITEM"
+                break
+    return ProposalParseDiagnosticsV1(
+        "PROPOSAL_PARSE",
+        reason_code,
+        transport_form,
+        response_length,
+        "dict",
+        keys,
+        missing,
+        unexpected,
+        type(scope).__name__,
+        scope_keys,
+        missing_scope,
+        unexpected_scope,
+        tuple(sorted(types.items())),
+        path,
+        category,
+    )
 
 
 def parse_development_review(value: object, request: str) -> DevelopmentReviewV1:
@@ -612,7 +804,12 @@ def synthesize_development(
         },
     )
     try:
-        proposal = parse_development_proposal(proposal_result.structured_output, context_map)
+        proposal = parse_development_proposal(
+            proposal_result.structured_output,
+            context_map,
+            transport_form="RAW_JSON",
+            response_length=_provider_response_length(proposal_result),
+        )
     except DevelopmentStageError as error:
         error.stage_elapsed_ms = (
             ("GROUNDING_SYNTHESIS", grounding_result.latency_ms),
@@ -650,6 +847,16 @@ def synthesize_development(
             ("REVIEW_SYNTHESIS", review_result.latency_ms),
         ),
     )
+
+
+def _provider_response_length(result: object) -> int | None:
+    for key, value in getattr(result, "provider_metadata", ()):
+        if key == "response_length" and isinstance(value, str) and value.isdecimal():
+            return int(value)
+    try:
+        return len(canonical_json(result.structured_output))
+    except (TypeError, ValueError):
+        return None
 
 
 def development_allowed_fact_ids(context: KnowledgeContextV1) -> tuple[str, ...]:

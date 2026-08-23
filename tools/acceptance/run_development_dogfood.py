@@ -31,7 +31,7 @@ from app.knowledge.store import committed_snapshot
 from app.platform.bootstrap import ChappiePaths, collect_status, load_local_config
 from app.platform.ollama.model_state import LocalOllamaModelStateAdapterV1
 
-EVIDENCE_SCHEMA = "chappie_development_dogfood/1.1.0"
+EVIDENCE_SCHEMA = "chappie_development_dogfood/1.2.0"
 OUTPUT_BASE_RELATIVE = Path("data/acceptance/development_dogfood")
 SUPPORTED_MODELS = frozenset({"qwen3-coder:30b", "qwen3:14b"})
 MODEL_ROLES = {
@@ -282,9 +282,14 @@ def run_dogfood(
         return result
     if analyze_fn is None:
         plane = ChappieControlPlaneV1(paths, status_collector=collect_status)
+        proposal_diagnostics: list[object] = []
         analyze_fn = lambda item, question, requested_role: plane.analyze_development(
-            question, requested_role=requested_role.value
+            question,
+            requested_role=requested_role.value,
+            acceptance_diagnostics_sink=proposal_diagnostics.append,
         )
+    else:
+        proposal_diagnostics = []
     analysis = analyze_fn(paths, CASES[case], role)
     evidence = getattr(analysis, "evidence", None)
     effective_model = getattr(evidence, "effective_model", None)
@@ -336,6 +341,8 @@ def run_dogfood(
         _write_report(result, destination / "report.md")
         return result
     result["analysis"] = _public_analysis(analysis)
+    if proposal_diagnostics:
+        result["proposal_parse_diagnostics"] = proposal_diagnostics[-1].payload()
     analysis_state = getattr(getattr(analysis, "state", None), "value", "ANALYSIS_INVALID")
     handoff = None
     if getattr(analysis, "readiness", None) == DevelopmentAnalysisReadinessV1.READY_FOR_TASK:

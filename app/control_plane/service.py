@@ -526,7 +526,12 @@ class ChappieControlPlaneV1:
             )
 
     def analyze_development(
-        self, request: str, *, requested_role: str, workspace_context: object | None = None
+        self,
+        request: str,
+        *,
+        requested_role: str,
+        workspace_context: object | None = None,
+        acceptance_diagnostics_sink: Callable[[object], None] | None = None,
     ):
         """Return bounded read-only analysis; no implementation or repository mutation path exists."""
         from app.ai.model_policy import DevelopmentModelRoleV1
@@ -555,6 +560,7 @@ class ChappieControlPlaneV1:
         return DevelopmentAnalysisServiceV1(
             paths=self._paths,
             role_available=available,
+            diagnostics_sink=acceptance_diagnostics_sink,
             runner=lambda item, knowledge, evidence: _run_development_analysis_ai(
                 self._paths, item, knowledge, evidence
             ),

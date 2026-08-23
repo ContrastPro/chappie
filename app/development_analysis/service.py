@@ -45,12 +45,14 @@ class DevelopmentAnalysisServiceV1:
         paths: object,
         runner: Callable[[DevelopmentAnalysisRequestV1, object, DevelopmentEvidencePackV1], object],
         role_available: Callable[[object], bool],
+        diagnostics_sink: Callable[[object], None] | None = None,
         clock: Callable[[], float] = monotonic,
         request_id_factory: Callable[[], str] = lambda: uuid4().hex,
     ) -> None:
         self._paths = paths
         self._runner = runner
         self._role_available = role_available
+        self._diagnostics_sink = diagnostics_sink
         self._clock = clock
         self._request_id_factory = request_id_factory
 
@@ -179,6 +181,8 @@ class DevelopmentAnalysisServiceV1:
                 context_map=context_map,
             )
         except DevelopmentStageError as error:
+            if error.proposal_diagnostics is not None and self._diagnostics_sink is not None:
+                self._diagnostics_sink(error.proposal_diagnostics)
             _record_completed_staged_lifecycle(lifecycle, error.stage_elapsed_ms, error.stage)
             lifecycle.begin(_stage_failure_lifecycle_stage(error))
             return _failure(
