@@ -120,6 +120,44 @@ REVIEW_SCHEMA: dict[str, Any] = {
     },
 }
 
+
+def proposal_provider_schema(owner_candidates: tuple[str, ...]) -> dict[str, Any]:
+    """Return the exact Proposal schema, bounded to request-local canonical owners."""
+    scope_properties = {
+        **PROPOSED_SCOPE_SCHEMA["properties"],
+        "proposed_owner": {
+            "type": ["string", "null"],
+            "enum": [*owner_candidates, None],
+        },
+    }
+    return {
+        **PROPOSAL_SCHEMA,
+        "properties": {
+            **PROPOSAL_SCHEMA["properties"],
+            "proposed_scope": {
+                **PROPOSED_SCOPE_SCHEMA,
+                "properties": scope_properties,
+            },
+        },
+    }
+
+
+def proposal_instruction(owner_candidates: tuple[str, ...]) -> str:
+    candidates = ", ".join(owner_candidates) if owner_candidates else "(none)"
+    return f"""Return only the exact Proposal JSON schema. This stage produces ONLY future
+implementation scope from the supplied goal, context map, and validated grounding. Do not state
+proposals as CURRENT facts or claim authority. `proposed_scope` must contain exactly:
+`proposed_owner`, `proposed_modified_files`, `proposed_new_files`,
+`proposed_contract_changes`, `proposed_components`, `proposed_behavior`, and `rationale`.
+Use `proposal_unknowns` for unresolved proposal questions. `proposed_owner` must be exactly one
+canonical value from `owner_candidates`: {candidates}. Do not use descriptive labels or invent a
+package name. If no candidate is justified, return `null` and explain the unresolved ownership
+decision in `proposal_unknowns`. Do NOT produce `risks`, `tests`, `acceptance_criteria`, or
+`non_goals`; those belong only to the later REVIEW stage. Do NOT use alternative keys such as
+`description`, `ownership`, `contracts`, or `boundaries`. Do not include Markdown or prose outside
+the structured object."""
+
+
 DEVELOPMENT_SYNTHESIS_INSTRUCTION = """You are Chappie Development Intelligence.
 Analyze the USER DEVELOPMENT REQUEST, not the repository in general. Return only the required
 JSON object. Repository Knowledge facts are authoritative. `current_evidence_handles` may contain
@@ -384,6 +422,8 @@ def _parse_development_proposal(
             "PROPOSAL_UNSAFE_PATH" if "path" in str(error).casefold() else "PROPOSAL_SCHEMA_INVALID"
         )
         raise DevelopmentStageError("PROPOSAL", code) from error
+    if scope.proposed_owner is None and not unknowns:
+        raise DevelopmentStageError("PROPOSAL", "PROPOSAL_SCHEMA_INVALID")
     forbidden = ("edit file", "write file", "git commit", "shell", "execute order")
     if any(
         token in item.casefold()
@@ -807,16 +847,8 @@ def synthesize_development(
     proposal_result = call(
         "PROPOSAL",
         DEVELOPMENT_PROPOSAL_IDENTITY,
-        """Return only the exact Proposal JSON schema. This stage produces ONLY future
-implementation scope from the supplied goal, context map, and validated grounding. Do not state
-proposals as CURRENT facts or claim authority. `proposed_scope` must contain exactly:
-`proposed_owner`, `proposed_modified_files`, `proposed_new_files`,
-`proposed_contract_changes`, `proposed_components`, `proposed_behavior`, and `rationale`.
-Use `proposal_unknowns` for unresolved proposal questions. Do NOT produce `risks`, `tests`,
-`acceptance_criteria`, or `non_goals`; those belong only to the later REVIEW stage. Do NOT use
-alternative keys such as `description`, `ownership`, `contracts`, or `boundaries`. Do not include
-Markdown or prose outside the structured object.""",
-        PROPOSAL_SCHEMA,
+        proposal_instruction(context_map.owner_candidates),
+        proposal_provider_schema(context_map.owner_candidates),
         {
             "request": request.request,
             "development_context_map": context_map.payload(),

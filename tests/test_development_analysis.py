@@ -244,10 +244,12 @@ def test_development_synthesis_input_binds_the_exact_explicit_fact_allowlist() -
     allowed_fact_ids = development_allowed_fact_ids(context)
 
     calls = []
+    provider_requests = []
 
     class Provider:
         def generate(self, request):
             calls.append(request.prompt_version)
+            provider_requests.append(request)
             assert request.facts == ()
             if request.prompt_version == "chappie_development_grounding/1.0.0":
                 payload = {
@@ -316,6 +318,14 @@ def test_development_synthesis_input_binds_the_exact_explicit_fact_allowlist() -
         "chappie_development_proposal/1.0.0",
         "chappie_development_review/1.0.0",
     ]
+    proposal_request = provider_requests[1]
+    candidate = proposal_request.context["development_context_map"]["owner_candidates"][0]
+    assert candidate == "app.development_analysis"
+    assert proposal_request.response_schema["properties"]["proposed_scope"]["properties"][
+        "proposed_owner"
+    ]["enum"] == [candidate, None]
+    assert candidate in proposal_request.system_instruction
+    assert "If no candidate is justified" in proposal_request.system_instruction
     assert "E-handles" in DEVELOPMENT_SYNTHESIS_INSTRUCTION
     assert "model memory is not evidence" in DEVELOPMENT_SYNTHESIS_INSTRUCTION
 

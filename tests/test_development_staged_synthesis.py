@@ -18,6 +18,7 @@ from app.development_analysis.synthesis import (
     parse_development_grounding,
     parse_development_proposal,
     parse_development_review,
+    proposal_provider_schema,
 )
 
 
@@ -40,7 +41,7 @@ def _context_map() -> DevelopmentContextMapV1:
                 "app.development_analysis owns DevelopmentAnalysisV1.",
             ),
         ),
-        ("MODULE_RESPONSIBILITY",),
+        ("app.development_analysis",),
         ("DevelopmentAnalysisV1",),
         ("app/development_analysis/models.py",),
         ("tests/test_development_analysis.py",),
@@ -50,7 +51,7 @@ def _context_map() -> DevelopmentContextMapV1:
     return replace(value, context_digest=build_context_digest(value))
 
 
-def _scope(owner="MODULE_RESPONSIBILITY", path="app/development_analysis/diff_review.py"):
+def _scope(owner="app.development_analysis", path="app/development_analysis/diff_review.py"):
     return {
         "proposed_owner": owner,
         "proposed_modified_files": [],
@@ -88,7 +89,7 @@ def test_grounding_accepts_only_supplied_evidence_and_unknowns() -> None:
     ("owner", "path", "code"),
     (
         ("UNKNOWN", "app/development_analysis/diff_review.py", "PROPOSAL_UNKNOWN_OWNER"),
-        ("MODULE_RESPONSIBILITY", "../escape.py", "PROPOSAL_UNSAFE_PATH"),
+        ("app.development_analysis", "../escape.py", "PROPOSAL_UNSAFE_PATH"),
     ),
 )
 def test_proposal_rejects_unknown_owner_and_unsafe_path(owner, path, code) -> None:
@@ -129,6 +130,18 @@ def test_provider_proposal_schema_exactly_matches_the_strict_parser_contract() -
     assert {"risks", "tests", "acceptance_criteria", "non_goals"}.isdisjoint(scope["properties"])
 
 
+def test_provider_schema_binds_proposed_owner_to_request_local_candidates() -> None:
+    schema = proposal_provider_schema(("app.development_analysis", "app.example"))
+    owner = schema["properties"]["proposed_scope"]["properties"]["proposed_owner"]
+    assert owner == {
+        "type": ["string", "null"],
+        "enum": ["app.development_analysis", "app.example", None],
+    }
+    assert proposal_provider_schema(())["properties"]["proposed_scope"]["properties"][
+        "proposed_owner"
+    ]["enum"] == [None]
+
+
 def test_dogfood_alternative_proposal_shape_remains_fail_closed() -> None:
     with pytest.raises(DevelopmentStageError) as error:
         parse_development_proposal(
@@ -153,6 +166,31 @@ def test_dogfood_alternative_proposal_shape_remains_fail_closed() -> None:
         error.value.proposal_diagnostics.bounded_error_path == "$.proposed_scope.proposed_behavior"
     )
     assert error.value.proposal_diagnostics.bounded_error_category == "MISSING_REQUIRED_FIELD"
+
+
+@pytest.mark.parametrize(
+    "owner", ("INVENTED_OWNER", "Development Intelligence", "MODULE_RESPONSIBILITY")
+)
+def test_proposal_rejects_noncanonical_owner_representations(owner: str) -> None:
+    with pytest.raises(DevelopmentStageError) as error:
+        parse_development_proposal(
+            {"proposed_scope": _scope(owner), "proposal_unknowns": ["Owner is unresolved."]},
+            _context_map(),
+        )
+    assert error.value.code == "PROPOSAL_UNKNOWN_OWNER"
+
+
+def test_null_owner_requires_an_explicit_proposal_unknown() -> None:
+    accepted = parse_development_proposal(
+        {"proposed_scope": _scope(None), "proposal_unknowns": ["Owner is unresolved."]},
+        _context_map(),
+    )
+    assert accepted.proposed_scope.proposed_owner is None
+    with pytest.raises(DevelopmentStageError) as error:
+        parse_development_proposal(
+            {"proposed_scope": _scope(None), "proposal_unknowns": []}, _context_map()
+        )
+    assert error.value.code == "PROPOSAL_SCHEMA_INVALID"
 
 
 @pytest.mark.parametrize(

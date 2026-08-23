@@ -93,6 +93,32 @@ def test_evidence_handles_are_deterministic_and_preserve_canonical_provenance() 
     )
 
 
+def test_owner_candidates_are_request_local_canonical_package_identities() -> None:
+    context, evidence, first = _inputs()
+    assert first.owner_candidates == ("app.development_analysis",)
+    assert "MODULE_RESPONSIBILITY" not in first.owner_candidates
+    assert "CONTRACT" not in first.owner_candidates
+
+    ownership_record = next(
+        record
+        for record in context.records
+        if record.title == "Package ownership: Development Intelligence"
+    )
+    duplicate_context = replace(context, records=(*context.records, ownership_record))
+    duplicate = build_development_context_map(duplicate_context, evidence)
+    assert duplicate.owner_candidates == first.owner_candidates
+
+    without_ownership = replace(
+        context,
+        records=tuple(
+            record
+            for record in context.records
+            if record.knowledge_type.value != "MODULE_RESPONSIBILITY"
+        ),
+    )
+    assert build_development_context_map(without_ownership, evidence).owner_candidates == ()
+
+
 def test_current_handles_are_strict_but_proposed_new_files_are_not_existing_facts() -> None:
     context, _evidence, context_map = _inputs()
     output = parse_development_synthesis(_payload(context_map), context, context_map=context_map)
@@ -137,7 +163,13 @@ def test_ready_analysis_emits_deterministic_bounded_codex_handoff() -> None:
         facts=facts,
         inferences=output.inferences,
         unknowns=output.unknowns,
-        architecture_owners=(output.proposed_scope.proposed_owner,),
+        architecture_owners=tuple(
+            sorted(
+                item.category
+                for item in context_map.evidence_handles
+                if item.handle in output.current_evidence_handles
+            )
+        ),
         affected_contracts=context_map.existing_contracts,
         likely_files=context_map.existing_files,
         risks=output.risks,

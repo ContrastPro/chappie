@@ -83,7 +83,9 @@ def build_development_context_map(context: object, evidence: object) -> Developm
         )
         for index, record in enumerate(records, start=1)
     )
-    owner_candidates = tuple(sorted({record.knowledge_type.value for record in records}))
+    owner_candidates = tuple(
+        sorted({owner for record in records for owner in _canonical_owners_from_record(record)})
+    )
     contracts = tuple(sorted(record.title for record in records if "V1" in record.title))
     files = tuple(
         sorted({source.path for record in records for source in record.sources if source.path})
@@ -177,3 +179,28 @@ def _strings(value: object) -> tuple[str, ...]:
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
         raise ValueError("development context map list is invalid")
     return tuple(value)
+
+
+def _canonical_owners_from_record(record: object) -> tuple[str, ...]:
+    """Project only source-backed package owners from supplied ownership evidence."""
+    if getattr(getattr(record, "knowledge_type", None), "value", None) != "MODULE_RESPONSIBILITY":
+        return ()
+    owners = {
+        _package_from_initializer(getattr(source, "path", ""))
+        for source in getattr(record, "sources", ())
+    }
+    return tuple(sorted(owner for owner in owners if owner is not None))
+
+
+def _package_from_initializer(path: object) -> str | None:
+    if not isinstance(path, str):
+        return None
+    parts = path.split("/")
+    if (
+        len(parts) < 3
+        or parts[0] != "app"
+        or parts[-1] != "__init__.py"
+        or any(not part.isidentifier() for part in parts[:-1])
+    ):
+        return None
+    return ".".join(parts[:-1])
