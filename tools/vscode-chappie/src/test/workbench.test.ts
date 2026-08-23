@@ -416,6 +416,17 @@ test("Workbench Development mode is explicit and renders only advisory Codex tas
   assert.doesNotMatch(host, /child_process\.exec|Codex invocation/);
 });
 
+test("Workbench Webview renderer remains executable with current controls", () => {
+  const script = workbenchRendererScript();
+  assert.doesNotThrow(() => new Function(script));
+  assert.match(script, /connection\.modelRole/);
+  assert.match(script, /connection\.mode/);
+  assert.match(script, /let inspectorOpen=false/);
+  assert.match(script, /developmentNode/);
+  assert.match(script, /prepareCodexTask/);
+  assert.match(script, /footer\.replaceChildren\(contextActions,footerSpacer,footerActions\)/);
+});
+
 test("Workbench development snapshots are detached and task projection requires a valid analysis", () => {
   const session = new WorkbenchSessionV1();
   const turn = session.begin("development_1", "request_1", "Plan an improvement", noContext, 100, [], "DEVELOPMENT");

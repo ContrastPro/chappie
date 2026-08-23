@@ -245,6 +245,7 @@ FROZEN_CONTRACT_SNAPSHOT = {
 ALLOWED_TRACKED_DISTRIBUTION_ARTIFACTS = frozenset(
     {
         "tools/vscode-chappie/dist/chappie-vscode-0.1.20.vsix",
+        "tools/vscode-chappie/dist/chappie-vscode-0.1.21.vsix",
         "tools/vscode-chappie/dist/SHA256SUMS",
     }
 )
@@ -1063,9 +1064,7 @@ def test_tracked_generated_artifacts_are_limited_to_explicit_contracts() -> None
 
     vsix_files = {path for path in tracked if path.endswith(".vsix")}
     assert vsix_files == {
-        next(
-            iter(ALLOWED_TRACKED_DISTRIBUTION_ARTIFACTS - {"tools/vscode-chappie/dist/SHA256SUMS"})
-        )
+        path for path in ALLOWED_TRACKED_DISTRIBUTION_ARTIFACTS if path.endswith(".vsix")
     }
 
     sqlite_files = {path for path in tracked if path.endswith(".sqlite3")}
