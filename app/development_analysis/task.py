@@ -17,9 +17,6 @@ from app.development_analysis.models import (
 )
 
 CODEX_TASK_IDENTITY = "chappie_codex_handoff/1.0.0"
-KNOWN_OWNERS = frozenset(
-    {"ARCHITECTURE", "MODULE_RESPONSIBILITY", "CONTRACT", "AUTHORITY_BOUNDARY"}
-)
 FORBIDDEN_PATH_PREFIXES = ("data/", "logs/", ".venv/", ".env")
 FORBIDDEN_ACTIVE_AUTHORITY = (
     "edit file",
@@ -91,6 +88,7 @@ class CodexTaskV1:
     approval_status: str = "HUMAN_APPROVAL_REQUIRED"
     validation_status: str = "VALID"
     reason_code: str | None = None
+    proposed_owner: str | None = None
 
     def projection(self) -> str:
         """Stable copy/paste text derived only from the validated DTO."""
@@ -116,6 +114,8 @@ class CodexTaskV1:
                 ),
                 "\nScope",
                 *_bullets(self.implementation_constraints),
+                "\nCanonical proposed owner",
+                *_bullets((self.proposed_owner,) if self.proposed_owner else ("None.",)),
                 "\nAllowed files",
                 *_bullets(self.allowed_files or ("None proposed by validated analysis.",)),
                 "\nProposed modified files",
@@ -169,6 +169,7 @@ class CodexTaskV1:
             "approval_status": self.approval_status,
             "validation_status": self.validation_status,
             "reason_code": self.reason_code,
+            "proposed_owner": self.proposed_owner,
             "projection": self.projection(),
         }
 
@@ -185,7 +186,12 @@ def prepare_codex_task(request: CodexTaskPreparationRequestV1) -> CodexTaskV1:
         evidence = analysis.evidence
         if not evidence.source_commit or not evidence.repository_clean:
             raise ValueError("SOURCE_EVIDENCE_MISMATCH")
-        if not set(analysis.architecture_owners).issubset(KNOWN_OWNERS):
+        if (
+            analysis.context_map is None
+            or analysis.proposed_scope is None
+            or analysis.proposed_scope.proposed_owner is None
+            or analysis.proposed_scope.proposed_owner not in analysis.context_map.owner_candidates
+        ):
             raise ValueError("OWNER_INVALID")
         if not analysis.required_tests:
             raise ValueError("MISSING_TESTS")
@@ -215,6 +221,7 @@ def prepare_codex_task(request: CodexTaskPreparationRequestV1) -> CodexTaskV1:
             "request": analysis.request,
         }
     )
+    proposed_owner = analysis.proposed_scope.proposed_owner
     return CodexTaskV1(
         task_id,
         CodexTaskStateV1.ADVISORY,
@@ -244,6 +251,7 @@ def prepare_codex_task(request: CodexTaskPreparationRequestV1) -> CodexTaskV1:
         analysis.required_tests,
         analysis.non_goals,
         analysis.acceptance_criteria,
+        proposed_owner=proposed_owner,
     )
 
 

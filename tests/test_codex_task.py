@@ -45,7 +45,7 @@ def _analysis(**changes):
         facts=("The evidence pack is immutable.",),
         inferences=("A bounded task can be prepared.",),
         unknowns=("Human approval remains required.",),
-        architecture_owners=("ARCHITECTURE",),
+        architecture_owners=("MODULE_RESPONSIBILITY",),
         likely_files=("app/development_analysis/task.py",),
         required_tests=("tests/test_codex_task.py",),
         non_goals=("No mutation.",),
@@ -69,7 +69,7 @@ def _context_map() -> DevelopmentContextMapV1:
         "CODE",
         "qwen3-coder:30b",
         (),
-        ("ARCHITECTURE",),
+        ("app.development_analysis",),
         (),
         ("app/development_analysis/task.py",),
         ("tests/test_codex_task.py",),
@@ -81,7 +81,7 @@ def _context_map() -> DevelopmentContextMapV1:
 
 def _proposed_scope() -> DevelopmentProposedScopeV1:
     return DevelopmentProposedScopeV1(
-        "ARCHITECTURE",
+        "app.development_analysis",
         ("app/development_analysis/task.py",),
         ("app/development_analysis/diff_review.py",),
         ("Add bounded DTO.",),
@@ -110,6 +110,9 @@ def test_valid_analysis_prepares_deterministic_advisory_task() -> None:
     assert task.non_goals == analysis.non_goals
     assert task.acceptance_criteria == analysis.acceptance_criteria
     assert task.approval_status == "HUMAN_APPROVAL_REQUIRED"
+    assert task.proposed_owner == "app.development_analysis"
+    assert task.payload()["proposed_owner"] == "app.development_analysis"
+    assert "app.development_analysis" in task.projection()
     assert task.projection() == task.projection()
     assert "Human approval" in task.projection()
 
@@ -125,7 +128,6 @@ def test_control_plane_prepares_only_a_validated_advisory_payload() -> None:
 @pytest.mark.parametrize(
     ("changes", "reason"),
     (
-        ({"architecture_owners": ("UNKNOWN",)}, "OWNER_INVALID"),
         ({"likely_files": ("C:/unsafe.py",)}, "UNSAFE_FILE_PATH"),
         ({"likely_files": ("../unsafe.py",)}, "UNSAFE_FILE_PATH"),
         ({"required_tests": ()}, "MISSING_TESTS"),
@@ -200,6 +202,38 @@ def test_authority_violation_returns_a_redacted_handoff() -> None:
     assert task.proposed_modified_files == ()
     assert task.required_tests == ()
     assert task.acceptance_criteria == ()
+    assert task.proposed_owner is None
+
+
+@pytest.mark.parametrize(
+    "owner",
+    (
+        "app.some_invented_package",
+        "Development Intelligence",
+        "MODULE_RESPONSIBILITY",
+        None,
+    ),
+)
+def test_handoff_owner_must_be_a_request_local_canonical_candidate(owner) -> None:
+    analysis = _analysis(proposed_scope=replace(_proposed_scope(), proposed_owner=owner))
+    task = prepare_codex_task(CodexTaskPreparationRequestV1(analysis))
+    assert task.state == CodexTaskStateV1.VALIDATION_ERROR
+    assert task.reason_code == "OWNER_INVALID"
+    assert task.proposed_owner is None
+
+
+def test_legacy_architecture_owner_categories_do_not_block_canonical_handoff() -> None:
+    analysis = _analysis(
+        architecture_owners=(
+            "AUTHORITY_BOUNDARY",
+            "CONTRACT",
+            "LIMITATION",
+            "MODULE_RESPONSIBILITY",
+        )
+    )
+    task = prepare_codex_task(CodexTaskPreparationRequestV1(analysis))
+    assert task.state == CodexTaskStateV1.ADVISORY
+    assert task.proposed_owner == "app.development_analysis"
 
 
 @pytest.mark.parametrize(
