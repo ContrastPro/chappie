@@ -25,6 +25,7 @@ from app.development_analysis.synthesis import (
     DEVELOPMENT_SYNTHESIS_IDENTITY,
     DEVELOPMENT_SYNTHESIS_INSTRUCTION,
     DevelopmentCitationValidationError,
+    DevelopmentStageError,
     DevelopmentSynthesisOutputV1,
     development_allowed_fact_ids,
     parse_development_synthesis,
@@ -242,37 +243,50 @@ def test_development_synthesis_input_binds_the_exact_explicit_fact_allowlist() -
     context = type("Context", (), {"records": records, "context_digest": "digest"})()
     allowed_fact_ids = development_allowed_fact_ids(context)
 
+    calls = []
+
     class Provider:
         def generate(self, request):
-            assert request.context["development_context_map"]["evidence_handles"]
+            calls.append(request.prompt_version)
             assert request.facts == ()
+            if request.prompt_version == "chappie_development_grounding/1.0.0":
+                payload = {
+                    "relevant_evidence_handles": ["E1"],
+                    "task_interpretation": "The supplied evidence supports a bounded analysis.",
+                    "unknowns": [
+                        "Exact future detail cannot be established from current evidence."
+                    ],
+                }
+            elif request.prompt_version == "chappie_development_proposal/1.0.0":
+                payload = {
+                    "proposed_scope": {
+                        "proposed_owner": request.context["development_context_map"][
+                            "owner_candidates"
+                        ][0],
+                        "proposed_modified_files": [],
+                        "proposed_new_files": ["app/development_analysis/diff_review.py"],
+                        "proposed_contract_changes": ["Add bounded diff-review DTO."],
+                        "proposed_components": ["Diff review"],
+                        "proposed_behavior": ["Remain advisory and read-only."],
+                        "rationale": ["The request requires a bounded proposal."],
+                    },
+                    "proposal_unknowns": ["Exact endpoint shape remains unknown."],
+                }
+            else:
+                payload = {
+                    "risks": ["Analyze must preserve the advisory boundary."],
+                    "required_tests": ["Analyze diff review validation."],
+                    "non_goals": ["No mutation."],
+                    "acceptance_criteria": ["Analyze remains evidence-bound."],
+                    "unresolved_unknowns": ["Exact endpoint shape remains unknown."],
+                    "confidence": 0.5,
+                }
             return type(
                 "Result",
                 (),
                 {
-                    "structured_output": {
-                        "current_evidence_handles": ["E1"],
-                        "inferences": ["Bounded evidence supports this analysis."],
-                        "unknowns": [
-                            "Exact future detail cannot be established from current evidence."
-                        ],
-                        "proposed_scope": {
-                            "proposed_owner": request.context["development_context_map"][
-                                "owner_candidates"
-                            ][0],
-                            "proposed_modified_files": [],
-                            "proposed_new_files": ["app/development_analysis/diff_review.py"],
-                            "proposed_contract_changes": ["Add bounded diff-review DTO."],
-                            "proposed_components": ["Diff review"],
-                            "proposed_behavior": ["Remain advisory and read-only."],
-                            "rationale": ["The request requires a bounded proposal."],
-                        },
-                        "risks": ["Diff review must preserve the advisory boundary."],
-                        "required_tests": ["Test diff review validation."],
-                        "non_goals": ["No mutation."],
-                        "acceptance_criteria": ["The result remains evidence-bound."],
-                        "confidence": 0.5,
-                    }
+                    "structured_output": payload,
+                    "latency_ms": 1,
                 },
             )()
 
@@ -297,8 +311,60 @@ def test_development_synthesis_input_binds_the_exact_explicit_fact_allowlist() -
     assert synthesize_development(
         AI(), type("Request", (), {"request": "Analyze"})(), context, evidence
     )
+    assert calls == [
+        "chappie_development_grounding/1.0.0",
+        "chappie_development_proposal/1.0.0",
+        "chappie_development_review/1.0.0",
+    ]
     assert "E-handles" in DEVELOPMENT_SYNTHESIS_INSTRUCTION
     assert "model memory is not evidence" in DEVELOPMENT_SYNTHESIS_INSTRUCTION
+
+
+def test_staged_synthesis_stops_before_proposal_when_grounding_is_invalid() -> None:
+    _request, records = _development_context()
+    context = type("Context", (), {"records": records, "context_digest": "digest"})()
+    calls = []
+
+    class Provider:
+        def generate(self, request):
+            calls.append(request.prompt_version)
+            return type(
+                "Result",
+                (),
+                {
+                    "structured_output": {
+                        "relevant_evidence_handles": ["E999"],
+                        "task_interpretation": "Invalid supplied handle.",
+                        "unknowns": ["Unknown."],
+                    },
+                    "latency_ms": 1,
+                },
+            )()
+
+    class AI:
+        config = type("Config", (), {"profile": "LOCAL", "temperature": 0, "timeout_seconds": 1})()
+        router = type("Router", (), {"provider_for": lambda _self, _profile: Provider()})()
+
+    evidence = type(
+        "Evidence",
+        (),
+        {
+            "allowed_fact_ids": development_allowed_fact_ids(context),
+            "source_commit": "a" * 40,
+            "knowledge_identity": "chappie_knowledge/1.0.0",
+            "knowledge_manifest_digest": "b" * 64,
+            "knowledge_context_digest": "digest",
+            "evidence_digest": "c" * 64,
+            "requested_role": DevelopmentModelRoleV1.CODE,
+            "effective_model": "qwen3-coder:30b",
+        },
+    )()
+    with pytest.raises(DevelopmentStageError, match="staged synthesis failed") as error:
+        synthesize_development(
+            AI(), type("Request", (), {"request": "Analyze"})(), context, evidence
+        )
+    assert error.value.code == "GROUNDING_UNSUPPORTED_EVIDENCE"
+    assert calls == ["chappie_development_grounding/1.0.0"]
 
 
 @pytest.mark.parametrize(

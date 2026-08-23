@@ -1,0 +1,133 @@
+"""Focused fail-closed contracts for staged Development Reasoning 2.0."""
+
+from __future__ import annotations
+
+from dataclasses import replace
+
+import pytest
+
+from app.development_analysis.context import (
+    DevelopmentContextMapV1,
+    DevelopmentEvidenceHandleV1,
+    build_context_digest,
+)
+from app.development_analysis.synthesis import (
+    DevelopmentStageError,
+    parse_development_grounding,
+    parse_development_proposal,
+    parse_development_review,
+)
+
+
+def _context_map() -> DevelopmentContextMapV1:
+    value = DevelopmentContextMapV1(
+        "a" * 40,
+        "chappie_knowledge/1.0.0",
+        "b" * 64,
+        "c" * 64,
+        "d" * 64,
+        "CODE",
+        "qwen3-coder:30b",
+        (
+            DevelopmentEvidenceHandleV1(
+                "E1",
+                "knowledge.development.statement",
+                "development",
+                "e" * 64,
+                "MODULE_RESPONSIBILITY",
+                "app.development_analysis owns DevelopmentAnalysisV1.",
+            ),
+        ),
+        ("MODULE_RESPONSIBILITY",),
+        ("DevelopmentAnalysisV1",),
+        ("app/development_analysis/models.py",),
+        ("tests/test_development_analysis.py",),
+        ("Advisory only.",),
+        "",
+    )
+    return replace(value, context_digest=build_context_digest(value))
+
+
+def _scope(owner="MODULE_RESPONSIBILITY", path="app/development_analysis/diff_review.py"):
+    return {
+        "proposed_owner": owner,
+        "proposed_modified_files": [],
+        "proposed_new_files": [path],
+        "proposed_contract_changes": ["Add DevelopmentDiffReviewV1."],
+        "proposed_components": ["Bounded diff review"],
+        "proposed_behavior": ["Remain advisory."],
+        "rationale": ["The diff review is future scope."],
+    }
+
+
+def test_grounding_accepts_only_supplied_evidence_and_unknowns() -> None:
+    result = parse_development_grounding(
+        {
+            "relevant_evidence_handles": ["E1"],
+            "task_interpretation": "Review DevelopmentAnalysisV1.",
+            "unknowns": ["Exact future endpoint is unknown."],
+        },
+        _context_map(),
+    )
+    assert result.relevant_evidence_handles == ("E1",)
+    with pytest.raises(DevelopmentStageError) as error:
+        parse_development_grounding(
+            {
+                "relevant_evidence_handles": ["E9"],
+                "task_interpretation": "Review.",
+                "unknowns": ["Unknown."],
+            },
+            _context_map(),
+        )
+    assert error.value.code == "GROUNDING_UNSUPPORTED_EVIDENCE"
+
+
+@pytest.mark.parametrize(
+    ("owner", "path", "code"),
+    (
+        ("UNKNOWN", "app/development_analysis/diff_review.py", "PROPOSAL_UNKNOWN_OWNER"),
+        ("MODULE_RESPONSIBILITY", "../escape.py", "PROPOSAL_UNSAFE_PATH"),
+    ),
+)
+def test_proposal_rejects_unknown_owner_and_unsafe_path(owner, path, code) -> None:
+    with pytest.raises(DevelopmentStageError) as error:
+        parse_development_proposal(
+            {"proposed_scope": _scope(owner, path), "proposal_unknowns": ["Unknown."]},
+            _context_map(),
+        )
+    assert error.value.code == code
+
+
+def test_proposed_new_file_is_not_treated_as_current_evidence() -> None:
+    result = parse_development_proposal(
+        {"proposed_scope": _scope(), "proposal_unknowns": ["Exact implementation is unknown."]},
+        _context_map(),
+    )
+    assert result.proposed_scope.proposed_new_files == ("app/development_analysis/diff_review.py",)
+
+
+@pytest.mark.parametrize(
+    ("tests", "criteria", "code"),
+    (
+        (["Run focused tests."], ["Diff review works."], "REVIEW_TESTS_NOT_SPECIFIC"),
+        (
+            ["Review DevelopmentAnalysisV1 regression."],
+            ["The result is valid."],
+            "REVIEW_CRITERIA_NOT_SPECIFIC",
+        ),
+    ),
+)
+def test_review_requires_task_specific_tests_and_criteria(tests, criteria, code) -> None:
+    with pytest.raises(DevelopmentStageError) as error:
+        parse_development_review(
+            {
+                "risks": ["Scope drift."],
+                "required_tests": tests,
+                "non_goals": ["No mutation."],
+                "acceptance_criteria": criteria,
+                "unresolved_unknowns": ["Unknown."],
+                "confidence": 0.5,
+            },
+            "Review DevelopmentAnalysisV1 diff review.",
+        )
+    assert error.value.code == code

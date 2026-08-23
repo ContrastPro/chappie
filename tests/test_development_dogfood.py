@@ -44,15 +44,47 @@ def _analysis(*, state=DevelopmentAnalysisStateV1.OK, reason=None, effective="qw
         )
 
     evidence = SimpleNamespace(effective_model=effective, record_ids=("development.analysis",))
+    context_map = SimpleNamespace(
+        context_digest="context",
+        knowledge_identity="chappie_knowledge/1.0.0",
+        knowledge_manifest_digest="m" * 64,
+        knowledge_context_digest="c" * 64,
+        evidence_handles=(),
+    )
     return SimpleNamespace(
         state=state,
         reason_code=reason,
         evidence=evidence,
-        context_map=None,
+        context_map=context_map,
         lifecycle=SimpleNamespace(
             events=(
                 event(
-                    "SYNTHESIS",
+                    "GROUNDING_SYNTHESIS",
+                    "COMPLETED" if state == DevelopmentAnalysisStateV1.OK else "FAILED",
+                    reason,
+                ),
+                event(
+                    "GROUNDING_PARSE",
+                    "COMPLETED" if state == DevelopmentAnalysisStateV1.OK else "FAILED",
+                    reason,
+                ),
+                event(
+                    "PROPOSAL_SYNTHESIS",
+                    "COMPLETED" if state == DevelopmentAnalysisStateV1.OK else "FAILED",
+                    reason,
+                ),
+                event(
+                    "PROPOSAL_PARSE",
+                    "COMPLETED" if state == DevelopmentAnalysisStateV1.OK else "FAILED",
+                    reason,
+                ),
+                event(
+                    "REVIEW_SYNTHESIS",
+                    "COMPLETED" if state == DevelopmentAnalysisStateV1.OK else "FAILED",
+                    reason,
+                ),
+                event(
+                    "REVIEW_PARSE",
                     "COMPLETED" if state == DevelopmentAnalysisStateV1.OK else "FAILED",
                     reason,
                 ),
@@ -177,7 +209,10 @@ def test_success_records_only_public_analysis_and_metrics(tmp_path, harness):
     )
 
     assert result["status"] == "COMPLETED"
-    assert result["provider_metrics"]["total_inference_elapsed_ms"] == 12
+    assert result["stages"]["CONTEXT_MAP"]["status"] == "PASS"
+    assert result["stages"]["EVIDENCE_HANDLES"]["status"] == "PASS"
+    assert result["stages"]["GROUNDING_SYNTHESIS"]["status"] == "PASS"
+    assert result["provider_metrics"]["total_inference_elapsed_ms"] == 36
     assert "prompt" not in result["analysis"]
     assert (harness.output_path(tmp_path, "qwen3-coder:30b", "success") / "report.md").is_file()
 

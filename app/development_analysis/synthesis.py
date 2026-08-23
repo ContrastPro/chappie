@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from app.ai.errors import AIValidationError
+from app.ai.errors import AIProviderError, AIProviderTimeoutError, AIValidationError
 from app.ai.models import ModelRequest
 from app.ai.project_qa import knowledge_facts
 from app.ai.schemas import digest
@@ -25,6 +25,9 @@ if TYPE_CHECKING:
     from app.knowledge.store import KnowledgeContextV1
 
 DEVELOPMENT_SYNTHESIS_IDENTITY = "chappie_development_synthesis/2.0.0"
+DEVELOPMENT_GROUNDING_IDENTITY = "chappie_development_grounding/1.0.0"
+DEVELOPMENT_PROPOSAL_IDENTITY = "chappie_development_proposal/1.0.0"
+DEVELOPMENT_REVIEW_IDENTITY = "chappie_development_review/1.0.0"
 DEVELOPMENT_SYNTHESIS_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -48,6 +51,49 @@ DEVELOPMENT_SYNTHESIS_SCHEMA: dict[str, Any] = {
         "required_tests": {"type": "array", "items": {"type": "string"}},
         "non_goals": {"type": "array", "items": {"type": "string"}},
         "acceptance_criteria": {"type": "array", "items": {"type": "string"}},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    },
+}
+
+GROUNDING_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["relevant_evidence_handles", "task_interpretation", "unknowns"],
+    "properties": {
+        "relevant_evidence_handles": {"type": "array", "items": {"type": "string"}},
+        "task_interpretation": {"type": "string"},
+        "unknowns": {"type": "array", "items": {"type": "string"}},
+    },
+}
+PROPOSAL_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "proposed_scope",
+        "proposal_unknowns",
+    ],
+    "properties": {
+        "proposed_scope": {"type": "object"},
+        "proposal_unknowns": {"type": "array", "items": {"type": "string"}},
+    },
+}
+REVIEW_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "risks",
+        "required_tests",
+        "non_goals",
+        "acceptance_criteria",
+        "unresolved_unknowns",
+        "confidence",
+    ],
+    "properties": {
+        "risks": {"type": "array", "items": {"type": "string"}},
+        "required_tests": {"type": "array", "items": {"type": "string"}},
+        "non_goals": {"type": "array", "items": {"type": "string"}},
+        "acceptance_criteria": {"type": "array", "items": {"type": "string"}},
+        "unresolved_unknowns": {"type": "array", "items": {"type": "string"}},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
     },
 }
@@ -136,6 +182,177 @@ class DevelopmentCitationValidationError(AIValidationError):
             code="UNSUPPORTED_KNOWLEDGE_CITATION",
         )
         self.failure = failure
+
+
+class DevelopmentStageError(AIValidationError):
+    """A bounded stage failure; no model output is retained in the exception."""
+
+    def __init__(self, stage: str, code: str) -> None:
+        super().__init__("development staged synthesis failed", code=code)
+        self.stage = stage
+
+
+@dataclass(frozen=True, slots=True)
+class DevelopmentGroundingV1:
+    relevant_evidence_handles: tuple[str, ...]
+    task_interpretation: str
+    unknowns: tuple[str, ...]
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "identity": DEVELOPMENT_GROUNDING_IDENTITY,
+            "relevant_evidence_handles": list(self.relevant_evidence_handles),
+            "task_interpretation": self.task_interpretation,
+            "unknowns": list(self.unknowns),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DevelopmentProposalV1:
+    proposed_scope: DevelopmentProposedScopeV1
+    proposal_unknowns: tuple[str, ...]
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "identity": DEVELOPMENT_PROPOSAL_IDENTITY,
+            "proposed_scope": _proposed_scope_payload(self.proposed_scope),
+            "proposal_unknowns": list(self.proposal_unknowns),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DevelopmentReviewV1:
+    risks: tuple[str, ...]
+    required_tests: tuple[str, ...]
+    non_goals: tuple[str, ...]
+    acceptance_criteria: tuple[str, ...]
+    unresolved_unknowns: tuple[str, ...]
+    confidence: float
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "identity": DEVELOPMENT_REVIEW_IDENTITY,
+            "risks": list(self.risks),
+            "required_tests": list(self.required_tests),
+            "non_goals": list(self.non_goals),
+            "acceptance_criteria": list(self.acceptance_criteria),
+            "unresolved_unknowns": list(self.unresolved_unknowns),
+            "confidence": self.confidence,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class DevelopmentStagedSynthesisOutputV1:
+    grounding: DevelopmentGroundingV1
+    proposal: DevelopmentProposalV1
+    review: DevelopmentReviewV1
+    stage_elapsed_ms: tuple[tuple[str, int], ...] = ()
+
+
+def parse_development_grounding(
+    value: object, context_map: DevelopmentContextMapV1
+) -> DevelopmentGroundingV1:
+    if not isinstance(value, dict) or set(value) != set(GROUNDING_SCHEMA["required"]):
+        raise DevelopmentStageError("GROUNDING", "GROUNDING_SCHEMA_INVALID")
+    handles = value["relevant_evidence_handles"]
+    interpretation = value["task_interpretation"]
+    unknowns = value["unknowns"]
+    if (
+        not isinstance(handles, list)
+        or not handles
+        or any(not isinstance(item, str) for item in handles)
+        or not isinstance(interpretation, str)
+        or not interpretation.strip()
+        or not isinstance(unknowns, list)
+        or any(not isinstance(item, str) or not item.strip() for item in unknowns)
+    ):
+        raise DevelopmentStageError("GROUNDING", "GROUNDING_SCHEMA_INVALID")
+    allowed = {item.handle for item in context_map.evidence_handles}
+    if any(item not in allowed for item in handles):
+        raise DevelopmentStageError("GROUNDING", "GROUNDING_UNSUPPORTED_EVIDENCE")
+    return DevelopmentGroundingV1(tuple(dict.fromkeys(handles)), interpretation, tuple(unknowns))
+
+
+def parse_development_proposal(
+    value: object, context_map: DevelopmentContextMapV1
+) -> DevelopmentProposalV1:
+    if not isinstance(value, dict) or set(value) != set(PROPOSAL_SCHEMA["required"]):
+        raise DevelopmentStageError("PROPOSAL", "PROPOSAL_SCHEMA_INVALID")
+    unknowns = value["proposal_unknowns"]
+    if not isinstance(unknowns, list) or any(
+        not isinstance(item, str) or not item.strip() for item in unknowns
+    ):
+        raise DevelopmentStageError("PROPOSAL", "PROPOSAL_SCHEMA_INVALID")
+    try:
+        scope = _parse_proposed_scope(value["proposed_scope"], context_map)
+    except DevelopmentCitationValidationError as error:
+        raise DevelopmentStageError("PROPOSAL", "PROPOSAL_UNKNOWN_OWNER") from error
+    except AIValidationError as error:
+        code = (
+            "PROPOSAL_UNSAFE_PATH" if "path" in str(error).casefold() else "PROPOSAL_SCHEMA_INVALID"
+        )
+        raise DevelopmentStageError("PROPOSAL", code) from error
+    forbidden = ("edit file", "write file", "git commit", "shell", "execute order")
+    if any(
+        token in item.casefold()
+        for item in (*scope.proposed_behavior, *scope.rationale)
+        for token in forbidden
+    ):
+        raise DevelopmentStageError("PROPOSAL", "PROPOSAL_AUTHORITY_VIOLATION")
+    return DevelopmentProposalV1(scope, tuple(unknowns))
+
+
+def parse_development_review(value: object, request: str) -> DevelopmentReviewV1:
+    if not isinstance(value, dict) or set(value) != set(REVIEW_SCHEMA["required"]):
+        raise DevelopmentStageError("REVIEW", "REVIEW_SCHEMA_INVALID")
+    lists = {}
+    for key in (
+        "risks",
+        "required_tests",
+        "non_goals",
+        "acceptance_criteria",
+        "unresolved_unknowns",
+    ):
+        raw = value[key]
+        if not isinstance(raw, list) or any(
+            not isinstance(item, str) or not item.strip() for item in raw
+        ):
+            raise DevelopmentStageError("REVIEW", "REVIEW_SCHEMA_INVALID")
+        lists[key] = tuple(raw)
+    confidence = value["confidence"]
+    if (
+        isinstance(confidence, bool)
+        or not isinstance(confidence, (int, float))
+        or not 0 <= confidence <= 1
+    ):
+        raise DevelopmentStageError("REVIEW", "REVIEW_SCHEMA_INVALID")
+    if not _task_specific_text(request, lists["required_tests"]):
+        raise DevelopmentStageError("REVIEW", "REVIEW_TESTS_NOT_SPECIFIC")
+    if not _task_specific_text(request, lists["acceptance_criteria"]):
+        raise DevelopmentStageError("REVIEW", "REVIEW_CRITERIA_NOT_SPECIFIC")
+    return DevelopmentReviewV1(**lists, confidence=float(confidence))
+
+
+def _task_specific_text(request: str, values: tuple[str, ...]) -> bool:
+    request_tokens = {
+        item.casefold().strip(".,:;()[]") for item in request.split() if len(item) > 2
+    }
+    output_tokens = {
+        item.casefold().strip(".,:;()[]") for value in values for item in value.split()
+    }
+    return bool(request_tokens.intersection(output_tokens))
+
+
+def _proposed_scope_payload(value: DevelopmentProposedScopeV1) -> dict[str, object]:
+    return {
+        "proposed_owner": value.proposed_owner,
+        "proposed_modified_files": list(value.proposed_modified_files),
+        "proposed_new_files": list(value.proposed_new_files),
+        "proposed_contract_changes": list(value.proposed_contract_changes),
+        "proposed_components": list(value.proposed_components),
+        "proposed_behavior": list(value.proposed_behavior),
+        "rationale": list(value.rationale),
+    }
 
 
 def parse_development_synthesis(
@@ -320,8 +537,8 @@ def synthesize_development(
     request: object,
     context: KnowledgeContextV1,
     evidence: DevelopmentEvidencePackV1,
-) -> DevelopmentSynthesisOutputV1:
-    """Use the configured provider directly under the Development-owned contract."""
+) -> DevelopmentStagedSynthesisOutputV1:
+    """Run three small, fail-closed Development reasoning stages using one selected model."""
     now = datetime.now(tz=UTC)
     facts = knowledge_facts(context, now)
     allowed_fact_ids = tuple(sorted({fact.fact_id for fact in facts}))
@@ -330,32 +547,87 @@ def synthesize_development(
             "development evidence allowlist is invalid", code="DEVELOPMENT_SCHEMA_INVALID"
         )
     context_map = build_development_context_map(context, evidence)
-    model_request = ModelRequest(
-        uuid.uuid4().hex,
-        AITask.DEVELOPMENT_ANALYSIS_V1,
-        ai.config.profile,
-        DEVELOPMENT_SYNTHESIS_INSTRUCTION,
-        DEVELOPMENT_SYNTHESIS_IDENTITY,
-        (),
+    provider = ai.router.provider_for(ai.config.profile)
+
+    def call(
+        stage: str,
+        identity: str,
+        instruction: str,
+        schema: dict[str, Any],
+        payload: dict[str, object],
+    ):
+        try:
+            result = provider.generate(
+                ModelRequest(
+                    uuid.uuid4().hex,
+                    AITask.DEVELOPMENT_ANALYSIS_V1,
+                    ai.config.profile,
+                    instruction,
+                    identity,
+                    (),
+                    payload,
+                    schema,
+                    ai.config.temperature,
+                    ai.config.timeout_seconds,
+                    now,
+                    digest(
+                        {
+                            "identity": identity,
+                            "request": request.request,
+                            "context": context.context_digest,
+                        }
+                    ),
+                )
+            )
+            return result
+        except (AIProviderError, AIProviderTimeoutError, AIValidationError):
+            raise
+        except Exception as error:
+            raise DevelopmentStageError(stage, f"{stage}_PROVIDER_FAILED") from error
+
+    grounding_result = call(
+        "GROUNDING",
+        DEVELOPMENT_GROUNDING_IDENTITY,
+        "Return only JSON. Select supplied E-handles that establish CURRENT state, give one short task interpretation, and list UNKNOWNs. Never propose files, contracts, or authority.",
+        GROUNDING_SCHEMA,
+        {"request": request.request, "development_context_map": context_map.payload()},
+    )
+    grounding = parse_development_grounding(grounding_result.structured_output, context_map)
+    proposal_result = call(
+        "PROPOSAL",
+        DEVELOPMENT_PROPOSAL_IDENTITY,
+        "Return only JSON. Propose bounded future advisory scope from the supplied goal, context map, and validated grounding. Never state proposals as CURRENT facts or claim authority.",
+        PROPOSAL_SCHEMA,
         {
             "request": request.request,
-            "knowledge_context_digest": context.context_digest,
             "development_context_map": context_map.payload(),
+            "grounding": grounding.payload(),
         },
-        DEVELOPMENT_SYNTHESIS_SCHEMA,
-        ai.config.temperature,
-        ai.config.timeout_seconds,
-        now,
-        digest(
-            {
-                "identity": DEVELOPMENT_SYNTHESIS_IDENTITY,
-                "request": request.request,
-                "context": context.context_digest,
-            }
+    )
+    proposal = parse_development_proposal(proposal_result.structured_output, context_map)
+    review_result = call(
+        "REVIEW",
+        DEVELOPMENT_REVIEW_IDENTITY,
+        "Return only JSON. Critique the supplied proposal: task-specific risks, tests, non-goals, acceptance criteria, unresolved unknowns, and confidence. Do not redesign or claim authority.",
+        REVIEW_SCHEMA,
+        {
+            "request": request.request,
+            "grounding": grounding.payload(),
+            "proposal": proposal.payload(),
+            "authority_constraints": list(context_map.authority_constraints),
+        },
+    )
+    review = parse_development_review(review_result.structured_output, request.request)
+    return DevelopmentStagedSynthesisOutputV1(
+        grounding,
+        proposal,
+        review,
+        (
+            ("GROUNDING_SYNTHESIS", grounding_result.latency_ms),
+            ("PROPOSAL_SYNTHESIS", proposal_result.latency_ms),
+            ("REVIEW_SYNTHESIS", review_result.latency_ms),
         ),
     )
-    result = ai.router.provider_for(ai.config.profile).generate(model_request)
-    return parse_development_synthesis(result.structured_output, context, context_map=context_map)
 
 
 def development_allowed_fact_ids(context: KnowledgeContextV1) -> tuple[str, ...]:

@@ -38,7 +38,9 @@ export const CONTROL_PLANE_HEALTH_TIMEOUT_MS = 1_500;
 export const CONTROL_PLANE_REFRESH_TIMEOUT_MS = 5_000;
 export const PROJECT_QA_HTTP_TIMEOUT_MS = 60_000;
 /** Development has the same bounded backend model call plus evidence and validation overhead. */
-export const DEVELOPMENT_ANALYSIS_HTTP_TIMEOUT_MS = 105_000;
+// A CODE analysis consists of three sequential, independently bounded 90-second calls.
+// Keep a small transport margin so a valid staged operation is not aborted mid-review.
+export const DEVELOPMENT_ANALYSIS_HTTP_TIMEOUT_MS = 285_000;
 export const PROJECT_QA_MAX_REQUEST_CHARACTERS = 12_000;
 
 export class ChappieControlPlaneClient {
@@ -169,7 +171,21 @@ function parseDevelopmentAnalysis(value: unknown): DevelopmentAnalysisV1 {
 
 function isDevelopmentLifecycle(value: unknown): boolean {
   if (!isRecord(value) || typeof value.request_id !== "string" || !/^[a-f0-9]{32}$/.test(value.request_id) || value.operation !== "DEVELOPMENT_ANALYSIS" || typeof value.requested_role !== "string" || (value.effective_model !== null && typeof value.effective_model !== "string") || !Array.isArray(value.events)) return false;
-  const stages = new Set(["REQUEST_ACCEPTED", "ROLE_RESOLUTION", "EVIDENCE_BUILD", "SYNTHESIS", "STRUCTURAL_VALIDATION", "READINESS_EVALUATION", "COMPLETE"]);
+  const stages = new Set([
+    "REQUEST_ACCEPTED",
+    "ROLE_RESOLUTION",
+    "EVIDENCE_BUILD",
+    "SYNTHESIS",
+    "GROUNDING_SYNTHESIS",
+    "GROUNDING_PARSE",
+    "PROPOSAL_SYNTHESIS",
+    "PROPOSAL_PARSE",
+    "REVIEW_SYNTHESIS",
+    "REVIEW_PARSE",
+    "STRUCTURAL_VALIDATION",
+    "READINESS_EVALUATION",
+    "COMPLETE",
+  ]);
   return value.events.every((event) => isRecord(event) && stages.has(String(event.stage)) && ["STARTED", "COMPLETED", "FAILED"].includes(String(event.status)) && typeof event.elapsed_ms === "number" && Number.isInteger(event.elapsed_ms) && event.elapsed_ms >= 0 && event.elapsed_ms <= 120_000 && (event.reason_code === null || typeof event.reason_code === "string"));
 }
 

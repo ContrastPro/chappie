@@ -152,8 +152,10 @@ reachable Ollama, the selected installed model, and durable default `qwen3:4b`.
 
 Ignored evidence is atomically checkpointed under
 `data/acceptance/development_dogfood/<model>/<run-id>/result.json`, plus a concise `report.md`.
-It records PASS/FAIL/NOT_REACHED timing and bounded reason codes for PREFLIGHT, CONTEXT_MAP,
-EVIDENCE_HANDLES, SYNTHESIS, PARSE, STRUCTURAL_VALIDATION, READINESS, and HANDOFF. It captures
+Schema `chappie_development_dogfood/1.1.0` records PASS/FAIL/NOT_REACHED timing and bounded reason
+codes for PREFLIGHT, CONTEXT_MAP, EVIDENCE_HANDLES, the three GROUNDING/PROPOSAL/REVIEW synthesis
+and parse stages, STRUCTURAL_VALIDATION, READINESS, and HANDOFF. Historical 1.0.0 evidence is not
+rewritten. It captures
 only public synthesis DTO fields, safe provenance and handle metadata, and provider timing when
 available; prompts, hidden reasoning, raw Knowledge bodies, credentials, and provider payloads
 are not persisted. Existing evidence is never overwritten implicitly.

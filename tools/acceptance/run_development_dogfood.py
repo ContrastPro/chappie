@@ -31,7 +31,7 @@ from app.knowledge.store import committed_snapshot
 from app.platform.bootstrap import ChappiePaths, collect_status, load_local_config
 from app.platform.ollama.model_state import LocalOllamaModelStateAdapterV1
 
-EVIDENCE_SCHEMA = "chappie_development_dogfood/1.0.0"
+EVIDENCE_SCHEMA = "chappie_development_dogfood/1.1.0"
 OUTPUT_BASE_RELATIVE = Path("data/acceptance/development_dogfood")
 SUPPORTED_MODELS = frozenset({"qwen3-coder:30b", "qwen3:14b"})
 MODEL_ROLES = {
@@ -42,8 +42,12 @@ STAGES = (
     "PREFLIGHT",
     "CONTEXT_MAP",
     "EVIDENCE_HANDLES",
-    "SYNTHESIS",
-    "PARSE",
+    "GROUNDING_SYNTHESIS",
+    "GROUNDING_PARSE",
+    "PROPOSAL_SYNTHESIS",
+    "PROPOSAL_PARSE",
+    "REVIEW_SYNTHESIS",
+    "REVIEW_PARSE",
     "STRUCTURAL_VALIDATION",
     "READINESS",
     "HANDOFF",
@@ -156,7 +160,12 @@ def _preflight(paths: ChappiePaths, model: str) -> Preflight:
 
 def _lifecycle_stage(analysis: object, name: str) -> tuple[str, int, str | None]:
     expected = {
-        "SYNTHESIS": "SYNTHESIS",
+        "GROUNDING_SYNTHESIS": "GROUNDING_SYNTHESIS",
+        "GROUNDING_PARSE": "GROUNDING_PARSE",
+        "PROPOSAL_SYNTHESIS": "PROPOSAL_SYNTHESIS",
+        "PROPOSAL_PARSE": "PROPOSAL_PARSE",
+        "REVIEW_SYNTHESIS": "REVIEW_SYNTHESIS",
+        "REVIEW_PARSE": "REVIEW_PARSE",
         "STRUCTURAL_VALIDATION": "STRUCTURAL_VALIDATION",
         "READINESS": "READINESS_EVALUATION",
     }.get(name)
@@ -197,6 +206,7 @@ def _public_analysis(analysis: object) -> dict[str, object]:
         "reason_code",
         "current_evidence_handles",
         "proposed_scope",
+        "staged_results",
     )
     return {key: payload.get(key) for key in keys}
 
@@ -285,36 +295,42 @@ def run_dogfood(
         _write_report(result, destination / "report.md")
         return result
     context = getattr(analysis, "context_map", None)
-    if context is not None:
-        result["context"] = {
-            "context_digest": context.context_digest,
-            "knowledge_identity": context.knowledge_identity,
-            "knowledge_manifest_digest": context.knowledge_manifest_digest,
-            "knowledge_context_digest": context.knowledge_context_digest,
-            "record_ids": list(getattr(evidence, "record_ids", ())),
-        }
-        result["stages"]["CONTEXT_MAP"] = _stage(
-            "PASS", 0, None, context_digest=context.context_digest
-        )
-        result["handles"] = [
-            {key: value for key, value in item.payload().items() if key != "statement"}
-            for item in context.evidence_handles
-        ]
-        result["stages"]["EVIDENCE_HANDLES"] = _stage(
-            "PASS", 0, None, count=len(context.evidence_handles)
-        )
+    if context is None:
+        result.update(status="FAILED", reason_code="CONTEXT_MAP_NOT_AVAILABLE")
         _checkpoint(result, destination)
-    for stage in ("SYNTHESIS", "STRUCTURAL_VALIDATION", "READINESS"):
+        _write_report(result, destination / "report.md")
+        return result
+    result["context"] = {
+        "context_digest": context.context_digest,
+        "knowledge_identity": context.knowledge_identity,
+        "knowledge_manifest_digest": context.knowledge_manifest_digest,
+        "knowledge_context_digest": context.knowledge_context_digest,
+        "record_ids": list(getattr(evidence, "record_ids", ())),
+    }
+    result["stages"]["CONTEXT_MAP"] = _stage("PASS", 0, None, context_digest=context.context_digest)
+    result["handles"] = [
+        {key: value for key, value in item.payload().items() if key != "statement"}
+        for item in context.evidence_handles
+    ]
+    result["stages"]["EVIDENCE_HANDLES"] = _stage(
+        "PASS", 0, None, count=len(context.evidence_handles)
+    )
+    _checkpoint(result, destination)
+    for stage in (
+        "GROUNDING_SYNTHESIS",
+        "GROUNDING_PARSE",
+        "PROPOSAL_SYNTHESIS",
+        "PROPOSAL_PARSE",
+        "REVIEW_SYNTHESIS",
+        "REVIEW_PARSE",
+        "STRUCTURAL_VALIDATION",
+        "READINESS",
+    ):
         status, elapsed, reason = _lifecycle_stage(analysis, stage)
         result["stages"][stage] = _stage(status, elapsed, reason)
         _checkpoint(result, destination)
     result["analysis"] = _public_analysis(analysis)
     analysis_state = getattr(getattr(analysis, "state", None), "value", "ANALYSIS_INVALID")
-    result["stages"]["PARSE"] = _stage(
-        "PASS" if analysis_state == DevelopmentAnalysisStateV1.OK.value else "FAIL",
-        0,
-        getattr(analysis, "reason_code", None),
-    )
     handoff = None
     if getattr(analysis, "readiness", None) == DevelopmentAnalysisReadinessV1.READY_FOR_TASK:
         handoff = prepare_codex_handoff(CodexTaskPreparationRequestV1(analysis))
@@ -328,7 +344,10 @@ def run_dogfood(
         )
     result["completeness"] = _completeness(analysis, handoff)
     result["provider_metrics"] = {
-        "total_inference_elapsed_ms": result["stages"]["SYNTHESIS"]["elapsed_ms"],
+        "total_inference_elapsed_ms": sum(
+            result["stages"][name]["elapsed_ms"]
+            for name in ("GROUNDING_SYNTHESIS", "PROPOSAL_SYNTHESIS", "REVIEW_SYNTHESIS")
+        ),
         "load_duration_ms": None,
         "prompt_eval_count": None,
         "eval_count": None,

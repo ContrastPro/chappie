@@ -23,6 +23,10 @@ from app.development_analysis.models import (
     evidence_digest,
     validate_development_analysis,
 )
+from app.development_analysis.synthesis import (
+    DevelopmentStagedSynthesisOutputV1,
+    DevelopmentStageError,
+)
 from app.knowledge import KNOWLEDGE_IDENTITY, committed_snapshot, read_store
 from app.knowledge.retrieval import (
     KnowledgeRetrievalRequestV1,
@@ -141,11 +145,15 @@ class DevelopmentAnalysisServiceV1:
             **{**payload, "requested_role": request.requested_role},
             evidence_digest=evidence_digest(payload),
         )
+        context_map = build_development_context_map(context, evidence)
         lifecycle.complete()
-        lifecycle.begin(DevelopmentLifecycleStageV1.SYNTHESIS)
         try:
             output = self._runner(request, context, evidence)
-            lifecycle.complete()
+            if isinstance(output, DevelopmentStagedSynthesisOutputV1):
+                _record_staged_lifecycle(lifecycle, output)
+            else:
+                lifecycle.begin(DevelopmentLifecycleStageV1.SYNTHESIS)
+                lifecycle.complete()
             lifecycle.begin(DevelopmentLifecycleStageV1.STRUCTURAL_VALIDATION)
             analysis = _analysis_from_output(request, context, evidence, output)
             analysis = validate_development_analysis(analysis)
@@ -161,14 +169,27 @@ class DevelopmentAnalysisServiceV1:
                 lifecycle=lifecycle.complete(),
             )
         except (TimeoutError, AIProviderTimeoutError):
+            lifecycle.begin(DevelopmentLifecycleStageV1.SYNTHESIS)
             return _failure(
                 request,
                 DevelopmentAnalysisStateV1.TIMEOUT,
                 "AI_PROVIDER_TIMEOUT",
                 evidence,
                 lifecycle.failed("AI_PROVIDER_TIMEOUT"),
+                context_map=context_map,
+            )
+        except DevelopmentStageError as error:
+            lifecycle.begin(_stage_failure_lifecycle_stage(error))
+            return _failure(
+                request,
+                DevelopmentAnalysisStateV1.ANALYSIS_INVALID,
+                error.code,
+                evidence,
+                lifecycle.failed(error.code),
+                context_map=context_map,
             )
         except DevelopmentCitationValidationError as error:
+            lifecycle.begin(DevelopmentLifecycleStageV1.SYNTHESIS)
             return _failure(
                 request,
                 DevelopmentAnalysisStateV1.ANALYSIS_INVALID,
@@ -176,8 +197,10 @@ class DevelopmentAnalysisServiceV1:
                 evidence,
                 lifecycle.failed(error.code),
                 citation_failure=error.failure,
+                context_map=context_map,
             )
         except AIValidationError as error:
+            lifecycle.begin(DevelopmentLifecycleStageV1.SYNTHESIS)
             return _failure(
                 request,
                 DevelopmentAnalysisStateV1.ANALYSIS_INVALID,
@@ -186,28 +209,73 @@ class DevelopmentAnalysisServiceV1:
                 lifecycle.failed(
                     error.code if error.code != "VALIDATION_ERROR" else "DEVELOPMENT_SCHEMA_INVALID"
                 ),
+                context_map=context_map,
             )
         except ValueError as error:
+            lifecycle.begin(DevelopmentLifecycleStageV1.SYNTHESIS)
             return _failure(
                 request,
                 DevelopmentAnalysisStateV1.ANALYSIS_INVALID,
                 _validation_reason(error),
                 evidence,
                 lifecycle.failed(_validation_reason(error)),
+                context_map=context_map,
             )
         except (AIProviderError, OSError, RuntimeError, TypeError):
+            lifecycle.begin(DevelopmentLifecycleStageV1.SYNTHESIS)
             return _failure(
                 request,
                 DevelopmentAnalysisStateV1.MODEL_UNAVAILABLE,
                 "AI_UNAVAILABLE",
                 evidence,
                 lifecycle.failed("AI_UNAVAILABLE"),
+                context_map=context_map,
             )
 
 
 def _analysis_from_output(request, context, evidence, output) -> DevelopmentAnalysisV1:
     from app.ai.errors import AIValidationError
-    from app.development_analysis.synthesis import DevelopmentSynthesisOutputV1
+    from app.development_analysis.synthesis import (
+        DevelopmentStagedSynthesisOutputV1,
+        DevelopmentSynthesisOutputV1,
+    )
+
+    if isinstance(output, DevelopmentStagedSynthesisOutputV1):
+        context_map = build_development_context_map(context, evidence)
+        selected = tuple(
+            item
+            for item in context_map.evidence_handles
+            if item.handle in output.grounding.relevant_evidence_handles
+        )
+        return DevelopmentAnalysisV1(
+            DevelopmentAnalysisStateV1.OK,
+            request.request,
+            evidence,
+            facts=tuple(item.statement for item in selected),
+            inferences=(output.grounding.task_interpretation,),
+            unknowns=(
+                *output.grounding.unknowns,
+                *output.proposal.proposal_unknowns,
+                *output.review.unresolved_unknowns,
+            ),
+            architecture_owners=tuple(sorted({item.category for item in selected})),
+            affected_contracts=context_map.existing_contracts,
+            likely_files=context_map.existing_files,
+            risks=output.review.risks,
+            required_tests=output.review.required_tests,
+            non_goals=output.review.non_goals,
+            acceptance_criteria=output.review.acceptance_criteria,
+            confidence=output.review.confidence,
+            validation_status="VALID",
+            context_map=context_map,
+            current_evidence_handles=output.grounding.relevant_evidence_handles,
+            proposed_scope=output.proposal.proposed_scope,
+            staged_results={
+                "grounding": output.grounding.payload(),
+                "proposal": output.proposal.payload(),
+                "review": output.review.payload(),
+            },
+        )
 
     if not isinstance(output, DevelopmentSynthesisOutputV1):
         raise AIValidationError(
@@ -246,6 +314,27 @@ def _analysis_from_output(request, context, evidence, output) -> DevelopmentAnal
         current_evidence_handles=requested_handles,
         proposed_scope=output.proposed_scope,
     )
+
+
+def _record_staged_lifecycle(lifecycle, output: DevelopmentStagedSynthesisOutputV1) -> None:
+    """Expose each bounded provider operation without recording model content."""
+    elapsed = dict(output.stage_elapsed_ms)
+    for stage in (
+        DevelopmentLifecycleStageV1.GROUNDING_SYNTHESIS,
+        DevelopmentLifecycleStageV1.GROUNDING_PARSE,
+        DevelopmentLifecycleStageV1.PROPOSAL_SYNTHESIS,
+        DevelopmentLifecycleStageV1.PROPOSAL_PARSE,
+        DevelopmentLifecycleStageV1.REVIEW_SYNTHESIS,
+        DevelopmentLifecycleStageV1.REVIEW_PARSE,
+    ):
+        lifecycle.begin(stage)
+        lifecycle.complete(elapsed_ms=elapsed.get(stage.value, 0))
+
+
+def _stage_failure_lifecycle_stage(error: DevelopmentStageError) -> DevelopmentLifecycleStageV1:
+    if error.code.endswith("_PROVIDER_FAILED"):
+        return DevelopmentLifecycleStageV1[f"{error.stage}_SYNTHESIS"]
+    return DevelopmentLifecycleStageV1[f"{error.stage}_PARSE"]
 
 
 def _development_retrieval_request(records, request: str, workspace_path: str | None):
@@ -310,6 +399,7 @@ def _failure(
     evidence=None,
     lifecycle=None,
     citation_failure: DevelopmentCitationFailureV1 | None = None,
+    context_map=None,
 ) -> DevelopmentAnalysisV1:
     return DevelopmentAnalysisV1(
         state,
@@ -321,6 +411,7 @@ def _failure(
         reason_code=reason,
         lifecycle=lifecycle,
         citation_failure=citation_failure,
+        context_map=context_map,
     )
 
 
@@ -368,14 +459,16 @@ class _LifecycleRecorder:
             DevelopmentLifecycleEventV1(stage, DevelopmentLifecycleStatusV1.STARTED, 0)
         )
 
-    def complete(self, *, effective_model: str | None = None) -> DevelopmentLifecycleV1:
+    def complete(
+        self, *, effective_model: str | None = None, elapsed_ms: int | None = None
+    ) -> DevelopmentLifecycleV1:
         if effective_model is not None:
             self._effective_model = effective_model
         self._events.append(
             DevelopmentLifecycleEventV1(
                 self._stage,
                 DevelopmentLifecycleStatusV1.COMPLETED,
-                self._elapsed_ms(),
+                self._elapsed_ms() if elapsed_ms is None else min(120_000, max(0, elapsed_ms)),
             )
         )
         return self._snapshot()

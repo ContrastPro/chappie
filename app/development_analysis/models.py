@@ -45,6 +45,12 @@ class DevelopmentLifecycleStageV1(StrEnum):
     ROLE_RESOLUTION = "ROLE_RESOLUTION"
     EVIDENCE_BUILD = "EVIDENCE_BUILD"
     SYNTHESIS = "SYNTHESIS"
+    GROUNDING_SYNTHESIS = "GROUNDING_SYNTHESIS"
+    GROUNDING_PARSE = "GROUNDING_PARSE"
+    PROPOSAL_SYNTHESIS = "PROPOSAL_SYNTHESIS"
+    PROPOSAL_PARSE = "PROPOSAL_PARSE"
+    REVIEW_SYNTHESIS = "REVIEW_SYNTHESIS"
+    REVIEW_PARSE = "REVIEW_PARSE"
     STRUCTURAL_VALIDATION = "STRUCTURAL_VALIDATION"
     READINESS_EVALUATION = "READINESS_EVALUATION"
     COMPLETE = "COMPLETE"
@@ -187,6 +193,7 @@ class DevelopmentAnalysisV1:
     context_map: DevelopmentContextMapV1 | None = None
     current_evidence_handles: tuple[str, ...] = ()
     proposed_scope: DevelopmentProposedScopeV1 | None = None
+    staged_results: dict[str, object] | None = None
 
     def payload(self) -> dict[str, object]:
         return {
@@ -213,6 +220,7 @@ class DevelopmentAnalysisV1:
             "context_map": self.context_map.payload() if self.context_map else None,
             "current_evidence_handles": list(self.current_evidence_handles),
             "proposed_scope": _proposed_scope_payload(self.proposed_scope),
+            "staged_results": self.staged_results,
         }
 
 
