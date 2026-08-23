@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import logging
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -317,7 +318,7 @@ def test_development_analysis_typed_failure_is_not_an_opaque_500(server, state, 
     assert body["error"] == {"code": reason, "message": "Development analysis is unavailable"}
 
 
-def test_unexpected_development_exception_remains_fail_closed_500(server) -> None:
+def test_unexpected_development_exception_remains_fail_closed_500(server, caplog) -> None:
     class BrokenPlane(_FakeControlPlane):
         def analyze_development(
             self, _request: str, *, requested_role: str, workspace_context: object | None = None
@@ -325,6 +326,7 @@ def test_unexpected_development_exception_remains_fail_closed_500(server) -> Non
             _ = requested_role, workspace_context
             raise RuntimeError("secret internal detail")
 
+    caplog.set_level(logging.INFO, logger="app.control_plane.transport")
     server._control_plane = BrokenPlane()
     status, _headers, body = _request(
         server,
@@ -336,9 +338,12 @@ def test_unexpected_development_exception_remains_fail_closed_500(server) -> Non
     assert status == 500
     assert body["error"] == {
         "code": "INTERNAL_ERROR",
-        "message": "Project QA request could not be completed",
+        "message": "Development Analysis request could not be completed",
     }
     assert "secret" not in json.dumps(body)
+    assert '"reason_code": "INTERNAL_ERROR"' in caplog.text
+    assert "Analyze architecture" not in caplog.text
+    assert "secret internal detail" not in caplog.text
 
 
 def test_project_qa_transport_accepts_the_canonical_deep_question_boundary(server) -> None:

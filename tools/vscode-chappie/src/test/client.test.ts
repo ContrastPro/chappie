@@ -66,6 +66,13 @@ test("Development Analysis has its own finite transport deadline beyond the CODE
   assert.equal(developmentAnalysisFailureMessage("FORBIDDEN_AUTHORITY_TEXT"), "Chappie Development Analysis claimed authority outside its read-only advisory boundary.");
   assert.equal(developmentAnalysisFailureMessage("MODEL_ROLE_UNAVAILABLE"), "The selected Chappie development model role is unavailable; no fallback was used.");
   assert.equal(developmentAnalysisFailureMessage("KNOWLEDGE_STALE"), "Chappie Knowledge is not ready for Development Analysis.");
+  assert.equal(developmentAnalysisFailureMessage("AI_UNAVAILABLE"), "Chappie Development Analysis is temporarily unavailable.");
+  assert.equal(developmentAnalysisFailureMessage(undefined), "Chappie Development Analysis is temporarily unavailable.");
+  const host = readFileSync("src/extension.ts", "utf8");
+  assert.match(host, /domain === "DEVELOPMENT"\s*\? developmentAnalysisFailureMessage\(error\.reasonCode\)/);
+  assert.match(host, /domain === "DEVELOPMENT"\s*\? developmentAnalysisFailureMessage\(undefined\)/);
+  const workbench = readFileSync("src/ui/workbench.ts", "utf8");
+  assert.match(workbench, /this\.dependencies\.errorMessage\(error, turn\.mode\)/);
 });
 
 test("Project QA propagates a selected stable role without changing durable model policy", async () => {
@@ -80,11 +87,13 @@ test("Project QA propagates a selected stable role without changing durable mode
 
 test("Development Analysis and Codex task use typed read-only Control Plane contracts", async () => {
   const bodies: string[] = [];
-  const analysis = { identity: "chappie_development_analysis/1.0.0", state: "OK", request: "Plan", evidence: null, facts: [], inferences: [], unknowns: [], architecture_owners: [], affected_contracts: [], likely_files: [], risks: [], required_tests: [], non_goals: [], acceptance_criteria: [], confidence: 1, validation_status: "VALID", readiness: "INSUFFICIENT_EVIDENCE", reason_code: "NO_TASK_SPECIFIC_FACTS" };
+  const analysis = { identity: "chappie_development_analysis/1.0.0", state: "OK", request: "Plan", evidence: null, facts: [], inferences: [], unknowns: [], architecture_owners: [], affected_contracts: [], likely_files: [], risks: [], required_tests: [], non_goals: [], acceptance_criteria: [], confidence: 1, validation_status: "VALID", readiness: "INSUFFICIENT_EVIDENCE", reason_code: "NO_TASK_SPECIFIC_FACTS", lifecycle: { request_id: "a".repeat(32), operation: "DEVELOPMENT_ANALYSIS", requested_role: "CODE", effective_model: "qwen3-coder:30b", events: [{ stage: "REQUEST_ACCEPTED", status: "COMPLETED", elapsed_ms: 0, reason_code: null }] } };
   const task = { identity: "chappie_codex_task/1.0.0", task_id: "task_1", state: "ADVISORY", source_analysis_identity: analysis.identity, source_commit: "a".repeat(40), evidence_digest: "b".repeat(64), requested_role: "CODE", problem: "Plan", facts: [], inferences: [], unknowns: [], architecture_owners: [], affected_contracts: [], allowed_files: [], forbidden_scope: [], implementation_objective: "Objective", implementation_constraints: [], risks: [], required_tests: [], non_goals: [], acceptance_criteria: [], approval_status: "HUMAN_APPROVAL_REQUIRED", validation_status: "VALID", reason_code: null, projection: "Advisory task" };
   let index = 0;
   const client = new ChappieControlPlaneClient(8765, async (_url, init) => { bodies.push(String(init?.body)); return envelope([analysis, task][index++]); });
-  assert.equal((await client.analyzeDevelopment({ request: "Plan", requested_role: "CODE", workspace_context: null })).identity, analysis.identity);
+  const parsed = await client.analyzeDevelopment({ request: "Plan", requested_role: "CODE", workspace_context: null });
+  assert.equal(parsed.identity, analysis.identity);
+  assert.equal(parsed.lifecycle?.events[0]?.stage, "REQUEST_ACCEPTED");
   assert.equal((await client.prepareCodexTask({ analysis: analysis as never })).approval_status, "HUMAN_APPROVAL_REQUIRED");
   assert.deepEqual(JSON.parse(bodies[0]), { request: "Plan", requested_role: "CODE", workspace_context: null });
   assert.deepEqual(JSON.parse(bodies[1]), { analysis });

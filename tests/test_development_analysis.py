@@ -88,6 +88,16 @@ def test_analysis_builds_evidence_before_stubbed_inference(tmp_path, monkeypatch
     assert result.readiness == DevelopmentAnalysisReadinessV1.READY_FOR_TASK
     assert result.reason_code is None
     assert result.architecture_owners == ("MODULE_RESPONSIBILITY",)
+    assert result.lifecycle is not None
+    assert len(result.lifecycle.request_id) == 32
+    assert result.lifecycle.request_id.isascii()
+    assert result.lifecycle.operation == "DEVELOPMENT_ANALYSIS"
+    assert result.lifecycle.requested_role == role
+    assert result.lifecycle.effective_model == result.evidence.effective_model
+    assert result.lifecycle.events[-1].stage.value == "COMPLETE"
+    assert result.lifecycle.events[-1].status.value == "COMPLETED"
+    assert all(0 <= event.elapsed_ms <= 120_000 for event in result.lifecycle.events)
+    assert "Design a bounded post-implementation" not in str(result.payload()["lifecycle"])
 
 
 def test_unavailable_role_fails_closed_without_running_inference(tmp_path) -> None:
@@ -100,6 +110,28 @@ def test_unavailable_role_fails_closed_without_running_inference(tmp_path) -> No
     assert result.state == DevelopmentAnalysisStateV1.MODEL_UNAVAILABLE
     assert result.reason_code == "MODEL_ROLE_UNAVAILABLE"
     assert calls == []
+
+
+def test_lifecycle_assigns_bounded_distinct_request_ids_without_request_content(tmp_path) -> None:
+    request_ids = iter(("a" * 32, "b" * 32))
+    service = DevelopmentAnalysisServiceV1(
+        paths=_paths(tmp_path),
+        runner=lambda *_args: pytest.fail("inference must not run"),
+        role_available=lambda _role: False,
+        request_id_factory=lambda: next(request_ids),
+    )
+    first = service.analyze(
+        DevelopmentAnalysisRequestV1("first sensitive request", DevelopmentModelRoleV1.CODE)
+    )
+    second = service.analyze(
+        DevelopmentAnalysisRequestV1("second sensitive request", DevelopmentModelRoleV1.CODE)
+    )
+
+    assert first.lifecycle is not None and second.lifecycle is not None
+    assert (first.lifecycle.request_id, second.lifecycle.request_id) == ("a" * 32, "b" * 32)
+    assert first.lifecycle.events[-1].stage.value == "ROLE_RESOLUTION"
+    assert first.lifecycle.events[-1].reason_code == "MODEL_ROLE_UNAVAILABLE"
+    assert "sensitive request" not in str(first.payload()["lifecycle"])
 
 
 def test_provider_timeout_is_a_typed_development_analysis_failure(tmp_path, monkeypatch) -> None:
@@ -117,6 +149,11 @@ def test_provider_timeout_is_a_typed_development_analysis_failure(tmp_path, monk
 
     assert result.state == DevelopmentAnalysisStateV1.TIMEOUT
     assert result.reason_code == "AI_PROVIDER_TIMEOUT"
+    assert result.lifecycle is not None
+    assert result.lifecycle.events[-1].stage.value == "SYNTHESIS"
+    assert result.lifecycle.events[-1].status.value == "FAILED"
+    assert result.lifecycle.events[-1].reason_code == "AI_PROVIDER_TIMEOUT"
+    assert result.payload()["evidence"]["requested_role"] == "CODE"
 
 
 def test_model_validation_failure_is_a_typed_development_analysis_failure(
@@ -136,6 +173,9 @@ def test_model_validation_failure_is_a_typed_development_analysis_failure(
 
     assert result.state == DevelopmentAnalysisStateV1.ANALYSIS_INVALID
     assert result.reason_code == "DEVELOPMENT_SCHEMA_INVALID"
+    assert result.lifecycle is not None
+    assert result.lifecycle.events[-1].stage.value == "SYNTHESIS"
+    assert result.lifecycle.events[-1].reason_code == "DEVELOPMENT_SCHEMA_INVALID"
 
 
 def _development_context():

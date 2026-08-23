@@ -17,7 +17,7 @@ export interface WorkbenchDependenciesV1 {
   runtimeTelemetry(): Promise<RuntimeTelemetryV1>;
   runAction(action: WorkbenchActionV1): Promise<void>;
   workspaceName(): string | undefined;
-  errorMessage(error: unknown): string;
+  errorMessage(error: unknown, domain?: WorkbenchModeV1): string;
 }
 
 export class ChappieWorkbenchV1 implements vscode.Disposable {
@@ -117,7 +117,7 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
         if (response.state !== "OK" || !(response.answer ?? "").trim()) throw new Error(response.error?.message ?? "Project QA did not return a final answer.");
         if (!this.session.complete(turn.turnId, response)) throw new Error("Project QA completed after its Workbench turn was no longer pending.");
       }
-    } catch (error) { this.session.fail(turn.turnId, this.dependencies.errorMessage(error)); }
+    } catch (error) { this.session.fail(turn.turnId, this.dependencies.errorMessage(error, turn.mode)); }
     finally { clearInterval(telemetry); await this.postSession(); }
   }
 

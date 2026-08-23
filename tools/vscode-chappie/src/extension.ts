@@ -548,7 +548,7 @@ function collectAttachedWorkbenchContext(options: { includeFile: boolean; includ
   return new WorkspaceContextCollector().collect({ ...primary, git }, { includeFile, includeSelection, includeGit });
 }
 
-function chatError(error: unknown): string {
+function chatError(error: unknown, domain: "CHAT" | "DEVELOPMENT" = "CHAT"): string {
   if (error instanceof Error && [
     "No workspace file was selected.",
     "Select a file inside the current workspace.",
@@ -561,15 +561,23 @@ function chatError(error: unknown): string {
     "The captured workspace context is no longer available.",
   ].includes(error.message)) return error.message;
   if (error instanceof Error && error.message === "SENSITIVE_FILE_BLOCKED") return "Sensitive files cannot be attached as context.";
-  if (error instanceof ControlPlaneTransportTimeoutError) return "Chappie request timed out before the Control Plane returned a result.";
+  if (error instanceof ControlPlaneTransportTimeoutError) {
+    return domain === "DEVELOPMENT"
+      ? developmentAnalysisFailureMessage("AI_PROVIDER_TIMEOUT")
+      : "Chappie request timed out before the Control Plane returned a result.";
+  }
   if (error instanceof ControlPlaneDependencyError) {
-    return error.reasonCode.startsWith("AI_PROVIDER_") || error.reasonCode.startsWith("ANALYSIS_") || error.reasonCode.startsWith("DEVELOPMENT_ANALYSIS_") || error.reasonCode === "MODEL_ROLE_UNAVAILABLE" || error.reasonCode.startsWith("KNOWLEDGE_") || error.reasonCode === "NO_RELEVANT_KNOWLEDGE"
+    return domain === "DEVELOPMENT"
       ? developmentAnalysisFailureMessage(error.reasonCode)
       : projectQaFailureMessage(error.reasonCode);
   }
   if (error instanceof ControlPlaneIncompatibleError) { return "Chappie Control Plane version is incompatible."; }
-  if (error instanceof ControlPlaneClientError) { return error.message; }
-  return "Chappie Project QA is temporarily unavailable.";
+  if (error instanceof ControlPlaneClientError) {
+    return domain === "DEVELOPMENT" ? developmentAnalysisFailureMessage(undefined) : error.message;
+  }
+  return domain === "DEVELOPMENT"
+    ? developmentAnalysisFailureMessage(undefined)
+    : "Chappie Project QA is temporarily unavailable.";
 }
 
 function chatHtml(): string {

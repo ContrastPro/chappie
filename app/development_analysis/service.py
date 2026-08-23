@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import replace
+from time import monotonic
+from uuid import uuid4
 
 from app.ai.model_policy import resolve_development_model_role
 from app.development_analysis.models import (
@@ -11,6 +13,10 @@ from app.development_analysis.models import (
     DevelopmentAnalysisStateV1,
     DevelopmentAnalysisV1,
     DevelopmentEvidencePackV1,
+    DevelopmentLifecycleEventV1,
+    DevelopmentLifecycleStageV1,
+    DevelopmentLifecycleStatusV1,
+    DevelopmentLifecycleV1,
     development_readiness,
     evidence_digest,
     validate_development_analysis,
@@ -33,41 +39,62 @@ class DevelopmentAnalysisServiceV1:
         paths: object,
         runner: Callable[[DevelopmentAnalysisRequestV1, object, DevelopmentEvidencePackV1], object],
         role_available: Callable[[object], bool],
+        clock: Callable[[], float] = monotonic,
+        request_id_factory: Callable[[], str] = lambda: uuid4().hex,
     ) -> None:
         self._paths = paths
         self._runner = runner
         self._role_available = role_available
+        self._clock = clock
+        self._request_id_factory = request_id_factory
 
     def analyze(self, request: DevelopmentAnalysisRequestV1) -> DevelopmentAnalysisV1:
         from app.ai.errors import AIProviderError, AIProviderTimeoutError, AIValidationError
 
+        lifecycle = _LifecycleRecorder(request, self._clock, self._request_id_factory)
+        lifecycle.begin(DevelopmentLifecycleStageV1.ROLE_RESOLUTION)
         try:
             role, model = resolve_development_model_role(request.requested_role)
         except ValueError:
             return _failure(
-                request, DevelopmentAnalysisStateV1.VALIDATION_ERROR, "MODEL_ROLE_INVALID"
+                request,
+                DevelopmentAnalysisStateV1.VALIDATION_ERROR,
+                "MODEL_ROLE_INVALID",
+                lifecycle=lifecycle.failed("MODEL_ROLE_INVALID"),
             )
+        lifecycle.complete(effective_model=model.concrete_model)
         if not self._role_available(request.requested_role):
             return _failure(
                 request,
                 DevelopmentAnalysisStateV1.MODEL_UNAVAILABLE,
                 "MODEL_ROLE_UNAVAILABLE",
+                lifecycle=lifecycle.failed("MODEL_ROLE_UNAVAILABLE"),
             )
+        lifecycle.begin(DevelopmentLifecycleStageV1.EVIDENCE_BUILD)
         try:
             snapshot = committed_snapshot(self._paths.root)
         except (OSError, ValueError):
             return _failure(
-                request, DevelopmentAnalysisStateV1.REPOSITORY_UNAVAILABLE, "REPOSITORY_UNAVAILABLE"
+                request,
+                DevelopmentAnalysisStateV1.REPOSITORY_UNAVAILABLE,
+                "REPOSITORY_UNAVAILABLE",
+                lifecycle=lifecycle.failed("REPOSITORY_UNAVAILABLE"),
             )
         if not snapshot.clean:
             return _failure(
-                request, DevelopmentAnalysisStateV1.REPOSITORY_UNAVAILABLE, "REPOSITORY_DIRTY"
+                request,
+                DevelopmentAnalysisStateV1.REPOSITORY_UNAVAILABLE,
+                "REPOSITORY_DIRTY",
+                lifecycle=lifecycle.failed("REPOSITORY_DIRTY"),
             )
         try:
             records, manifest = read_store(self._paths.knowledge_file)
             if manifest.snapshot != snapshot:
                 return _failure(
-                    request, DevelopmentAnalysisStateV1.KNOWLEDGE_UNAVAILABLE, "KNOWLEDGE_STALE"
+                    request,
+                    DevelopmentAnalysisStateV1.KNOWLEDGE_UNAVAILABLE,
+                    "KNOWLEDGE_STALE",
+                    lifecycle=lifecycle.failed("KNOWLEDGE_STALE"),
                 )
             workspace_path = getattr(request.workspace_context, "active_file_relative_path", None)
             result, context = retrieve(
@@ -77,11 +104,17 @@ class DevelopmentAnalysisServiceV1:
             )
         except (OSError, TypeError, ValueError):
             return _failure(
-                request, DevelopmentAnalysisStateV1.KNOWLEDGE_UNAVAILABLE, "KNOWLEDGE_UNAVAILABLE"
+                request,
+                DevelopmentAnalysisStateV1.KNOWLEDGE_UNAVAILABLE,
+                "KNOWLEDGE_UNAVAILABLE",
+                lifecycle=lifecycle.failed("KNOWLEDGE_UNAVAILABLE"),
             )
         if not context.records:
             return _failure(
-                request, DevelopmentAnalysisStateV1.KNOWLEDGE_UNAVAILABLE, "NO_RELEVANT_KNOWLEDGE"
+                request,
+                DevelopmentAnalysisStateV1.KNOWLEDGE_UNAVAILABLE,
+                "NO_RELEVANT_KNOWLEDGE",
+                lifecycle=lifecycle.failed("NO_RELEVANT_KNOWLEDGE"),
             )
         payload = {
             "source_commit": snapshot.commit,
@@ -104,15 +137,32 @@ class DevelopmentAnalysisServiceV1:
             **{**payload, "requested_role": request.requested_role},
             evidence_digest=evidence_digest(payload),
         )
+        lifecycle.complete()
+        lifecycle.begin(DevelopmentLifecycleStageV1.SYNTHESIS)
         try:
             output = self._runner(request, context, evidence)
+            lifecycle.complete()
+            lifecycle.begin(DevelopmentLifecycleStageV1.STRUCTURAL_VALIDATION)
             analysis = _analysis_from_output(request, context, evidence, output)
             analysis = validate_development_analysis(analysis)
+            lifecycle.complete()
+            lifecycle.begin(DevelopmentLifecycleStageV1.READINESS_EVALUATION)
             readiness, reason_code = development_readiness(analysis)
-            return replace(analysis, readiness=readiness, reason_code=reason_code)
+            lifecycle.complete()
+            lifecycle.begin(DevelopmentLifecycleStageV1.COMPLETE)
+            return replace(
+                analysis,
+                readiness=readiness,
+                reason_code=reason_code,
+                lifecycle=lifecycle.complete(),
+            )
         except (TimeoutError, AIProviderTimeoutError):
             return _failure(
-                request, DevelopmentAnalysisStateV1.TIMEOUT, "AI_PROVIDER_TIMEOUT", evidence
+                request,
+                DevelopmentAnalysisStateV1.TIMEOUT,
+                "AI_PROVIDER_TIMEOUT",
+                evidence,
+                lifecycle.failed("AI_PROVIDER_TIMEOUT"),
             )
         except AIValidationError as error:
             return _failure(
@@ -120,6 +170,9 @@ class DevelopmentAnalysisServiceV1:
                 DevelopmentAnalysisStateV1.ANALYSIS_INVALID,
                 error.code if error.code != "VALIDATION_ERROR" else "DEVELOPMENT_SCHEMA_INVALID",
                 evidence,
+                lifecycle.failed(
+                    error.code if error.code != "VALIDATION_ERROR" else "DEVELOPMENT_SCHEMA_INVALID"
+                ),
             )
         except ValueError as error:
             return _failure(
@@ -127,10 +180,15 @@ class DevelopmentAnalysisServiceV1:
                 DevelopmentAnalysisStateV1.ANALYSIS_INVALID,
                 _validation_reason(error),
                 evidence,
+                lifecycle.failed(_validation_reason(error)),
             )
         except (AIProviderError, OSError, RuntimeError, TypeError):
             return _failure(
-                request, DevelopmentAnalysisStateV1.MODEL_UNAVAILABLE, "AI_UNAVAILABLE", evidence
+                request,
+                DevelopmentAnalysisStateV1.MODEL_UNAVAILABLE,
+                "AI_UNAVAILABLE",
+                evidence,
+                lifecycle.failed("AI_UNAVAILABLE"),
             )
 
 
@@ -221,7 +279,7 @@ def _development_identifiers(request: str, workspace_path: str | None) -> tuple[
     return tuple(sorted(value.casefold() for value in values))
 
 
-def _failure(request, state, reason, evidence=None) -> DevelopmentAnalysisV1:
+def _failure(request, state, reason, evidence=None, lifecycle=None) -> DevelopmentAnalysisV1:
     return DevelopmentAnalysisV1(
         state,
         request.request,
@@ -230,6 +288,7 @@ def _failure(request, state, reason, evidence=None) -> DevelopmentAnalysisV1:
         if state == DevelopmentAnalysisStateV1.ANALYSIS_INVALID
         else "UNAVAILABLE",
         reason_code=reason,
+        lifecycle=lifecycle,
     )
 
 
@@ -238,3 +297,70 @@ def _validation_reason(error: ValueError) -> str:
     if message == "development analysis claims forbidden authority":
         return "FORBIDDEN_AUTHORITY_TEXT"
     return "DEVELOPMENT_SCHEMA_INVALID"
+
+
+class _LifecycleRecorder:
+    """Bounded operational telemetry; it intentionally contains no request content."""
+
+    def __init__(
+        self,
+        request: DevelopmentAnalysisRequestV1,
+        clock: Callable[[], float],
+        request_id_factory: Callable[[], str],
+    ) -> None:
+        self._request_id = request_id_factory()
+        self._requested_role = request.requested_role
+        self._clock = clock
+        self._started = clock()
+        self._stage_started = self._started
+        self._stage = DevelopmentLifecycleStageV1.REQUEST_ACCEPTED
+        self._effective_model: str | None = None
+        self._events = [
+            DevelopmentLifecycleEventV1(
+                DevelopmentLifecycleStageV1.REQUEST_ACCEPTED,
+                DevelopmentLifecycleStatusV1.COMPLETED,
+                0,
+            )
+        ]
+
+    def begin(self, stage: DevelopmentLifecycleStageV1) -> None:
+        self._stage = stage
+        self._stage_started = self._clock()
+        self._events.append(
+            DevelopmentLifecycleEventV1(stage, DevelopmentLifecycleStatusV1.STARTED, 0)
+        )
+
+    def complete(self, *, effective_model: str | None = None) -> DevelopmentLifecycleV1:
+        if effective_model is not None:
+            self._effective_model = effective_model
+        self._events.append(
+            DevelopmentLifecycleEventV1(
+                self._stage,
+                DevelopmentLifecycleStatusV1.COMPLETED,
+                self._elapsed_ms(),
+            )
+        )
+        return self._snapshot()
+
+    def failed(self, reason_code: str) -> DevelopmentLifecycleV1:
+        self._events.append(
+            DevelopmentLifecycleEventV1(
+                self._stage,
+                DevelopmentLifecycleStatusV1.FAILED,
+                self._elapsed_ms(),
+                reason_code,
+            )
+        )
+        return self._snapshot()
+
+    def _elapsed_ms(self) -> int:
+        return min(120_000, max(0, round((self._clock() - self._stage_started) * 1000)))
+
+    def _snapshot(self) -> DevelopmentLifecycleV1:
+        return DevelopmentLifecycleV1(
+            self._request_id,
+            "DEVELOPMENT_ANALYSIS",
+            self._requested_role,
+            self._effective_model,
+            tuple(self._events),
+        )

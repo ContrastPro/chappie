@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import errno
 import json
+import logging
 import socket
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -11,6 +12,8 @@ from typing import Any
 
 from app.ai.schemas import canonical_json, digest
 from app.control_plane.service import CONTROL_PLANE_CONTRACT_DIGEST, CONTROL_PLANE_IDENTITY
+
+LOGGER = logging.getLogger(__name__)
 
 CONTROL_PLANE_TRANSPORT_IDENTITY = "chappie_control_plane_transport/1.2.0"
 LOOPBACK_HOST = "127.0.0.1"
@@ -354,6 +357,7 @@ class ChappieControlPlaneServerV1:
                     workspace_context=value.get("workspace_context"),
                 )
                 payload = response.payload()
+                _log_development_lifecycle(payload.get("lifecycle"))
                 if response.state.value != "OK":
                     self._write(
                         handler,
@@ -397,13 +401,20 @@ class ChappieControlPlaneServerV1:
                 return
             self._write(handler, 200, _envelope(request_id=request_id, data=payload))
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
+            if development:
+                _log_development_internal_failure(request_id)
             self._write(
                 handler,
                 500,
                 _envelope(
                     request_id=request_id,
                     error=ControlPlaneTransportErrorV1(
-                        "INTERNAL_ERROR", "Project QA request could not be completed"
+                        "INTERNAL_ERROR",
+                        (
+                            "Development Analysis request could not be completed"
+                            if development
+                            else "Project QA request could not be completed"
+                        ),
                     ),
                 ),
             )
@@ -416,3 +427,25 @@ class ChappieControlPlaneServerV1:
         handler.send_header("Content-Length", str(len(body)))
         handler.end_headers()
         handler.wfile.write(body)
+
+
+def _log_development_lifecycle(value: object) -> None:
+    """Keep only bounded Development operation metadata in service logs."""
+    if isinstance(value, dict):
+        LOGGER.info("Development Analysis lifecycle=%s", json.dumps(value, sort_keys=True))
+
+
+def _log_development_internal_failure(request_id: str) -> None:
+    LOGGER.info(
+        "Development Analysis lifecycle=%s",
+        json.dumps(
+            {
+                "request_id": request_id,
+                "operation": "DEVELOPMENT_ANALYSIS",
+                "stage": "SERIALIZATION",
+                "status": "FAILED",
+                "reason_code": "INTERNAL_ERROR",
+            },
+            sort_keys=True,
+        ),
+    )

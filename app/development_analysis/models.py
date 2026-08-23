@@ -12,6 +12,7 @@ from app.ai.schemas import digest
 DEVELOPMENT_ANALYSIS_IDENTITY = "chappie_development_analysis/1.0.0"
 MAX_DEVELOPMENT_REQUEST_CHARACTERS = 12_000
 MAX_ANALYSIS_ITEMS = 16
+MAX_LIFECYCLE_ELAPSED_MS = 120_000
 
 
 class DevelopmentAnalysisStateV1(StrEnum):
@@ -30,6 +31,53 @@ class DevelopmentAnalysisReadinessV1(StrEnum):
     READY_FOR_TASK = "READY_FOR_TASK"
     INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
     NEEDS_REVIEW = "NEEDS_REVIEW"
+
+
+class DevelopmentLifecycleStageV1(StrEnum):
+    REQUEST_ACCEPTED = "REQUEST_ACCEPTED"
+    ROLE_RESOLUTION = "ROLE_RESOLUTION"
+    EVIDENCE_BUILD = "EVIDENCE_BUILD"
+    SYNTHESIS = "SYNTHESIS"
+    STRUCTURAL_VALIDATION = "STRUCTURAL_VALIDATION"
+    READINESS_EVALUATION = "READINESS_EVALUATION"
+    COMPLETE = "COMPLETE"
+
+
+class DevelopmentLifecycleStatusV1(StrEnum):
+    STARTED = "STARTED"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+
+
+@dataclass(frozen=True, slots=True)
+class DevelopmentLifecycleEventV1:
+    stage: DevelopmentLifecycleStageV1
+    status: DevelopmentLifecycleStatusV1
+    elapsed_ms: int
+    reason_code: str | None = None
+
+    def __post_init__(self) -> None:
+        if not 0 <= self.elapsed_ms <= MAX_LIFECYCLE_ELAPSED_MS:
+            raise ValueError("development lifecycle elapsed time is invalid")
+        if self.status != DevelopmentLifecycleStatusV1.FAILED and self.reason_code is not None:
+            raise ValueError("development lifecycle reason is invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class DevelopmentLifecycleV1:
+    request_id: str
+    operation: str
+    requested_role: DevelopmentModelRoleV1
+    effective_model: str | None
+    events: tuple[DevelopmentLifecycleEventV1, ...]
+
+    def __post_init__(self) -> None:
+        if (
+            len(self.request_id) != 32
+            or not self.request_id.isascii()
+            or self.operation != "DEVELOPMENT_ANALYSIS"
+        ):
+            raise ValueError("development lifecycle is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +128,7 @@ class DevelopmentAnalysisV1:
     validation_status: str = "UNAVAILABLE"
     readiness: DevelopmentAnalysisReadinessV1 | None = None
     reason_code: str | None = None
+    lifecycle: DevelopmentLifecycleV1 | None = None
 
     def payload(self) -> dict[str, object]:
         return {
@@ -101,6 +150,7 @@ class DevelopmentAnalysisV1:
             "validation_status": self.validation_status,
             "readiness": self.readiness.value if self.readiness else None,
             "reason_code": self.reason_code,
+            "lifecycle": _lifecycle_payload(self.lifecycle),
         }
 
 
@@ -212,6 +262,7 @@ def development_analysis_from_payload(value: object) -> DevelopmentAnalysisV1:
         record_digests=tuple(_strings(payload["record_digests"])),
         evidence_digest=str(raw["evidence_digest"]),
     )
+    lifecycle = _lifecycle_from_payload(value.get("lifecycle"))
     return DevelopmentAnalysisV1(
         DevelopmentAnalysisStateV1(value["state"]),
         str(value["request"]),
@@ -234,6 +285,7 @@ def development_analysis_from_payload(value: object) -> DevelopmentAnalysisV1:
             else None
         ),
         reason_code=(str(value["reason_code"]) if value.get("reason_code") is not None else None),
+        lifecycle=lifecycle,
     )
 
 
@@ -241,6 +293,35 @@ def _strings(value: object) -> tuple[str, ...]:
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
         raise ValueError("development analysis list is invalid")
     return tuple(value)
+
+
+def _lifecycle_from_payload(value: object) -> DevelopmentLifecycleV1 | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict) or not isinstance(value.get("events"), list):
+        raise TypeError("development lifecycle is invalid")
+    try:
+        events = tuple(
+            DevelopmentLifecycleEventV1(
+                DevelopmentLifecycleStageV1(item["stage"]),
+                DevelopmentLifecycleStatusV1(item["status"]),
+                item["elapsed_ms"],
+                item.get("reason_code"),
+            )
+            for item in value["events"]
+            if isinstance(item, dict)
+        )
+        if len(events) != len(value["events"]):
+            raise ValueError
+        return DevelopmentLifecycleV1(
+            str(value["request_id"]),
+            str(value["operation"]),
+            DevelopmentModelRoleV1(value["requested_role"]),
+            value.get("effective_model"),
+            events,
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("development lifecycle is invalid") from error
 
 
 def _relative_path(value: str) -> bool:
@@ -299,4 +380,24 @@ def _evidence_payload(value: DevelopmentEvidencePackV1 | None) -> dict[str, obje
         "record_ids": list(value.record_ids),
         "record_digests": list(value.record_digests),
         "evidence_digest": value.evidence_digest,
+    }
+
+
+def _lifecycle_payload(value: DevelopmentLifecycleV1 | None) -> dict[str, object] | None:
+    if value is None:
+        return None
+    return {
+        "request_id": value.request_id,
+        "operation": value.operation,
+        "requested_role": value.requested_role.value,
+        "effective_model": value.effective_model,
+        "events": [
+            {
+                "stage": event.stage.value,
+                "status": event.status.value,
+                "elapsed_ms": event.elapsed_ms,
+                "reason_code": event.reason_code,
+            }
+            for event in value.events
+        ],
     }

@@ -161,7 +161,16 @@ function parseDevelopmentAnalysis(value: unknown): DevelopmentAnalysisV1 {
   if (!isRecord(value) || value.identity !== "chappie_development_analysis/1.0.0" || typeof value.state !== "string" || typeof value.request !== "string" || !isStringArray(value.facts) || !isStringArray(value.inferences) || !isStringArray(value.unknowns) || !isStringArray(value.architecture_owners) || !isStringArray(value.affected_contracts) || !isStringArray(value.likely_files) || !isStringArray(value.risks) || !isStringArray(value.required_tests) || !isStringArray(value.non_goals) || !isStringArray(value.acceptance_criteria) || typeof value.validation_status !== "string" || (value.readiness !== null && value.readiness !== "READY_FOR_TASK" && value.readiness !== "INSUFFICIENT_EVIDENCE" && value.readiness !== "NEEDS_REVIEW") || (value.reason_code !== null && typeof value.reason_code !== "string")) {
     throw new ControlPlaneClientError("Control Plane returned an invalid Development Analysis response");
   }
+  if (value.lifecycle !== undefined && value.lifecycle !== null && !isDevelopmentLifecycle(value.lifecycle)) {
+    throw new ControlPlaneClientError("Control Plane returned invalid Development lifecycle telemetry");
+  }
   return value as unknown as DevelopmentAnalysisV1;
+}
+
+function isDevelopmentLifecycle(value: unknown): boolean {
+  if (!isRecord(value) || typeof value.request_id !== "string" || !/^[a-f0-9]{32}$/.test(value.request_id) || value.operation !== "DEVELOPMENT_ANALYSIS" || typeof value.requested_role !== "string" || (value.effective_model !== null && typeof value.effective_model !== "string") || !Array.isArray(value.events)) return false;
+  const stages = new Set(["REQUEST_ACCEPTED", "ROLE_RESOLUTION", "EVIDENCE_BUILD", "SYNTHESIS", "STRUCTURAL_VALIDATION", "READINESS_EVALUATION", "COMPLETE"]);
+  return value.events.every((event) => isRecord(event) && stages.has(String(event.stage)) && ["STARTED", "COMPLETED", "FAILED"].includes(String(event.status)) && typeof event.elapsed_ms === "number" && Number.isInteger(event.elapsed_ms) && event.elapsed_ms >= 0 && event.elapsed_ms <= 120_000 && (event.reason_code === null || typeof event.reason_code === "string"));
 }
 
 function parseCodexTask(value: unknown): CodexTaskV1 {
