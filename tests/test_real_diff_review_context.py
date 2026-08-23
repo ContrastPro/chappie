@@ -26,6 +26,7 @@ def materialize_real_diff_review_context(root: Path = Path(".")) -> Implementati
     evidence = next(record for record in records if record.title == "DevelopmentDiffReviewV1")
     owner = "app.development_analysis"
     current_files = (
+        "docs/architecture/DEVELOPMENT_DIFF_REVIEW_DESIGN.md",
         "app/development_analysis/models.py",
         "app/development_analysis/synthesis.py",
         "app/development_analysis/task.py",
@@ -76,7 +77,10 @@ def materialize_real_diff_review_context(root: Path = Path(".")) -> Implementati
         owner,
         ImplementationContextStateV1.PROPOSED,
         proposed_delta=(
-            "Add bounded advisory post-implementation DiffReview DTOs and deterministic review projection.",
+            "Input binds approved analysis/handoff provenance, target identity, sorted changed files, bounded change evidence, bounded test evidence, and Knowledge bindings.",
+            "Output exposes provenance, expected/unexpected files, unresolved unknowns, bounded risks, and HUMAN_APPROVAL_REQUIRED.",
+            "Review statuses: MATCHES_APPROVED_SCOPE, NEEDS_REVIEW, REJECTED; deterministic checks: PASS, FAIL, UNKNOWN.",
+            "Reject dirty, stale, missing, or mismatched evidence; no mutation or self-authorized acceptance.",
         ),
         version="1.0.0",
         versioned=True,
@@ -106,9 +110,9 @@ def materialize_real_diff_review_context(root: Path = Path(".")) -> Implementati
                 "tests/test_development_diff_review.py",
                 ImplementationContextStateV1.PROPOSED,
                 "DevelopmentDiffReviewV1",
-                "validates approved scope, evidence, authority, and human approval",
-                "drift or authority escalation is rejected",
-                "missing evidence or approval boundary causes failure",
+                "accepts approved files/contracts/tests; flags unexpected files, contract drift, missing tests, unsatisfied criteria, authority escalation, unresolved unknowns, and provenance mismatch",
+                "HUMAN_APPROVAL_REQUIRED is preserved for every non-invalid review",
+                "dirty, stale, mismatched, incomplete, or authority-escalating evidence fails closed",
             ),
         ),
         relations=(
@@ -157,6 +161,11 @@ def test_real_diff_review_context_is_repository_bound_neutral_and_honest() -> No
     assert all(Path(path).is_file() for path in context.direct_files)
     assert all(item.state is ImplementationContextStateV1.CURRENT for item in context.symbols)
     assert any(item.state is ImplementationContextStateV1.PROPOSED for item in context.contracts)
+    proposed = next(
+        item for item in context.contracts if item.state is ImplementationContextStateV1.PROPOSED
+    )
+    assert "MATCHES_APPROVED_SCOPE" in str(proposed.proposed_delta)
+    assert "# DevelopmentDiffReviewV1" not in str(proposed.proposed_delta)
     assert assess_implementation_context_sufficiency(context).state.value in {
         "IMPLEMENTATION_CONTEXT_SUFFICIENT",
         "INSUFFICIENT",
