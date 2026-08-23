@@ -20,3 +20,10 @@ context. Merge rejects provenance mismatch and contradictory evidence.
 Sufficiency is re-evaluated using the existing deterministic function; no
 status is hard-coded. Planned artifacts remain `PROPOSED` even if exact current
 supporting files are found.
+
+`complete_implementation_context()` performs at most two rounds:
+`ImplementationContextV1 → sufficiency → declared MissingContextRequestV1 →
+TargetedContextExpansionV1 → merge → reassess → ContextCompletionResultV1`.
+It never creates a new free-form query: a second round can use only exact
+requests already emitted by deterministic sufficiency. Context Completion may
+resolve bounded declared gaps; it may not autonomously explore the repository.
