@@ -294,7 +294,7 @@ def test_development_analysis_transport_round_trip_is_read_only(server) -> None:
     ("state", "reason"),
     (
         (DevelopmentAnalysisStateV1.TIMEOUT, "AI_PROVIDER_TIMEOUT"),
-        (DevelopmentAnalysisStateV1.ANALYSIS_INVALID, "DEVELOPMENT_ANALYSIS_INVALID"),
+        (DevelopmentAnalysisStateV1.ANALYSIS_INVALID, "DEVELOPMENT_SCHEMA_INVALID"),
     ),
 )
 def test_development_analysis_typed_failure_is_not_an_opaque_500(server, state, reason) -> None:

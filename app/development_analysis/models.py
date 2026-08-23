@@ -132,29 +132,37 @@ def assess_development_analysis_readiness(
     value: DevelopmentAnalysisV1,
 ) -> DevelopmentAnalysisReadinessV1:
     """Fail closed when an otherwise valid analysis is too generic for task preparation."""
+    return development_readiness(value)[0]
+
+
+def development_readiness(
+    value: DevelopmentAnalysisV1,
+) -> tuple[DevelopmentAnalysisReadinessV1, str | None]:
+    """Return a bounded backend-owned readiness state and public reason code."""
     if value.state != DevelopmentAnalysisStateV1.OK or value.validation_status != "VALID":
-        return DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE
+        return DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE, "INSUFFICIENT_EVIDENCE"
     if value.evidence is None or not value.facts or not _task_specific_evidence(value):
-        return DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE
+        return DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE, "NO_TASK_SPECIFIC_FACTS"
     if not _concrete_owner(value):
-        return DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE
+        return DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE, "NO_GROUNDED_OWNER"
     if not value.affected_contracts and not _grounded_unknown(value, "contract"):
-        return DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE
+        return DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE, "NO_GROUNDED_CONTRACT_SCOPE"
     if not value.likely_files and not _grounded_unknown(value, "file"):
-        return DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE
-    if not all(
-        (
-            _task_specific(value.request, value.risks),
-            _task_specific(value.request, value.required_tests),
-            _task_specific(value.request, value.acceptance_criteria),
+        return DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE, "NO_GROUNDED_FILE_SCOPE"
+    if not _task_specific(value.request, value.risks):
+        return DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE, "TASK_RISKS_NOT_SPECIFIC"
+    if not _task_specific(value.request, value.required_tests):
+        return DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE, "TASK_TESTS_NOT_SPECIFIC"
+    if not _task_specific(value.request, value.acceptance_criteria):
+        return (
+            DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE,
+            "TASK_ACCEPTANCE_CRITERIA_NOT_SPECIFIC",
         )
-    ):
-        return DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE
     if not value.unknowns or any(
         item.casefold().strip().startswith("no unknowns identified") for item in value.unknowns
     ):
-        return DevelopmentAnalysisReadinessV1.NEEDS_REVIEW
-    return DevelopmentAnalysisReadinessV1.READY_FOR_TASK
+        return DevelopmentAnalysisReadinessV1.NEEDS_REVIEW, "INSUFFICIENT_EVIDENCE"
+    return DevelopmentAnalysisReadinessV1.READY_FOR_TASK, None
 
 
 def evidence_digest(payload: dict[str, object]) -> str:
@@ -225,6 +233,7 @@ def development_analysis_from_payload(value: object) -> DevelopmentAnalysisV1:
             if value.get("readiness") is not None
             else None
         ),
+        reason_code=(str(value["reason_code"]) if value.get("reason_code") is not None else None),
     )
 
 

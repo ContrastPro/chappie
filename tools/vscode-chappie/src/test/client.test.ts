@@ -62,6 +62,8 @@ test("Development Analysis has its own finite transport deadline beyond the CODE
   assert.ok(DEVELOPMENT_ANALYSIS_HTTP_TIMEOUT_MS <= 120_000);
   assert.equal(developmentAnalysisFailureMessage("AI_PROVIDER_TIMEOUT"), "Chappie Development Analysis timed out during local model inference.");
   assert.equal(developmentAnalysisFailureMessage("DEVELOPMENT_ANALYSIS_INVALID"), "Chappie Development Analysis returned an invalid bounded result.");
+  assert.equal(developmentAnalysisFailureMessage("DEVELOPMENT_SCHEMA_INVALID"), "Chappie Development Analysis returned an invalid bounded result.");
+  assert.equal(developmentAnalysisFailureMessage("FORBIDDEN_AUTHORITY_TEXT"), "Chappie Development Analysis claimed authority outside its read-only advisory boundary.");
   assert.equal(developmentAnalysisFailureMessage("MODEL_ROLE_UNAVAILABLE"), "The selected Chappie development model role is unavailable; no fallback was used.");
   assert.equal(developmentAnalysisFailureMessage("KNOWLEDGE_STALE"), "Chappie Knowledge is not ready for Development Analysis.");
 });
@@ -78,7 +80,7 @@ test("Project QA propagates a selected stable role without changing durable mode
 
 test("Development Analysis and Codex task use typed read-only Control Plane contracts", async () => {
   const bodies: string[] = [];
-  const analysis = { identity: "chappie_development_analysis/1.0.0", state: "OK", request: "Plan", evidence: null, facts: [], inferences: [], unknowns: [], architecture_owners: [], affected_contracts: [], likely_files: [], risks: [], required_tests: [], non_goals: [], acceptance_criteria: [], confidence: 1, validation_status: "VALID", reason_code: null };
+  const analysis = { identity: "chappie_development_analysis/1.0.0", state: "OK", request: "Plan", evidence: null, facts: [], inferences: [], unknowns: [], architecture_owners: [], affected_contracts: [], likely_files: [], risks: [], required_tests: [], non_goals: [], acceptance_criteria: [], confidence: 1, validation_status: "VALID", readiness: "INSUFFICIENT_EVIDENCE", reason_code: "NO_TASK_SPECIFIC_FACTS" };
   const task = { identity: "chappie_codex_task/1.0.0", task_id: "task_1", state: "ADVISORY", source_analysis_identity: analysis.identity, source_commit: "a".repeat(40), evidence_digest: "b".repeat(64), requested_role: "CODE", problem: "Plan", facts: [], inferences: [], unknowns: [], architecture_owners: [], affected_contracts: [], allowed_files: [], forbidden_scope: [], implementation_objective: "Objective", implementation_constraints: [], risks: [], required_tests: [], non_goals: [], acceptance_criteria: [], approval_status: "HUMAN_APPROVAL_REQUIRED", validation_status: "VALID", reason_code: null, projection: "Advisory task" };
   let index = 0;
   const client = new ChappieControlPlaneClient(8765, async (_url, init) => { bodies.push(String(init?.body)); return envelope([analysis, task][index++]); });

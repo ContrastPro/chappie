@@ -410,8 +410,11 @@ test("Workbench Development mode is explicit and renders only advisory Codex tas
   assert.match(host, /analyzeDevelopment/);
   assert.match(host, /prepareCodexTask/);
   assert.match(host, /task\.state !== "ADVISORY"/);
+  assert.match(host, /turn\.development\.readiness !== "READY_FOR_TASK"/);
   assert.match(script, /Development analysis/);
   assert.match(script, /Prepare Codex Task/);
+  assert.match(script, /Validation:/);
+  assert.match(script, /analysis\.readiness==='READY_FOR_TASK'/);
   assert.match(script, /turn\.codexTask\.approval_status/);
   assert.doesNotMatch(host, /child_process\.exec|Codex invocation/);
 });
@@ -433,7 +436,7 @@ test("Workbench development snapshots are detached and task projection requires 
   assert.ok(turn);
   const analysis: DevelopmentAnalysisV1 = {
     identity: "chappie_development_analysis/1.0.0", state: "OK", request: "Plan an improvement", evidence: null,
-    facts: ["fact"], inferences: [], unknowns: [], architecture_owners: [], affected_contracts: [], likely_files: [], risks: [], required_tests: [], non_goals: [], acceptance_criteria: [], confidence: 1, validation_status: "VALID", reason_code: null,
+    facts: ["fact"], inferences: [], unknowns: [], architecture_owners: [], affected_contracts: [], likely_files: [], risks: [], required_tests: [], non_goals: [], acceptance_criteria: [], confidence: 1, validation_status: "VALID", readiness: "READY_FOR_TASK", reason_code: null,
   };
   assert.ok(session.completeDevelopment(turn.turnId, analysis, 200));
   analysis.facts[0] = "outside mutation";

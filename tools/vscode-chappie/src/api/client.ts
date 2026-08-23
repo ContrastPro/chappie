@@ -142,7 +142,9 @@ function projectQaRequestFailureMessage(code: string, fallback: string): string 
 
 export function developmentAnalysisFailureMessage(code: string | undefined): string {
   if (code === "AI_PROVIDER_TIMEOUT") return "Chappie Development Analysis timed out during local model inference.";
-  if (code === "ANALYSIS_INVALID" || code === "DEVELOPMENT_ANALYSIS_INVALID") return "Chappie Development Analysis returned an invalid bounded result.";
+  if (code === "ANALYSIS_INVALID" || code === "DEVELOPMENT_ANALYSIS_INVALID" || code === "DEVELOPMENT_SCHEMA_INVALID") return "Chappie Development Analysis returned an invalid bounded result.";
+  if (code === "UNSUPPORTED_KNOWLEDGE_CITATION") return "Chappie Development Analysis cited material outside the supplied canonical Knowledge evidence.";
+  if (code === "FORBIDDEN_AUTHORITY_TEXT") return "Chappie Development Analysis claimed authority outside its read-only advisory boundary.";
   if (code === "MODEL_ROLE_UNAVAILABLE") return "The selected Chappie development model role is unavailable; no fallback was used.";
   if (code === "KNOWLEDGE_STALE" || code === "KNOWLEDGE_UNAVAILABLE" || code === "NO_RELEVANT_KNOWLEDGE") return "Chappie Knowledge is not ready for Development Analysis.";
   return "Chappie Development Analysis is temporarily unavailable.";
@@ -156,7 +158,7 @@ function parseProjectQA(value: unknown): ProjectQAResponseV1 {
 }
 
 function parseDevelopmentAnalysis(value: unknown): DevelopmentAnalysisV1 {
-  if (!isRecord(value) || value.identity !== "chappie_development_analysis/1.0.0" || typeof value.state !== "string" || typeof value.request !== "string" || !isStringArray(value.facts) || !isStringArray(value.inferences) || !isStringArray(value.unknowns) || !isStringArray(value.architecture_owners) || !isStringArray(value.affected_contracts) || !isStringArray(value.likely_files) || !isStringArray(value.risks) || !isStringArray(value.required_tests) || !isStringArray(value.non_goals) || !isStringArray(value.acceptance_criteria) || typeof value.validation_status !== "string") {
+  if (!isRecord(value) || value.identity !== "chappie_development_analysis/1.0.0" || typeof value.state !== "string" || typeof value.request !== "string" || !isStringArray(value.facts) || !isStringArray(value.inferences) || !isStringArray(value.unknowns) || !isStringArray(value.architecture_owners) || !isStringArray(value.affected_contracts) || !isStringArray(value.likely_files) || !isStringArray(value.risks) || !isStringArray(value.required_tests) || !isStringArray(value.non_goals) || !isStringArray(value.acceptance_criteria) || typeof value.validation_status !== "string" || (value.readiness !== null && value.readiness !== "READY_FOR_TASK" && value.readiness !== "INSUFFICIENT_EVIDENCE" && value.readiness !== "NEEDS_REVIEW") || (value.reason_code !== null && typeof value.reason_code !== "string")) {
     throw new ControlPlaneClientError("Control Plane returned an invalid Development Analysis response");
   }
   return value as unknown as DevelopmentAnalysisV1;

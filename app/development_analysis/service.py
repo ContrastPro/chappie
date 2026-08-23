@@ -11,7 +11,7 @@ from app.development_analysis.models import (
     DevelopmentAnalysisStateV1,
     DevelopmentAnalysisV1,
     DevelopmentEvidencePackV1,
-    assess_development_analysis_readiness,
+    development_readiness,
     evidence_digest,
     validate_development_analysis,
 )
@@ -108,16 +108,24 @@ class DevelopmentAnalysisServiceV1:
             output = self._runner(request, context, evidence)
             analysis = _analysis_from_output(request, context, evidence, output)
             analysis = validate_development_analysis(analysis)
-            return replace(analysis, readiness=assess_development_analysis_readiness(analysis))
+            readiness, reason_code = development_readiness(analysis)
+            return replace(analysis, readiness=readiness, reason_code=reason_code)
         except (TimeoutError, AIProviderTimeoutError):
             return _failure(
                 request, DevelopmentAnalysisStateV1.TIMEOUT, "AI_PROVIDER_TIMEOUT", evidence
             )
-        except (AIValidationError, ValueError):
+        except AIValidationError as error:
             return _failure(
                 request,
                 DevelopmentAnalysisStateV1.ANALYSIS_INVALID,
-                "DEVELOPMENT_ANALYSIS_INVALID",
+                error.code if error.code != "VALIDATION_ERROR" else "DEVELOPMENT_SCHEMA_INVALID",
+                evidence,
+            )
+        except ValueError as error:
+            return _failure(
+                request,
+                DevelopmentAnalysisStateV1.ANALYSIS_INVALID,
+                _validation_reason(error),
                 evidence,
             )
         except (AIProviderError, OSError, RuntimeError, TypeError):
@@ -127,47 +135,33 @@ class DevelopmentAnalysisServiceV1:
 
 
 def _analysis_from_output(request, context, evidence, output) -> DevelopmentAnalysisV1:
-    answer = getattr(output, "answer", None)
-    if not isinstance(answer, str) or not answer.strip():
-        raise ValueError("analysis answer is invalid")
-    unknowns = tuple(getattr(output, "unknowns", ()))
-    if any(not isinstance(item, str) for item in unknowns):
-        raise ValueError("analysis unknowns are invalid")
-    workspace_path = getattr(request.workspace_context, "active_file_relative_path", None)
-    owners = tuple(sorted({item.knowledge_type.value for item in context.records}))
-    contracts = tuple(
-        item.title
-        for item in context.records
-        if item.knowledge_type.value == "CONTRACT" or item.title.endswith("V1")
-    )
-    files = tuple(
-        sorted(
-            {
-                source.path
-                for item in context.records
-                for source in item.sources
-                if source.path.startswith(
-                    ("app/development_analysis/", "tests/test_development_analysis")
-                )
-            }
+    from app.ai.errors import AIValidationError
+    from app.development_analysis.synthesis import DevelopmentSynthesisOutputV1
+
+    if not isinstance(output, DevelopmentSynthesisOutputV1):
+        raise AIValidationError(
+            "development synthesis output is invalid", code="DEVELOPMENT_SCHEMA_INVALID"
         )
-    )
-    task_name = request.request.strip()
     return DevelopmentAnalysisV1(
         DevelopmentAnalysisStateV1.OK,
         request.request,
         evidence,
-        facts=tuple(item.statement for item in context.records),
-        inferences=(answer,),
-        unknowns=unknowns,
-        architecture_owners=owners,
-        affected_contracts=contracts,
-        likely_files=((workspace_path,) if workspace_path else files),
-        risks=(f"{task_name}: preserve the read-only advisory and human-approval boundary.",),
-        required_tests=(f"Test bounded evidence and readiness for {task_name}.",),
-        non_goals=("No file edits, shell, Git, Knowledge mutation, or runtime authority.",),
-        acceptance_criteria=(f"{task_name}: remain bound to the returned evidence digest.",),
-        confidence=getattr(output, "confidence", None),
+        facts=tuple(
+            fact.statement
+            for fact in context.records
+            for fact_id in output.facts
+            if fact_id == f"knowledge.{fact.knowledge_id}.statement"
+        ),
+        inferences=output.inferences,
+        unknowns=output.unknowns,
+        architecture_owners=output.architecture_owners,
+        affected_contracts=output.affected_contracts,
+        likely_files=output.likely_files,
+        risks=output.risks,
+        required_tests=output.required_tests,
+        non_goals=output.non_goals,
+        acceptance_criteria=output.acceptance_criteria,
+        confidence=output.confidence,
         validation_status="VALID",
     )
 
@@ -228,4 +222,19 @@ def _development_identifiers(request: str, workspace_path: str | None) -> tuple[
 
 
 def _failure(request, state, reason, evidence=None) -> DevelopmentAnalysisV1:
-    return DevelopmentAnalysisV1(state, request.request, evidence=evidence, reason_code=reason)
+    return DevelopmentAnalysisV1(
+        state,
+        request.request,
+        evidence=evidence,
+        validation_status="INVALID"
+        if state == DevelopmentAnalysisStateV1.ANALYSIS_INVALID
+        else "UNAVAILABLE",
+        reason_code=reason,
+    )
+
+
+def _validation_reason(error: ValueError) -> str:
+    message = str(error)
+    if message == "development analysis claims forbidden authority":
+        return "FORBIDDEN_AUTHORITY_TEXT"
+    return "DEVELOPMENT_SCHEMA_INVALID"

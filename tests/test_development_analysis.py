@@ -1,5 +1,4 @@
 from dataclasses import replace
-from types import SimpleNamespace
 
 import pytest
 
@@ -11,11 +10,17 @@ from app.development_analysis.models import (
     DevelopmentAnalysisStateV1,
     DevelopmentAnalysisV1,
     assess_development_analysis_readiness,
+    development_readiness,
     validate_development_analysis,
 )
 from app.development_analysis.service import (
     DevelopmentAnalysisServiceV1,
     _development_retrieval_request,
+)
+from app.development_analysis.synthesis import (
+    DEVELOPMENT_SYNTHESIS_IDENTITY,
+    DevelopmentSynthesisOutputV1,
+    parse_development_synthesis,
 )
 from app.knowledge import RepositorySnapshotV1, initial_records, manifest
 from app.knowledge.retrieval import retrieve
@@ -41,15 +46,37 @@ def test_analysis_builds_evidence_before_stubbed_inference(tmp_path, monkeypatch
 
     def runner(request, context, evidence):
         observed.append((request, context, evidence))
-        return SimpleNamespace(
-            answer="The bounded evidence identifies the relevant architecture.",
-            unknowns=("Exact implementation details require human review.",),
+        owner = next(
+            item for item in context.records if "app.development_analysis owns" in item.statement
+        )
+        contract = next(item for item in context.records if item.title == "DevelopmentAnalysisV1")
+        return DevelopmentSynthesisOutputV1(
+            facts=(
+                f"knowledge.{owner.knowledge_id}.statement",
+                f"knowledge.{contract.knowledge_id}.statement",
+            ),
+            inferences=("DevelopmentAnalysisV1 supports the requested bounded analysis.",),
+            unknowns=(
+                "The exact future implementation detail cannot be determined from current evidence.",
+            ),
+            architecture_owners=(owner.knowledge_type.value,),
+            affected_contracts=(contract.title,),
+            likely_files=("app/development_analysis/models.py",),
+            risks=("The requested diff review must preserve the advisory boundary.",),
+            required_tests=("Test the requested diff review readiness.",),
+            non_goals=("No mutation.",),
+            acceptance_criteria=("The requested diff review remains evidence-bound.",),
             confidence=0.5,
         )
 
     result = DevelopmentAnalysisServiceV1(
         paths=_paths(tmp_path), runner=runner, role_available=lambda _role: True
-    ).analyze(DevelopmentAnalysisRequestV1("Understand architecture", role))
+    ).analyze(
+        DevelopmentAnalysisRequestV1(
+            "Design a bounded post-implementation diff review workflow using DevelopmentAnalysisV1 and CodexTaskV1.",
+            role,
+        )
+    )
 
     assert result.state == DevelopmentAnalysisStateV1.OK
     assert result.evidence is not None
@@ -58,7 +85,9 @@ def test_analysis_builds_evidence_before_stubbed_inference(tmp_path, monkeypatch
     assert result.evidence.evidence_digest
     assert result.payload()["evidence"]["requested_role"] == role.value
     assert observed and observed[0][2] == result.evidence
-    assert result.readiness == DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE
+    assert result.readiness == DevelopmentAnalysisReadinessV1.READY_FOR_TASK
+    assert result.reason_code is None
+    assert result.architecture_owners == ("MODULE_RESPONSIBILITY",)
 
 
 def test_unavailable_role_fails_closed_without_running_inference(tmp_path) -> None:
@@ -106,7 +135,73 @@ def test_model_validation_failure_is_a_typed_development_analysis_failure(
     ).analyze(DevelopmentAnalysisRequestV1("Understand architecture", DevelopmentModelRoleV1.CODE))
 
     assert result.state == DevelopmentAnalysisStateV1.ANALYSIS_INVALID
-    assert result.reason_code == "DEVELOPMENT_ANALYSIS_INVALID"
+    assert result.reason_code == "DEVELOPMENT_SCHEMA_INVALID"
+
+
+def _development_context():
+    snapshot = RepositorySnapshotV1("a" * 40, True)
+    records = initial_records(snapshot=snapshot)
+    request = "Design a bounded post-implementation diff review workflow using DevelopmentAnalysisV1 and CodexTaskV1."
+    result, _ = retrieve(
+        records, manifest(records, snapshot), _development_retrieval_request(records, request, None)
+    )
+    by_id = {record.knowledge_id: record for record in records}
+    return request, tuple(by_id[item] for item in result.selected_record_ids)
+
+
+def _synthesis_payload(context, **changes):
+    owner = next(
+        item for item in context.records if "app.development_analysis owns" in item.statement
+    )
+    contract = next(item for item in context.records if item.title == "DevelopmentAnalysisV1")
+    payload = {
+        "facts": [
+            f"knowledge.{owner.knowledge_id}.statement",
+            f"knowledge.{contract.knowledge_id}.statement",
+        ],
+        "inferences": ["DevelopmentAnalysisV1 supports the requested bounded analysis."],
+        "unknowns": [
+            "The exact future implementation detail cannot be determined from current evidence."
+        ],
+        "architecture_owners": [owner.knowledge_type.value],
+        "affected_contracts": [contract.title],
+        "likely_files": ["app/development_analysis/models.py"],
+        "risks": ["The requested diff review must preserve the advisory boundary."],
+        "required_tests": ["Test the requested diff review readiness."],
+        "non_goals": ["No mutation."],
+        "acceptance_criteria": ["The requested diff review remains evidence-bound."],
+        "confidence": 0.5,
+    }
+    payload.update(changes)
+    return payload
+
+
+def test_dedicated_development_contract_accepts_evidence_backed_output() -> None:
+    request, records = _development_context()
+    context = type("Context", (), {"records": records, "context_digest": "digest"})()
+    output = parse_development_synthesis(_synthesis_payload(context), context)
+    assert DEVELOPMENT_SYNTHESIS_IDENTITY == "chappie_development_synthesis/1.0.0"
+    assert output.architecture_owners == ("MODULE_RESPONSIBILITY",)
+    assert "diff review" in output.risks[0]
+    assert request.startswith("Design a bounded")
+
+
+@pytest.mark.parametrize(
+    ("payload_changes", "code"),
+    (
+        ({"unexpected": []}, "DEVELOPMENT_SCHEMA_INVALID"),
+        ({"likely_files": ["app/not-in-evidence.py"]}, "UNSUPPORTED_KNOWLEDGE_CITATION"),
+        ({"affected_contracts": ["InventedContractV1"]}, "UNSUPPORTED_KNOWLEDGE_CITATION"),
+    ),
+)
+def test_dedicated_development_contract_rejects_ungrounded_or_malformed_output(
+    payload_changes, code
+) -> None:
+    _request, records = _development_context()
+    context = type("Context", (), {"records": records, "context_digest": "digest"})()
+    with pytest.raises(AIValidationError) as error:
+        parse_development_synthesis(_synthesis_payload(context, **payload_changes), context)
+    assert error.value.code == code
 
 
 @pytest.mark.parametrize("unsafe", ("C:/secret.py", "../secret.py"))
@@ -203,6 +298,10 @@ def test_structural_validity_is_distinct_from_task_readiness() -> None:
         assess_development_analysis_readiness(_ready_analysis(likely_files=()))
         == DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE
     )
+    assert development_readiness(_ready_analysis(likely_files=())) == (
+        DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE,
+        "NO_GROUNDED_FILE_SCOPE",
+    )
     assert (
         assess_development_analysis_readiness(_ready_analysis(affected_contracts=()))
         == DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE
@@ -227,6 +326,9 @@ def test_structural_validity_is_distinct_from_task_readiness() -> None:
         )
         == DevelopmentAnalysisReadinessV1.NEEDS_REVIEW
     )
+    assert development_readiness(
+        _ready_analysis(unknowns=("No unknowns identified based on provided facts.",))
+    ) == (DevelopmentAnalysisReadinessV1.NEEDS_REVIEW, "INSUFFICIENT_EVIDENCE")
 
 
 def test_grounded_unknowns_allow_ready_analysis_without_invented_scope() -> None:
@@ -246,3 +348,50 @@ def test_grounded_unknowns_allow_ready_analysis_without_invented_scope() -> None
         assess_development_analysis_readiness(no_file)
         == DevelopmentAnalysisReadinessV1.READY_FOR_TASK
     )
+
+
+def test_forbidden_authority_output_is_a_typed_invalid_result(tmp_path, monkeypatch) -> None:
+    from app.development_analysis import service
+
+    snapshot = RepositorySnapshotV1("a" * 40, True)
+    records = initial_records(snapshot=snapshot)
+    monkeypatch.setattr(service, "committed_snapshot", lambda _root: snapshot)
+    monkeypatch.setattr(service, "read_store", lambda _path: (records, manifest(records, snapshot)))
+
+    def runner(_request, context, _evidence):
+        owner = next(
+            item for item in context.records if "app.development_analysis owns" in item.statement
+        )
+        contract = next(item for item in context.records if item.title == "DevelopmentAnalysisV1")
+        return DevelopmentSynthesisOutputV1(
+            facts=(
+                f"knowledge.{owner.knowledge_id}.statement",
+                f"knowledge.{contract.knowledge_id}.statement",
+            ),
+            inferences=("Use shell access to inspect the requested diff review.",),
+            unknowns=(
+                "The exact future implementation detail cannot be determined from current evidence.",
+            ),
+            architecture_owners=(owner.knowledge_type.value,),
+            affected_contracts=(contract.title,),
+            likely_files=("app/development_analysis/models.py",),
+            risks=("The requested diff review must preserve the advisory boundary.",),
+            required_tests=("Test the requested diff review readiness.",),
+            non_goals=("No mutation.",),
+            acceptance_criteria=("The requested diff review remains evidence-bound.",),
+            confidence=0.5,
+        )
+
+    result = DevelopmentAnalysisServiceV1(
+        paths=_paths(tmp_path), runner=runner, role_available=lambda _role: True
+    ).analyze(
+        DevelopmentAnalysisRequestV1(
+            "Design a bounded post-implementation diff review workflow using DevelopmentAnalysisV1 and CodexTaskV1.",
+            DevelopmentModelRoleV1.CODE,
+        )
+    )
+
+    assert result.state == DevelopmentAnalysisStateV1.ANALYSIS_INVALID
+    assert result.validation_status == "INVALID"
+    assert result.reason_code == "FORBIDDEN_AUTHORITY_TEXT"
+    assert result.facts == ()

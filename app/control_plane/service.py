@@ -740,15 +740,9 @@ def _run_development_analysis_ai(paths: object, request: object, knowledge_conte
         config, model=model.concrete_model, timeout_seconds=model.execution_timeout_seconds
     )
     try:
-        return ai.answer_project_qa(
-            question=(
-                "Provide a read-only technical analysis of this development request. "
-                "Separate evidence-based facts, inferences, and unknowns; propose no edits: "
-                + request.request
-            ),
-            knowledge_context=knowledge_context,
-            workspace_context=request.workspace_context,
-        )
+        from app.development_analysis.synthesis import synthesize_development
+
+        return synthesize_development(ai, request, knowledge_context)
     finally:
         ai.close()
 
