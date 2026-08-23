@@ -65,6 +65,28 @@ GROUNDING_SCHEMA: dict[str, Any] = {
         "unknowns": {"type": "array", "items": {"type": "string"}},
     },
 }
+PROPOSED_SCOPE_FIELDS = (
+    "proposed_owner",
+    "proposed_modified_files",
+    "proposed_new_files",
+    "proposed_contract_changes",
+    "proposed_components",
+    "proposed_behavior",
+    "rationale",
+)
+PROPOSED_SCOPE_LIST_FIELDS = PROPOSED_SCOPE_FIELDS[1:]
+PROPOSED_SCOPE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": list(PROPOSED_SCOPE_FIELDS),
+    "properties": {
+        "proposed_owner": {"type": ["string", "null"]},
+        **{
+            field: {"type": "array", "items": {"type": "string"}}
+            for field in PROPOSED_SCOPE_LIST_FIELDS
+        },
+    },
+}
 PROPOSAL_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -73,7 +95,7 @@ PROPOSAL_SCHEMA: dict[str, Any] = {
         "proposal_unknowns",
     ],
     "properties": {
-        "proposed_scope": {"type": "object"},
+        "proposed_scope": PROPOSED_SCOPE_SCHEMA,
         "proposal_unknowns": {"type": "array", "items": {"type": "string"}},
     },
 }
@@ -381,17 +403,7 @@ def _proposal_parse_diagnostics(
     owner_candidates: tuple[str, ...],
 ) -> ProposalParseDiagnosticsV1:
     required_top = frozenset(PROPOSAL_SCHEMA["required"])
-    required_scope = frozenset(
-        {
-            "proposed_owner",
-            "proposed_modified_files",
-            "proposed_new_files",
-            "proposed_contract_changes",
-            "proposed_components",
-            "proposed_behavior",
-            "rationale",
-        }
-    )
+    required_scope = frozenset(PROPOSED_SCOPE_FIELDS)
     if not isinstance(value, dict):
         return ProposalParseDiagnosticsV1(
             "PROPOSAL_PARSE",
@@ -457,7 +469,7 @@ def _proposal_parse_diagnostics(
             or scope["proposed_owner"] not in owner_candidates
         ):
             path, category = "$.proposed_scope.proposed_owner", "INVALID_OWNER"
-        for field in sorted(required_scope - {"proposed_owner"}):
+        for field in PROPOSED_SCOPE_LIST_FIELDS:
             if category != "OTHER_SCHEMA_FAILURE":
                 break
             item = scope[field]
@@ -795,7 +807,15 @@ def synthesize_development(
     proposal_result = call(
         "PROPOSAL",
         DEVELOPMENT_PROPOSAL_IDENTITY,
-        "Return only JSON. Propose bounded future advisory scope from the supplied goal, context map, and validated grounding. Never state proposals as CURRENT facts or claim authority.",
+        """Return only the exact Proposal JSON schema. This stage produces ONLY future
+implementation scope from the supplied goal, context map, and validated grounding. Do not state
+proposals as CURRENT facts or claim authority. `proposed_scope` must contain exactly:
+`proposed_owner`, `proposed_modified_files`, `proposed_new_files`,
+`proposed_contract_changes`, `proposed_components`, `proposed_behavior`, and `rationale`.
+Use `proposal_unknowns` for unresolved proposal questions. Do NOT produce `risks`, `tests`,
+`acceptance_criteria`, or `non_goals`; those belong only to the later REVIEW stage. Do NOT use
+alternative keys such as `description`, `ownership`, `contracts`, or `boundaries`. Do not include
+Markdown or prose outside the structured object.""",
         PROPOSAL_SCHEMA,
         {
             "request": request.request,
@@ -867,15 +887,7 @@ def development_allowed_fact_ids(context: KnowledgeContextV1) -> tuple[str, ...]
 def _parse_proposed_scope(
     value: object, context_map: DevelopmentContextMapV1
 ) -> DevelopmentProposedScopeV1:
-    required = {
-        "proposed_owner",
-        "proposed_modified_files",
-        "proposed_new_files",
-        "proposed_contract_changes",
-        "proposed_components",
-        "proposed_behavior",
-        "rationale",
-    }
+    required = set(PROPOSED_SCOPE_FIELDS)
     if not isinstance(value, dict) or set(value) != required:
         raise AIValidationError(
             "development proposed scope is invalid", code="DEVELOPMENT_SCHEMA_INVALID"
@@ -890,7 +902,7 @@ def _parse_proposed_scope(
             DevelopmentCitationRejectionV1.NOT_IN_ALLOWLIST,
         )
     lists: dict[str, tuple[str, ...]] = {}
-    for key in required - {"proposed_owner"}:
+    for key in PROPOSED_SCOPE_LIST_FIELDS:
         raw = value[key]
         if not isinstance(raw, list) or any(
             not isinstance(item, str) or not item.strip() for item in raw

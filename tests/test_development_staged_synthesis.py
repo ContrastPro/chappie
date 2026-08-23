@@ -12,6 +12,8 @@ from app.development_analysis.context import (
     build_context_digest,
 )
 from app.development_analysis.synthesis import (
+    PROPOSAL_SCHEMA,
+    PROPOSED_SCOPE_FIELDS,
     DevelopmentStageError,
     parse_development_grounding,
     parse_development_proposal,
@@ -104,6 +106,53 @@ def test_proposed_new_file_is_not_treated_as_current_evidence() -> None:
         _context_map(),
     )
     assert result.proposed_scope.proposed_new_files == ("app/development_analysis/diff_review.py",)
+
+
+def test_provider_proposal_schema_exactly_matches_the_strict_parser_contract() -> None:
+    assert PROPOSAL_SCHEMA["additionalProperties"] is False
+    assert set(PROPOSAL_SCHEMA["required"]) == {"proposed_scope", "proposal_unknowns"}
+    assert set(PROPOSAL_SCHEMA["properties"]) == {"proposed_scope", "proposal_unknowns"}
+    assert PROPOSAL_SCHEMA["properties"]["proposal_unknowns"] == {
+        "type": "array",
+        "items": {"type": "string"},
+    }
+
+    scope = PROPOSAL_SCHEMA["properties"]["proposed_scope"]
+    assert scope["type"] == "object"
+    assert scope["additionalProperties"] is False
+    assert tuple(scope["required"]) == PROPOSED_SCOPE_FIELDS
+    assert set(scope["properties"]) == set(PROPOSED_SCOPE_FIELDS)
+    assert scope["properties"]["proposed_owner"] == {"type": ["string", "null"]}
+    for field in PROPOSED_SCOPE_FIELDS[1:]:
+        assert scope["properties"][field] == {"type": "array", "items": {"type": "string"}}
+
+    assert {"risks", "tests", "acceptance_criteria", "non_goals"}.isdisjoint(scope["properties"])
+
+
+def test_dogfood_alternative_proposal_shape_remains_fail_closed() -> None:
+    with pytest.raises(DevelopmentStageError) as error:
+        parse_development_proposal(
+            {
+                "proposed_scope": {
+                    "description": "Alternative scope.",
+                    "ownership": "MODULE_RESPONSIBILITY",
+                    "contracts": [],
+                    "boundaries": [],
+                    "risks": [],
+                    "tests": [],
+                    "acceptance_criteria": [],
+                    "non_goals": [],
+                },
+                "proposal_unknowns": [],
+            },
+            _context_map(),
+        )
+    assert error.value.code == "PROPOSAL_SCHEMA_INVALID"
+    assert error.value.proposal_diagnostics is not None
+    assert (
+        error.value.proposal_diagnostics.bounded_error_path == "$.proposed_scope.proposed_behavior"
+    )
+    assert error.value.proposal_diagnostics.bounded_error_category == "MISSING_REQUIRED_FIELD"
 
 
 @pytest.mark.parametrize(
