@@ -187,9 +187,12 @@ class DevelopmentCitationValidationError(AIValidationError):
 class DevelopmentStageError(AIValidationError):
     """A bounded stage failure; no model output is retained in the exception."""
 
-    def __init__(self, stage: str, code: str) -> None:
+    def __init__(
+        self, stage: str, code: str, *, stage_elapsed_ms: tuple[tuple[str, int], ...] = ()
+    ) -> None:
         super().__init__("development staged synthesis failed", code=code)
         self.stage = stage
+        self.stage_elapsed_ms = stage_elapsed_ms
 
 
 @dataclass(frozen=True, slots=True)
@@ -592,7 +595,11 @@ def synthesize_development(
         GROUNDING_SCHEMA,
         {"request": request.request, "development_context_map": context_map.payload()},
     )
-    grounding = parse_development_grounding(grounding_result.structured_output, context_map)
+    try:
+        grounding = parse_development_grounding(grounding_result.structured_output, context_map)
+    except DevelopmentStageError as error:
+        error.stage_elapsed_ms = (("GROUNDING_SYNTHESIS", grounding_result.latency_ms),)
+        raise
     proposal_result = call(
         "PROPOSAL",
         DEVELOPMENT_PROPOSAL_IDENTITY,
@@ -604,7 +611,14 @@ def synthesize_development(
             "grounding": grounding.payload(),
         },
     )
-    proposal = parse_development_proposal(proposal_result.structured_output, context_map)
+    try:
+        proposal = parse_development_proposal(proposal_result.structured_output, context_map)
+    except DevelopmentStageError as error:
+        error.stage_elapsed_ms = (
+            ("GROUNDING_SYNTHESIS", grounding_result.latency_ms),
+            ("PROPOSAL_SYNTHESIS", proposal_result.latency_ms),
+        )
+        raise
     review_result = call(
         "REVIEW",
         DEVELOPMENT_REVIEW_IDENTITY,
@@ -617,7 +631,15 @@ def synthesize_development(
             "authority_constraints": list(context_map.authority_constraints),
         },
     )
-    review = parse_development_review(review_result.structured_output, request.request)
+    try:
+        review = parse_development_review(review_result.structured_output, request.request)
+    except DevelopmentStageError as error:
+        error.stage_elapsed_ms = (
+            ("GROUNDING_SYNTHESIS", grounding_result.latency_ms),
+            ("PROPOSAL_SYNTHESIS", proposal_result.latency_ms),
+            ("REVIEW_SYNTHESIS", review_result.latency_ms),
+        )
+        raise
     return DevelopmentStagedSynthesisOutputV1(
         grounding,
         proposal,

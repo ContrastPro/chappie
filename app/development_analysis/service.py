@@ -179,6 +179,7 @@ class DevelopmentAnalysisServiceV1:
                 context_map=context_map,
             )
         except DevelopmentStageError as error:
+            _record_completed_staged_lifecycle(lifecycle, error.stage_elapsed_ms, error.stage)
             lifecycle.begin(_stage_failure_lifecycle_stage(error))
             return _failure(
                 request,
@@ -318,17 +319,25 @@ def _analysis_from_output(request, context, evidence, output) -> DevelopmentAnal
 
 def _record_staged_lifecycle(lifecycle, output: DevelopmentStagedSynthesisOutputV1) -> None:
     """Expose each bounded provider operation without recording model content."""
-    elapsed = dict(output.stage_elapsed_ms)
-    for stage in (
-        DevelopmentLifecycleStageV1.GROUNDING_SYNTHESIS,
-        DevelopmentLifecycleStageV1.GROUNDING_PARSE,
-        DevelopmentLifecycleStageV1.PROPOSAL_SYNTHESIS,
-        DevelopmentLifecycleStageV1.PROPOSAL_PARSE,
-        DevelopmentLifecycleStageV1.REVIEW_SYNTHESIS,
-        DevelopmentLifecycleStageV1.REVIEW_PARSE,
-    ):
-        lifecycle.begin(stage)
-        lifecycle.complete(elapsed_ms=elapsed.get(stage.value, 0))
+    _record_completed_staged_lifecycle(lifecycle, output.stage_elapsed_ms)
+
+
+def _record_completed_staged_lifecycle(
+    lifecycle, stage_elapsed_ms, failed_stage: str | None = None
+) -> None:
+    """Record only provider calls that returned, then their validated parses."""
+    elapsed = dict(stage_elapsed_ms)
+    for name in ("GROUNDING", "PROPOSAL", "REVIEW"):
+        synthesis = DevelopmentLifecycleStageV1[f"{name}_SYNTHESIS"]
+        parse = DevelopmentLifecycleStageV1[f"{name}_PARSE"]
+        if synthesis.value not in elapsed:
+            break
+        lifecycle.begin(synthesis)
+        lifecycle.complete(elapsed_ms=elapsed[synthesis.value])
+        if failed_stage == name:
+            break
+        lifecycle.begin(parse)
+        lifecycle.complete(elapsed_ms=0)
 
 
 def _stage_failure_lifecycle_stage(error: DevelopmentStageError) -> DevelopmentLifecycleStageV1:

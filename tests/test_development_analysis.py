@@ -365,6 +365,121 @@ def test_staged_synthesis_stops_before_proposal_when_grounding_is_invalid() -> N
         )
     assert error.value.code == "GROUNDING_UNSUPPORTED_EVIDENCE"
     assert calls == ["chappie_development_grounding/1.0.0"]
+    assert error.value.stage_elapsed_ms == (("GROUNDING_SYNTHESIS", 1),)
+
+
+def test_stage_parse_failure_keeps_completed_provider_stage_telemetry(
+    tmp_path, monkeypatch
+) -> None:
+    from app.development_analysis import service
+
+    snapshot = RepositorySnapshotV1("a" * 40, True)
+    records = initial_records(snapshot=snapshot)
+    monkeypatch.setattr(service, "committed_snapshot", lambda _root: snapshot)
+    monkeypatch.setattr(service, "read_store", lambda _path: (records, manifest(records, snapshot)))
+
+    def runner(*_args):
+        raise DevelopmentStageError(
+            "PROPOSAL",
+            "PROPOSAL_SCHEMA_INVALID",
+            stage_elapsed_ms=(("GROUNDING_SYNTHESIS", 11), ("PROPOSAL_SYNTHESIS", 22)),
+        )
+
+    result = DevelopmentAnalysisServiceV1(
+        paths=_paths(tmp_path), runner=runner, role_available=lambda _role: True
+    ).analyze(
+        DevelopmentAnalysisRequestV1("Analyze DevelopmentAnalysisV1", DevelopmentModelRoleV1.CODE)
+    )
+
+    assert result.reason_code == "PROPOSAL_SCHEMA_INVALID"
+    assert result.lifecycle is not None
+    assert [event.stage.value for event in result.lifecycle.events[-6:]] == [
+        "GROUNDING_PARSE",
+        "GROUNDING_PARSE",
+        "PROPOSAL_SYNTHESIS",
+        "PROPOSAL_SYNTHESIS",
+        "PROPOSAL_PARSE",
+        "PROPOSAL_PARSE",
+    ]
+    assert result.lifecycle.events[-3].elapsed_ms == 22
+    assert result.lifecycle.events[-1].stage.value == "PROPOSAL_PARSE"
+    assert result.lifecycle.events[-1].status.value == "FAILED"
+
+
+@pytest.mark.parametrize(
+    ("failed_stage", "expected_calls", "reason_code"),
+    (
+        ("PROPOSAL", 2, "PROPOSAL_SCHEMA_INVALID"),
+        ("REVIEW", 3, "REVIEW_SCHEMA_INVALID"),
+    ),
+)
+def test_staged_parser_failure_requires_its_provider_call(
+    failed_stage, expected_calls, reason_code
+) -> None:
+    _request, records = _development_context()
+    context = type("Context", (), {"records": records, "context_digest": "digest"})()
+    calls = []
+
+    class Provider:
+        def generate(self, request):
+            calls.append(request.prompt_version)
+            if request.prompt_version == "chappie_development_grounding/1.0.0":
+                payload = {
+                    "relevant_evidence_handles": ["E1"],
+                    "task_interpretation": "Analyze supplied development evidence.",
+                    "unknowns": ["Unknown."],
+                }
+            elif request.prompt_version == "chappie_development_proposal/1.0.0":
+                payload = (
+                    {}
+                    if failed_stage == "PROPOSAL"
+                    else {
+                        "proposed_scope": {
+                            "proposed_owner": request.context["development_context_map"][
+                                "owner_candidates"
+                            ][0],
+                            "proposed_modified_files": [],
+                            "proposed_new_files": ["app/development_analysis/diff_review.py"],
+                            "proposed_contract_changes": ["Add bounded DTO."],
+                            "proposed_components": ["Diff review"],
+                            "proposed_behavior": ["Remain advisory."],
+                            "rationale": ["Analyze a bounded proposal."],
+                        },
+                        "proposal_unknowns": ["Unknown."],
+                    }
+                )
+            else:
+                payload = {} if failed_stage == "REVIEW" else pytest.fail("unexpected review")
+            return type("Result", (), {"structured_output": payload, "latency_ms": len(calls)})()
+
+    class AI:
+        config = type("Config", (), {"profile": "LOCAL", "temperature": 0, "timeout_seconds": 1})()
+        router = type("Router", (), {"provider_for": lambda _self, _profile: Provider()})()
+
+    evidence = type(
+        "Evidence",
+        (),
+        {
+            "allowed_fact_ids": development_allowed_fact_ids(context),
+            "source_commit": "a" * 40,
+            "knowledge_identity": "chappie_knowledge/1.0.0",
+            "knowledge_manifest_digest": "b" * 64,
+            "knowledge_context_digest": "digest",
+            "evidence_digest": "c" * 64,
+            "requested_role": DevelopmentModelRoleV1.CODE,
+            "effective_model": "qwen3-coder:30b",
+        },
+    )()
+    with pytest.raises(DevelopmentStageError) as error:
+        synthesize_development(
+            AI(), type("Request", (), {"request": "Analyze development"})(), context, evidence
+        )
+    assert error.value.code == reason_code
+    assert len(calls) == expected_calls
+    assert error.value.stage_elapsed_ms == tuple(
+        (f"{stage}_SYNTHESIS", index)
+        for index, stage in enumerate(("GROUNDING", "PROPOSAL", "REVIEW")[:expected_calls], start=1)
+    )
 
 
 @pytest.mark.parametrize(

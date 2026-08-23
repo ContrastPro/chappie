@@ -51,55 +51,26 @@ def _analysis(*, state=DevelopmentAnalysisStateV1.OK, reason=None, effective="qw
         knowledge_context_digest="c" * 64,
         evidence_handles=(),
     )
+    events = (
+        (event("SYNTHESIS", "FAILED", reason),)
+        if state != DevelopmentAnalysisStateV1.OK
+        else (
+            event("GROUNDING_SYNTHESIS", "COMPLETED"),
+            event("GROUNDING_PARSE", "COMPLETED"),
+            event("PROPOSAL_SYNTHESIS", "COMPLETED"),
+            event("PROPOSAL_PARSE", "COMPLETED"),
+            event("REVIEW_SYNTHESIS", "COMPLETED"),
+            event("REVIEW_PARSE", "COMPLETED"),
+            event("STRUCTURAL_VALIDATION", "COMPLETED"),
+            event("READINESS_EVALUATION", "COMPLETED"),
+        )
+    )
     return SimpleNamespace(
         state=state,
         reason_code=reason,
         evidence=evidence,
         context_map=context_map,
-        lifecycle=SimpleNamespace(
-            events=(
-                event(
-                    "GROUNDING_SYNTHESIS",
-                    "COMPLETED" if state == DevelopmentAnalysisStateV1.OK else "FAILED",
-                    reason,
-                ),
-                event(
-                    "GROUNDING_PARSE",
-                    "COMPLETED" if state == DevelopmentAnalysisStateV1.OK else "FAILED",
-                    reason,
-                ),
-                event(
-                    "PROPOSAL_SYNTHESIS",
-                    "COMPLETED" if state == DevelopmentAnalysisStateV1.OK else "FAILED",
-                    reason,
-                ),
-                event(
-                    "PROPOSAL_PARSE",
-                    "COMPLETED" if state == DevelopmentAnalysisStateV1.OK else "FAILED",
-                    reason,
-                ),
-                event(
-                    "REVIEW_SYNTHESIS",
-                    "COMPLETED" if state == DevelopmentAnalysisStateV1.OK else "FAILED",
-                    reason,
-                ),
-                event(
-                    "REVIEW_PARSE",
-                    "COMPLETED" if state == DevelopmentAnalysisStateV1.OK else "FAILED",
-                    reason,
-                ),
-                event(
-                    "STRUCTURAL_VALIDATION",
-                    "COMPLETED" if state == DevelopmentAnalysisStateV1.OK else "FAILED",
-                    reason,
-                ),
-                event(
-                    "READINESS_EVALUATION",
-                    "COMPLETED" if state == DevelopmentAnalysisStateV1.OK else "FAILED",
-                    reason,
-                ),
-            )
-        ),
+        lifecycle=SimpleNamespace(events=events),
         readiness=DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE,
         architecture_owners=(),
         current_evidence_handles=(),
@@ -213,8 +184,40 @@ def test_success_records_only_public_analysis_and_metrics(tmp_path, harness):
     assert result["stages"]["EVIDENCE_HANDLES"]["status"] == "PASS"
     assert result["stages"]["GROUNDING_SYNTHESIS"]["status"] == "PASS"
     assert result["provider_metrics"]["total_inference_elapsed_ms"] == 36
+    assert result["provider_metrics"]["grounding_inference_elapsed_ms"] == 12
+    assert result["provider_metrics"]["proposal_inference_elapsed_ms"] == 12
+    assert result["provider_metrics"]["review_inference_elapsed_ms"] == 12
     assert "prompt" not in result["analysis"]
     assert (harness.output_path(tmp_path, "qwen3-coder:30b", "success") / "report.md").is_file()
+
+
+def test_impossible_parser_failure_without_its_synthesis_fails_closed(tmp_path, harness):
+    analysis = _analysis(
+        state=DevelopmentAnalysisStateV1.ANALYSIS_INVALID,
+        reason="PROPOSAL_SCHEMA_INVALID",
+    )
+    analysis.lifecycle = SimpleNamespace(
+        events=(
+            SimpleNamespace(
+                stage=SimpleNamespace(value="PROPOSAL_PARSE"),
+                status=SimpleNamespace(value="FAILED"),
+                elapsed_ms=0,
+                reason_code="PROPOSAL_SCHEMA_INVALID",
+            ),
+        )
+    )
+    result = harness.run_dogfood(
+        root=tmp_path,
+        model="qwen3-coder:30b",
+        case="diff_review",
+        run_id="impossible-stage-order",
+        preflight_fn=_preflight(harness),
+        analyze_fn=lambda *_args: analysis,
+    )
+
+    assert result["reason_code"] == "PIPELINE_STAGE_INVARIANT_VIOLATION"
+    assert result["stages"]["GROUNDING_SYNTHESIS"]["status"] == "NOT_REACHED"
+    assert result["stages"]["PROPOSAL_PARSE"]["status"] == "FAIL"
 
 
 def test_existing_evidence_never_overwritten(tmp_path, harness):

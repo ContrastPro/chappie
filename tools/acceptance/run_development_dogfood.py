@@ -329,6 +329,12 @@ def run_dogfood(
         status, elapsed, reason = _lifecycle_stage(analysis, stage)
         result["stages"][stage] = _stage(status, elapsed, reason)
         _checkpoint(result, destination)
+    invariant_failure = _stage_invariant_failure(result["stages"])
+    if invariant_failure is not None:
+        result.update(status="FAILED", reason_code=invariant_failure)
+        _checkpoint(result, destination)
+        _write_report(result, destination / "report.md")
+        return result
     result["analysis"] = _public_analysis(analysis)
     analysis_state = getattr(getattr(analysis, "state", None), "value", "ANALYSIS_INVALID")
     handoff = None
@@ -344,6 +350,9 @@ def run_dogfood(
         )
     result["completeness"] = _completeness(analysis, handoff)
     result["provider_metrics"] = {
+        "grounding_inference_elapsed_ms": result["stages"]["GROUNDING_SYNTHESIS"]["elapsed_ms"],
+        "proposal_inference_elapsed_ms": result["stages"]["PROPOSAL_SYNTHESIS"]["elapsed_ms"],
+        "review_inference_elapsed_ms": result["stages"]["REVIEW_SYNTHESIS"]["elapsed_ms"],
         "total_inference_elapsed_ms": sum(
             result["stages"][name]["elapsed_ms"]
             for name in ("GROUNDING_SYNTHESIS", "PROPOSAL_SYNTHESIS", "REVIEW_SYNTHESIS")
@@ -360,6 +369,25 @@ def run_dogfood(
     _checkpoint(result, destination)
     _write_report(result, destination / "report.md")
     return result
+
+
+def _stage_invariant_failure(stages: dict[str, object]) -> str | None:
+    """Reject impossible telemetry rather than mislabeling it as model output failure."""
+    dependencies = (
+        ("GROUNDING_PARSE", "GROUNDING_SYNTHESIS"),
+        ("PROPOSAL_SYNTHESIS", "GROUNDING_PARSE"),
+        ("PROPOSAL_PARSE", "PROPOSAL_SYNTHESIS"),
+        ("REVIEW_SYNTHESIS", "PROPOSAL_PARSE"),
+        ("REVIEW_PARSE", "REVIEW_SYNTHESIS"),
+        ("STRUCTURAL_VALIDATION", "REVIEW_PARSE"),
+        ("READINESS", "STRUCTURAL_VALIDATION"),
+    )
+    for stage, prerequisite in dependencies:
+        value = stages[stage]
+        predecessor = stages[prerequisite]
+        if value["status"] != "NOT_REACHED" and predecessor["status"] != "PASS":
+            return "PIPELINE_STAGE_INVARIANT_VIOLATION"
+    return None
 
 
 def _write_report(result: dict[str, object], path: Path) -> None:
