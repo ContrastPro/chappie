@@ -244,6 +244,10 @@ class DevelopmentCitationValidationError(AIValidationError):
         self.failure = failure
 
 
+class _ProposalAuthorityViolation(AIValidationError):
+    """Internal marker for a fail-closed Proposal authority rejection."""
+
+
 class DevelopmentStageError(AIValidationError):
     """A bounded stage failure; no model output is retained in the exception."""
 
@@ -417,6 +421,8 @@ def _parse_development_proposal(
         scope = _parse_proposed_scope(value["proposed_scope"], context_map)
     except DevelopmentCitationValidationError as error:
         raise DevelopmentStageError("PROPOSAL", "PROPOSAL_UNKNOWN_OWNER") from error
+    except _ProposalAuthorityViolation as error:
+        raise DevelopmentStageError("PROPOSAL", "PROPOSAL_AUTHORITY_VIOLATION") from error
     except AIValidationError as error:
         code = (
             "PROPOSAL_UNSAFE_PATH" if "path" in str(error).casefold() else "PROPOSAL_SCHEMA_INVALID"
@@ -424,13 +430,6 @@ def _parse_development_proposal(
         raise DevelopmentStageError("PROPOSAL", code) from error
     if scope.proposed_owner is None and not unknowns:
         raise DevelopmentStageError("PROPOSAL", "PROPOSAL_SCHEMA_INVALID")
-    forbidden = ("edit file", "write file", "git commit", "shell", "execute order")
-    if any(
-        token in item.casefold()
-        for item in (*scope.proposed_behavior, *scope.rationale)
-        for token in forbidden
-    ):
-        raise DevelopmentStageError("PROPOSAL", "PROPOSAL_AUTHORITY_VIOLATION")
     return DevelopmentProposalV1(scope, tuple(unknowns))
 
 
@@ -530,6 +529,10 @@ def _proposal_parse_diagnostics(
             if invalid is not None:
                 path, category = f"$.proposed_scope.{field}[{invalid}]", "INVALID_ARRAY_ITEM"
                 break
+        if category == "OTHER_SCHEMA_FAILURE":
+            semantic_failure = _proposal_semantic_failure(value, scope)
+            if semantic_failure is not None:
+                path, category = semantic_failure
     return ProposalParseDiagnosticsV1(
         "PROPOSAL_PARSE",
         reason_code,
@@ -948,12 +951,8 @@ def _parse_proposed_scope(
         raise AIValidationError(
             "development proposed path is invalid", code="DEVELOPMENT_SCHEMA_INVALID"
         )
-    if any(
-        _forbidden_authority(item) for item in (*lists["proposed_behavior"], *lists["rationale"])
-    ):
-        raise AIValidationError(
-            "development proposal claims forbidden authority", code="DEVELOPMENT_SCHEMA_INVALID"
-        )
+    if _proposal_authority_location(lists) is not None:
+        raise _ProposalAuthorityViolation("development proposal claims forbidden authority")
     return DevelopmentProposedScopeV1(
         owner,
         lists["proposed_modified_files"],
@@ -980,6 +979,27 @@ def _forbidden_authority(value: str) -> bool:
         token in value.casefold()
         for token in ("edit file", "write file", "shell", "git commit", "execute order")
     )
+
+
+def _proposal_authority_location(values: dict[str, tuple[str, ...]]) -> tuple[str, int] | None:
+    for field in ("proposed_behavior", "rationale"):
+        for index, item in enumerate(values[field]):
+            if _forbidden_authority(item):
+                return field, index
+    return None
+
+
+def _proposal_semantic_failure(
+    value: dict[object, object], scope: dict[object, object]
+) -> tuple[str, str] | None:
+    if scope.get("proposed_owner") is None and not value["proposal_unknowns"]:
+        return "$.proposal_unknowns", "REQUIRED_UNKNOWN_MISSING"
+    values = {field: tuple(scope[field]) for field in ("proposed_behavior", "rationale")}
+    location = _proposal_authority_location(values)
+    if location is None:
+        return None
+    field, index = location
+    return f"$.proposed_scope.{field}[{index}]", "AUTHORITY_VIOLATION"
 
 
 def _citation_error(

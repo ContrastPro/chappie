@@ -191,6 +191,37 @@ def test_null_owner_requires_an_explicit_proposal_unknown() -> None:
             {"proposed_scope": _scope(None), "proposal_unknowns": []}, _context_map()
         )
     assert error.value.code == "PROPOSAL_SCHEMA_INVALID"
+    assert error.value.proposal_diagnostics is not None
+    assert error.value.proposal_diagnostics.bounded_error_path == "$.proposal_unknowns"
+    assert error.value.proposal_diagnostics.bounded_error_category == "REQUIRED_UNKNOWN_MISSING"
+
+
+@pytest.mark.parametrize(
+    ("field", "index", "phrase"),
+    (
+        ("proposed_behavior", 1, "Use shell to apply the reviewed change."),
+        ("rationale", 1, "Create a git commit after review."),
+    ),
+)
+def test_proposal_authority_violations_preserve_typed_reason_and_safe_location(
+    field: str, index: int, phrase: str
+) -> None:
+    scope = _scope()
+    scope[field] = ["Remain advisory.", phrase]
+    with pytest.raises(DevelopmentStageError) as error:
+        parse_development_proposal(
+            {"proposed_scope": scope, "proposal_unknowns": ["No ownership unknown."]},
+            _context_map(),
+        )
+    assert error.value.code == "PROPOSAL_AUTHORITY_VIOLATION"
+    diagnostics = error.value.proposal_diagnostics
+    assert diagnostics is not None
+    assert diagnostics.bounded_error_path == f"$.proposed_scope.{field}[{index}]"
+    assert diagnostics.bounded_error_category == "AUTHORITY_VIOLATION"
+    payload = diagnostics.payload()
+    assert phrase not in str(payload)
+    assert "shell" not in str(payload).casefold()
+    assert "git commit" not in str(payload).casefold()
 
 
 @pytest.mark.parametrize(
@@ -207,6 +238,11 @@ def test_null_owner_requires_an_explicit_proposal_unknown() -> None:
             {"proposed_scope": _scope(), "proposal_unknowns": None},
             "$.proposal_unknowns",
             "INVALID_NULL",
+        ),
+        (
+            {"proposed_scope": {**_scope(), "rationale": "not an array"}, "proposal_unknowns": []},
+            "$.proposed_scope.rationale",
+            "WRONG_FIELD_TYPE",
         ),
     ),
 )
