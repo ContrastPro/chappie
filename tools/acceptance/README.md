@@ -135,3 +135,25 @@ and acceptance-tooling implementation planning. The runner validates decisions a
 incidental words in prose. It also bounds plan files and contracts to the supplied tooling scope.
 Historical `1.0.0` evidence remains unchanged and is `LEGACY_UNSCORABLE` under these new structured
 contracts; it may still be used for read-only forensic findings, never converted into a new PASS.
+
+## Development Reasoning 2.0 dogfood harness
+
+`run_development_dogfood.py` is a local, non-canonical acceptance/debug runner for one bounded
+Development Reasoning request. It uses the existing read-only Development pipeline and never
+changes FAST/CODE/DEEP mappings, configured defaults, Knowledge, Git state, or workspace files.
+
+```powershell
+.\.venv\Scripts\python.exe tools\acceptance\run_development_dogfood.py --model qwen3-coder:30b --case diff_review --run-id first_30b
+```
+
+The only currently supported candidates are `qwen3-coder:30b` (CODE) and `qwen3:14b` (DEEP),
+bound exactly with no fallback. Before inference it requires a clean commit-bound Knowledge store,
+reachable Ollama, the selected installed model, and durable default `qwen3:4b`.
+
+Ignored evidence is atomically checkpointed under
+`data/acceptance/development_dogfood/<model>/<run-id>/result.json`, plus a concise `report.md`.
+It records PASS/FAIL/NOT_REACHED timing and bounded reason codes for PREFLIGHT, CONTEXT_MAP,
+EVIDENCE_HANDLES, SYNTHESIS, PARSE, STRUCTURAL_VALIDATION, READINESS, and HANDOFF. It captures
+only public synthesis DTO fields, safe provenance and handle metadata, and provider timing when
+available; prompts, hidden reasoning, raw Knowledge bodies, credentials, and provider payloads
+are not persisted. Existing evidence is never overwritten implicitly.
