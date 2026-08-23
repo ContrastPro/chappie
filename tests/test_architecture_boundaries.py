@@ -285,7 +285,9 @@ PACKAGE_OWNERSHIP = {
     },
     "app.development_analysis": {
         "responsibility": "Bounded read-only application capability for Development Intelligence",
-        "allowed": frozenset({"app.ai", "app.development_analysis", "app.knowledge"}),
+        "allowed": frozenset(
+            {"app.ai", "app.development_analysis", "app.implementation_context", "app.knowledge"}
+        ),
     },
     "app.implementation_context": {
         "responsibility": "Consumer-neutral immutable implementation-context contracts",
