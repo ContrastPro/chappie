@@ -10,7 +10,7 @@ import {
   ControlPlaneStatusV1,
   DevelopmentModelRoleV1,
 } from "./api/contracts";
-import { ChappieControlPlaneClient, ControlPlaneClientError, ControlPlaneDependencyError, ControlPlaneIncompatibleError } from "./api/client";
+import { ChappieControlPlaneClient, ControlPlaneClientError, ControlPlaneDependencyError, ControlPlaneIncompatibleError, ControlPlaneTransportTimeoutError, developmentAnalysisFailureMessage } from "./api/client";
 import { appendTurn, ChatTurnV1, renderTurns } from "./ui/chat";
 import { capabilitySummary, contextPreview, humanState, projectChatAvailability, projectQaFailureMessage, setupActionLabel } from "./ui/presentation";
 import { ChappieStatusSidebarV1, StatusRefreshGateV1 } from "./ui/status";
@@ -561,7 +561,12 @@ function chatError(error: unknown): string {
     "The captured workspace context is no longer available.",
   ].includes(error.message)) return error.message;
   if (error instanceof Error && error.message === "SENSITIVE_FILE_BLOCKED") return "Sensitive files cannot be attached as context.";
-  if (error instanceof ControlPlaneDependencyError) { return projectQaFailureMessage(error.reasonCode); }
+  if (error instanceof ControlPlaneTransportTimeoutError) return "Chappie request timed out before the Control Plane returned a result.";
+  if (error instanceof ControlPlaneDependencyError) {
+    return error.reasonCode.startsWith("AI_PROVIDER_") || error.reasonCode.startsWith("ANALYSIS_") || error.reasonCode === "MODEL_ROLE_UNAVAILABLE" || error.reasonCode.startsWith("KNOWLEDGE_") || error.reasonCode === "NO_RELEVANT_KNOWLEDGE"
+      ? developmentAnalysisFailureMessage(error.reasonCode)
+      : projectQaFailureMessage(error.reasonCode);
+  }
   if (error instanceof ControlPlaneIncompatibleError) { return "Chappie Control Plane version is incompatible."; }
   if (error instanceof ControlPlaneClientError) { return error.message; }
   return "Chappie Project QA is temporarily unavailable.";

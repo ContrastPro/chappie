@@ -27,6 +27,9 @@ export class ControlPlaneDependencyError extends ControlPlaneClientError {
 export class ControlPlaneRequestError extends ControlPlaneClientError {
   public constructor(public readonly reasonCode: string, message: string) { super(message); }
 }
+export class ControlPlaneTransportTimeoutError extends ControlPlaneClientError {
+  public constructor(public readonly reasonCode = "CLIENT_TRANSPORT_TIMEOUT") { super("Control Plane request timed out"); }
+}
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -34,6 +37,8 @@ export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>
 export const CONTROL_PLANE_HEALTH_TIMEOUT_MS = 1_500;
 export const CONTROL_PLANE_REFRESH_TIMEOUT_MS = 5_000;
 export const PROJECT_QA_HTTP_TIMEOUT_MS = 60_000;
+/** Development has the same bounded backend model call plus evidence and validation overhead. */
+export const DEVELOPMENT_ANALYSIS_HTTP_TIMEOUT_MS = 105_000;
 export const PROJECT_QA_MAX_REQUEST_CHARACTERS = 12_000;
 
 export class ChappieControlPlaneClient {
@@ -44,6 +49,7 @@ export class ChappieControlPlaneClient {
     private readonly fetcher: FetchLike = fetch,
     private readonly healthTimeoutMs = CONTROL_PLANE_HEALTH_TIMEOUT_MS,
     private readonly projectQaTimeoutMs = PROJECT_QA_HTTP_TIMEOUT_MS,
+    private readonly developmentAnalysisTimeoutMs = DEVELOPMENT_ANALYSIS_HTTP_TIMEOUT_MS,
   ) {
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
       throw new ControlPlaneClientError("Control Plane port must be between 1 and 65535");
@@ -83,7 +89,7 @@ export class ChappieControlPlaneClient {
     ));
   }
   public analyzeDevelopment(request: DevelopmentAnalysisRequestV1): Promise<DevelopmentAnalysisV1> {
-    return this.data("/v1/development/analyze", { method: "POST", body: JSON.stringify(request) }, this.projectQaTimeoutMs).then(parseDevelopmentAnalysis);
+    return this.data("/v1/development/analyze", { method: "POST", body: JSON.stringify(request) }, this.developmentAnalysisTimeoutMs).then(parseDevelopmentAnalysis);
   }
   public prepareCodexTask(request: CodexTaskPreparationRequestV1): Promise<CodexTaskV1> {
     return this.data("/v1/development/task", { method: "POST", body: JSON.stringify(request) }, this.projectQaTimeoutMs).then(parseCodexTask);
@@ -117,7 +123,7 @@ export class ChappieControlPlaneClient {
       return value as unknown as TransportEnvelopeV1<T>;
     } catch (error) {
       if (error instanceof ControlPlaneClientError) { throw error; }
-      if (error instanceof Error && error.name === "AbortError") { throw new ControlPlaneClientError("Control Plane request timed out"); }
+      if (error instanceof Error && error.name === "AbortError") { throw new ControlPlaneTransportTimeoutError(); }
       throw new ControlPlaneClientError("Control Plane is unavailable");
     } finally {
       clearTimeout(timer);
@@ -132,6 +138,14 @@ function projectQaRequestFailureMessage(code: string, fallback: string): string 
   if (code === "INVALID_PROJECT_QA_QUESTION") return "Project QA requires a non-empty question.";
   if (code === "PROJECT_QA_NO_RELEVANT_KNOWLEDGE") return "Chappie could not find relevant canonical Knowledge for this question.";
   return fallback;
+}
+
+export function developmentAnalysisFailureMessage(code: string | undefined): string {
+  if (code === "AI_PROVIDER_TIMEOUT") return "Chappie Development Analysis timed out during local model inference.";
+  if (code === "ANALYSIS_INVALID") return "Chappie Development Analysis returned an invalid bounded result.";
+  if (code === "MODEL_ROLE_UNAVAILABLE") return "The selected Chappie development model role is unavailable; no fallback was used.";
+  if (code === "KNOWLEDGE_STALE" || code === "KNOWLEDGE_UNAVAILABLE" || code === "NO_RELEVANT_KNOWLEDGE") return "Chappie Knowledge is not ready for Development Analysis.";
+  return "Chappie Development Analysis is temporarily unavailable.";
 }
 
 function parseProjectQA(value: unknown): ProjectQAResponseV1 {

@@ -37,6 +37,8 @@ class DevelopmentAnalysisServiceV1:
         self._role_available = role_available
 
     def analyze(self, request: DevelopmentAnalysisRequestV1) -> DevelopmentAnalysisV1:
+        from app.ai.errors import AIProviderError, AIProviderTimeoutError
+
         try:
             role, model = resolve_development_model_role(request.requested_role)
         except ValueError:
@@ -107,13 +109,15 @@ class DevelopmentAnalysisServiceV1:
             output = self._runner(request, context, evidence)
             analysis = _analysis_from_output(request, context, evidence, output)
             return validate_development_analysis(analysis)
-        except TimeoutError:
-            return _failure(request, DevelopmentAnalysisStateV1.TIMEOUT, "AI_TIMEOUT", evidence)
+        except (TimeoutError, AIProviderTimeoutError):
+            return _failure(
+                request, DevelopmentAnalysisStateV1.TIMEOUT, "AI_PROVIDER_TIMEOUT", evidence
+            )
         except ValueError:
             return _failure(
                 request, DevelopmentAnalysisStateV1.ANALYSIS_INVALID, "ANALYSIS_INVALID", evidence
             )
-        except (OSError, RuntimeError, TypeError):
+        except (AIProviderError, OSError, RuntimeError, TypeError):
             return _failure(
                 request, DevelopmentAnalysisStateV1.MODEL_UNAVAILABLE, "AI_UNAVAILABLE", evidence
             )

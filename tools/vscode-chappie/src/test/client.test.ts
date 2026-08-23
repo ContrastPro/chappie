@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import * as path from "node:path";
 import test from "node:test";
-import { ChappieControlPlaneClient, CONTROL_PLANE_HEALTH_TIMEOUT_MS, CONTROL_PLANE_REFRESH_TIMEOUT_MS, ControlPlaneClientError, ControlPlaneDependencyError, ControlPlaneIncompatibleError, ControlPlaneRequestError, PROJECT_QA_HTTP_TIMEOUT_MS, PROJECT_QA_MAX_REQUEST_CHARACTERS } from "../api/client";
+import { ChappieControlPlaneClient, CONTROL_PLANE_HEALTH_TIMEOUT_MS, CONTROL_PLANE_REFRESH_TIMEOUT_MS, ControlPlaneClientError, ControlPlaneDependencyError, ControlPlaneIncompatibleError, ControlPlaneRequestError, DEVELOPMENT_ANALYSIS_HTTP_TIMEOUT_MS, PROJECT_QA_HTTP_TIMEOUT_MS, PROJECT_QA_MAX_REQUEST_CHARACTERS, developmentAnalysisFailureMessage } from "../api/client";
 import { capabilitySummary, contextPreview, humanState, projectChatAvailability, projectQaFailureMessage, setupActionLabel } from "../ui/presentation";
 import { StatusRefreshGateV1 } from "../ui/status";
 import { CONTROL_PLANE_DIGEST, CONTROL_PLANE_IDENTITY, TRANSPORT_DIGEST, TRANSPORT_IDENTITY } from "../api/contracts";
@@ -54,6 +54,15 @@ test("Project QA has a bounded local-inference timeout longer than health checks
   assert.ok(PROJECT_QA_HTTP_TIMEOUT_MS >= 45_000);
   assert.equal((await client.askProject("What owns evidence?")).answer, "grounded");
   assert.equal(projectQaFailureMessage("AI_TIMEOUT"), "Chappie Project QA timed out before local inference completed.");
+});
+
+test("Development Analysis has its own finite transport deadline beyond the CODE backend limit", async () => {
+  assert.equal(PROJECT_QA_HTTP_TIMEOUT_MS, 60_000);
+  assert.ok(DEVELOPMENT_ANALYSIS_HTTP_TIMEOUT_MS > 90_000);
+  assert.ok(DEVELOPMENT_ANALYSIS_HTTP_TIMEOUT_MS <= 120_000);
+  assert.equal(developmentAnalysisFailureMessage("AI_PROVIDER_TIMEOUT"), "Chappie Development Analysis timed out during local model inference.");
+  assert.equal(developmentAnalysisFailureMessage("MODEL_ROLE_UNAVAILABLE"), "The selected Chappie development model role is unavailable; no fallback was used.");
+  assert.equal(developmentAnalysisFailureMessage("KNOWLEDGE_STALE"), "Chappie Knowledge is not ready for Development Analysis.");
 });
 
 test("Project QA propagates a selected stable role without changing durable model policy", async () => {
@@ -119,6 +128,28 @@ test("typed Project QA dependency errors map without exposing expected HTTP stat
   );
   assert.equal(projectQaFailureMessage("AI_UNAVAILABLE"), "Chappie AI is not configured for this workspace.");
   assert.equal(projectQaFailureMessage("KNOWLEDGE_UNAVAILABLE"), "Chappie Knowledge is not configured for this workspace.");
+});
+
+test("Development Analysis preserves typed backend timeout without retry", async () => {
+  const timeout = JSON.stringify({
+    transport_contract: TRANSPORT_IDENTITY,
+    transport_contract_digest: TRANSPORT_DIGEST,
+    control_plane_contract: CONTROL_PLANE_IDENTITY,
+    control_plane_contract_digest: CONTROL_PLANE_DIGEST,
+    request_id: "a".repeat(32),
+    status: "ERROR",
+    data: null,
+    error: { code: "AI_PROVIDER_TIMEOUT", message: "Development analysis is unavailable" },
+  });
+  let requests = 0;
+  await assert.rejects(
+    () => new ChappieControlPlaneClient(8765, async () => {
+      requests += 1;
+      return new Response(timeout, { status: 503, headers: { "content-type": "application/json" } });
+    }).analyzeDevelopment({ request: "Plan", requested_role: "CODE", workspace_context: null }),
+    (error: unknown) => error instanceof ControlPlaneDependencyError && error.reasonCode === "AI_PROVIDER_TIMEOUT",
+  );
+  assert.equal(requests, 1);
 });
 
 test("platform executable resolution and owned process stop are argv-safe", () => {

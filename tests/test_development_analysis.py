@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.ai.errors import AIProviderTimeoutError
 from app.ai.model_policy import DevelopmentModelRoleV1
 from app.development_analysis.models import (
     DevelopmentAnalysisRequestV1,
@@ -61,6 +62,23 @@ def test_unavailable_role_fails_closed_without_running_inference(tmp_path) -> No
     assert result.state == DevelopmentAnalysisStateV1.MODEL_UNAVAILABLE
     assert result.reason_code == "MODEL_ROLE_UNAVAILABLE"
     assert calls == []
+
+
+def test_provider_timeout_is_a_typed_development_analysis_failure(tmp_path, monkeypatch) -> None:
+    from app.development_analysis import service
+
+    snapshot = RepositorySnapshotV1("a" * 40, True)
+    records = initial_records(snapshot=snapshot)
+    monkeypatch.setattr(service, "committed_snapshot", lambda _root: snapshot)
+    monkeypatch.setattr(service, "read_store", lambda _path: (records, manifest(records, snapshot)))
+    result = DevelopmentAnalysisServiceV1(
+        paths=_paths(tmp_path),
+        runner=lambda *_args: (_ for _ in ()).throw(AIProviderTimeoutError("timed out")),
+        role_available=lambda _role: True,
+    ).analyze(DevelopmentAnalysisRequestV1("Understand architecture", DevelopmentModelRoleV1.CODE))
+
+    assert result.state == DevelopmentAnalysisStateV1.TIMEOUT
+    assert result.reason_code == "AI_PROVIDER_TIMEOUT"
 
 
 @pytest.mark.parametrize("unsafe", ("C:/secret.py", "../secret.py"))

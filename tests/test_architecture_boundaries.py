@@ -246,6 +246,7 @@ ALLOWED_TRACKED_DISTRIBUTION_ARTIFACTS = frozenset(
     {
         "tools/vscode-chappie/dist/chappie-vscode-0.1.20.vsix",
         "tools/vscode-chappie/dist/chappie-vscode-0.1.21.vsix",
+        "tools/vscode-chappie/dist/chappie-vscode-0.1.22.vsix",
         "tools/vscode-chappie/dist/SHA256SUMS",
     }
 )
