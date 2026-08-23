@@ -714,6 +714,21 @@ def test_development_identifier_has_exact_retrieval_priority(identifier: str) ->
     assert result.selection_reasons[0][1][0].value == "EXACT_ID"
 
 
+def test_explicit_diff_review_identifier_selects_planned_design_context() -> None:
+    snapshot = RepositorySnapshotV1("a" * 40, True)
+    records = initial_records(snapshot=snapshot)
+    result, _ = retrieve(
+        records,
+        manifest(records, snapshot),
+        _development_retrieval_request(records, "Design DevelopmentDiffReviewV1", None),
+    )
+    selected = {
+        record.title for record in records if record.knowledge_id in result.selected_record_ids
+    }
+    assert "DevelopmentDiffReviewV1" in selected
+    assert "Development diff-review authority boundary" in selected
+
+
 def _ready_analysis(**changes) -> DevelopmentAnalysisV1:
     base = DevelopmentAnalysisV1(
         DevelopmentAnalysisStateV1.OK,

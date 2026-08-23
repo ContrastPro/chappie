@@ -57,6 +57,7 @@ SOURCE_ALLOWLIST = frozenset(
         "docs/architecture/FEATURE_IMPLEMENTATION_RULES.md",
         "docs/architecture/PACKAGE_BOUNDARIES.md",
         "docs/architecture/ARCHITECTURE_DECISIONS.md",
+        "docs/architecture/DEVELOPMENT_DIFF_REVIEW_DESIGN.md",
         "docs/architecture/REFACTOR_FINAL_REPORT.md",
         "app/development_analysis/__init__.py",
         "app/development_analysis/models.py",
@@ -549,6 +550,45 @@ def initial_records(
             )
         )
         existing_ids[title] = records[-1].knowledge_id
+    for (
+        kind,
+        title,
+        statement,
+        locator,
+        tags,
+        related_titles,
+    ) in _planned_development_record_definitions():
+        source = _source(
+            root,
+            snapshot,
+            "docs/architecture/DEVELOPMENT_DIFF_REVIEW_DESIGN.md",
+            KnowledgeAuthorityV1.DOCUMENTATION,
+            locator,
+        )
+        related = tuple(existing_ids[item] for item in related_titles)
+        records.append(
+            KnowledgeRecordV1(
+                knowledge_id(
+                    kind,
+                    title,
+                    statement,
+                    KnowledgeAuthorityV1.DOCUMENTATION,
+                    KnowledgeStatusV1.PLANNED,
+                    (source,),
+                    tags,
+                    related,
+                ),
+                kind,
+                title,
+                statement,
+                KnowledgeAuthorityV1.DOCUMENTATION,
+                KnowledgeStatusV1.PLANNED,
+                (source,),
+                tags,
+                related,
+            )
+        )
+        existing_ids[title] = records[-1].knowledge_id
     return tuple(records)
 
 
@@ -954,6 +994,38 @@ def _development_record_definitions() -> tuple[
             "development analysis tests",
             ("development", "tests", "analysis", "readiness", "boundary"),
             ("DevelopmentAnalysisV1",),
+        ),
+    )
+
+
+def _planned_development_record_definitions() -> tuple[
+    tuple[KnowledgeTypeV1, str, str, str, tuple[str, ...], tuple[str, ...]], ...
+]:
+    """Source-backed planned facts that must not be presented as implemented."""
+    return (
+        (
+            KnowledgeTypeV1.CONTRACT,
+            "DevelopmentDiffReviewV1",
+            "DevelopmentDiffReviewV1 is a planned read-only advisory contract that will compare an approved development analysis and Codex handoff with bounded change and test evidence.",
+            "Proposed output contract",
+            ("development", "diff", "review", "planned", "contract", "advisory"),
+            ("Package ownership: Development Intelligence", "CodexTaskV1"),
+        ),
+        (
+            KnowledgeTypeV1.AUTHORITY_BOUNDARY,
+            "Development diff-review authority boundary",
+            "The planned DevelopmentDiffReviewV1 will not apply diffs, execute commands, mutate Git or source files, or self-authorize acceptance; human approval remains required.",
+            "Ownership and scope",
+            ("development", "diff", "review", "planned", "authority", "read-only"),
+            ("DevelopmentDiffReviewV1", "Development Intelligence advisory boundary"),
+        ),
+        (
+            KnowledgeTypeV1.MODULE_RESPONSIBILITY,
+            "Development diff-review planned tests",
+            "The planned diff-review implementation will use direct deterministic coverage for approved scope, unexpected changes, provenance, tests, authority, unknowns, and human approval.",
+            "Required future tests",
+            ("development", "diff", "review", "planned", "tests"),
+            ("DevelopmentDiffReviewV1",),
         ),
     )
 

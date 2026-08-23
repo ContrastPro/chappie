@@ -393,6 +393,10 @@ def _development_retrieval_request(records, request: str, workspace_path: str | 
         topic_tokens=tokenize_topic(request),
         record_ids=tuple(dict.fromkeys(exact_ids))[:8],
         maximum_records=8,
+        include_planned=any(
+            record.knowledge_id in exact_ids and record.status.value == "PLANNED"
+            for record in records
+        ),
     )
 
 
