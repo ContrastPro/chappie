@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from re import escape, search
 
 from app.ai.schemas import digest
 from app.development_analysis.context import DevelopmentEvidenceHandleV1
@@ -20,15 +21,32 @@ KNOWN_OWNERS = frozenset(
     {"ARCHITECTURE", "MODULE_RESPONSIBILITY", "CONTRACT", "AUTHORITY_BOUNDARY"}
 )
 FORBIDDEN_PATH_PREFIXES = ("data/", "logs/", ".venv/", ".env")
-FORBIDDEN_AUTHORITY = (
+FORBIDDEN_ACTIVE_AUTHORITY = (
     "edit file",
+    "edit files",
     "write file",
+    "write files",
     "git commit",
-    "shell",
+    "git push",
+    "commit git changes",
+    "push git changes",
+    "use shell",
+    "run shell command",
+    "run shell commands",
+    "run arbitrary shell",
+    "execute shell command",
+    "execute order",
+    "execute orders",
+    "execute trade",
+    "execute trades",
+    "submit order",
+    "submit orders",
+    "mutate risk state",
     "knowledge mutation",
-    "trade",
-    "risk",
-    "execution",
+    "mutate knowledge",
+    "rebuild knowledge",
+    "deploy",
+    "execution authority",
 )
 
 
@@ -176,9 +194,8 @@ def prepare_codex_task(request: CodexTaskPreparationRequestV1) -> CodexTaskV1:
         if any(_unsafe_path(path) for path in analysis.likely_files):
             raise ValueError("UNSAFE_FILE_PATH")
         if any(
-            token in text.casefold()
+            _forbidden_authority_claim(text)
             for text in (*analysis.inferences, *analysis.risks, *analysis.acceptance_criteria)
-            for token in FORBIDDEN_AUTHORITY
         ):
             raise ValueError("AUTHORITY_VIOLATION")
         if any(
@@ -257,6 +274,20 @@ def _unsafe_path(value: str) -> bool:
         or ".." in normalized.split("/")
         or normalized.startswith(FORBIDDEN_PATH_PREFIXES)
     )
+
+
+def _forbidden_authority_claim(value: str) -> bool:
+    normalized = value.casefold()
+    for claim in FORBIDDEN_ACTIVE_AUTHORITY:
+        if search(rf"\b{escape(claim)}\b", normalized) is None:
+            continue
+        if any(
+            f"{prefix}{claim}" in normalized
+            for prefix in ("no ", "without ", "must not ", "do not ", "does not ")
+        ):
+            continue
+        return True
+    return False
 
 
 def _bullets(items: tuple[str, ...]) -> tuple[str, ...]:

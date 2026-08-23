@@ -92,11 +92,24 @@ def _proposed_scope() -> DevelopmentProposedScopeV1:
 
 
 def test_valid_analysis_prepares_deterministic_advisory_task() -> None:
-    task = prepare_codex_task(CodexTaskPreparationRequestV1(_analysis()))
+    analysis = _analysis()
+    task = prepare_codex_task(CodexTaskPreparationRequestV1(analysis))
     assert task.state == CodexTaskStateV1.ADVISORY
     assert task.source_commit == "a" * 40
-    assert task.evidence_digest == _analysis().evidence.evidence_digest
+    assert task.evidence_digest == analysis.evidence.evidence_digest
     assert task.requested_role == "CODE"
+    assert task.facts == analysis.facts
+    assert task.inferences == analysis.inferences
+    assert task.unknowns == analysis.unknowns
+    assert task.allowed_files == analysis.likely_files
+    assert task.proposed_modified_files == analysis.proposed_scope.proposed_modified_files
+    assert task.proposed_new_files == analysis.proposed_scope.proposed_new_files
+    assert task.proposed_contract_changes == analysis.proposed_scope.proposed_contract_changes
+    assert task.risks == analysis.risks
+    assert task.required_tests == analysis.required_tests
+    assert task.non_goals == analysis.non_goals
+    assert task.acceptance_criteria == analysis.acceptance_criteria
+    assert task.approval_status == "HUMAN_APPROVAL_REQUIRED"
     assert task.projection() == task.projection()
     assert "Human approval" in task.projection()
 
@@ -128,6 +141,65 @@ def test_unsafe_or_incomplete_analysis_fails_closed(changes, reason) -> None:
     task = prepare_codex_task(CodexTaskPreparationRequestV1(_analysis(**changes)))
     assert task.state == CodexTaskStateV1.VALIDATION_ERROR
     assert task.reason_code == reason
+
+
+@pytest.mark.parametrize(
+    ("field", "text"),
+    (
+        ("risks", "There is a risk of contract drift."),
+        ("risks", "Risk of missing test coverage."),
+        ("risks", "Risk boundary must remain unchanged."),
+        ("risks", "No Risk authority is introduced."),
+        ("risks", "Risk authority remains unchanged."),
+        ("inferences", "The capability remains read-only."),
+        ("acceptance_criteria", "No execution authority is introduced."),
+        (
+            "acceptance_criteria",
+            "Human approval is required before Codex receives a task.",
+        ),
+    ),
+)
+def test_safe_risk_and_authority_boundaries_remain_advisory(field, text) -> None:
+    task = prepare_codex_task(CodexTaskPreparationRequestV1(_analysis(**{field: (text,)})))
+    assert task.state == CodexTaskStateV1.ADVISORY
+    assert task.reason_code is None
+
+
+@pytest.mark.parametrize(
+    ("field", "text"),
+    (
+        ("inferences", "Execute trades for the portfolio."),
+        ("inferences", "Submit orders automatically."),
+        ("risks", "Mutate Risk state as a mitigation."),
+        ("inferences", "Write files in the workspace."),
+        ("inferences", "Run arbitrary shell commands."),
+        ("inferences", "Commit Git changes after review."),
+        ("inferences", "Push Git changes after review."),
+        ("inferences", "Rebuild Knowledge automatically."),
+        ("acceptance_criteria", "Deploy this capability."),
+        ("inferences", "Gain execution authority."),
+    ),
+)
+def test_active_authority_claims_fail_closed(field, text) -> None:
+    task = prepare_codex_task(CodexTaskPreparationRequestV1(_analysis(**{field: (text,)})))
+    assert task.state == CodexTaskStateV1.VALIDATION_ERROR
+    assert task.reason_code == "AUTHORITY_VIOLATION"
+
+
+def test_authority_violation_returns_a_redacted_handoff() -> None:
+    analysis = _analysis(inferences=("Execute trades for the portfolio.",))
+    task = prepare_codex_task(CodexTaskPreparationRequestV1(analysis))
+    assert task.state == CodexTaskStateV1.VALIDATION_ERROR
+    assert task.validation_status == "INVALID"
+    assert task.reason_code == "AUTHORITY_VIOLATION"
+    assert task.task_id == ""
+    assert task.facts == ()
+    assert task.inferences == ()
+    assert task.evidence_map == ()
+    assert task.allowed_files == ()
+    assert task.proposed_modified_files == ()
+    assert task.required_tests == ()
+    assert task.acceptance_criteria == ()
 
 
 @pytest.mark.parametrize(
