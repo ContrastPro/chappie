@@ -12,6 +12,7 @@ from app.development_analysis.models import (
     DevelopmentAnalysisRequestV1,
     DevelopmentAnalysisStateV1,
     DevelopmentAnalysisV1,
+    DevelopmentCitationFailureV1,
     DevelopmentEvidencePackV1,
     DevelopmentLifecycleEventV1,
     DevelopmentLifecycleStageV1,
@@ -50,6 +51,7 @@ class DevelopmentAnalysisServiceV1:
 
     def analyze(self, request: DevelopmentAnalysisRequestV1) -> DevelopmentAnalysisV1:
         from app.ai.errors import AIProviderError, AIProviderTimeoutError, AIValidationError
+        from app.development_analysis.synthesis import DevelopmentCitationValidationError
 
         lifecycle = _LifecycleRecorder(request, self._clock, self._request_id_factory)
         lifecycle.begin(DevelopmentLifecycleStageV1.ROLE_RESOLUTION)
@@ -132,6 +134,7 @@ class DevelopmentAnalysisServiceV1:
             "capability_identity": role.capability_identity,
             "record_ids": result.selected_record_ids,
             "record_digests": result.selected_record_digests,
+            "allowed_fact_ids": _allowed_fact_ids(context),
         }
         evidence = DevelopmentEvidencePackV1(
             **{**payload, "requested_role": request.requested_role},
@@ -163,6 +166,15 @@ class DevelopmentAnalysisServiceV1:
                 "AI_PROVIDER_TIMEOUT",
                 evidence,
                 lifecycle.failed("AI_PROVIDER_TIMEOUT"),
+            )
+        except DevelopmentCitationValidationError as error:
+            return _failure(
+                request,
+                DevelopmentAnalysisStateV1.ANALYSIS_INVALID,
+                error.code,
+                evidence,
+                lifecycle.failed(error.code),
+                citation_failure=error.failure,
             )
         except AIValidationError as error:
             return _failure(
@@ -279,7 +291,14 @@ def _development_identifiers(request: str, workspace_path: str | None) -> tuple[
     return tuple(sorted(value.casefold() for value in values))
 
 
-def _failure(request, state, reason, evidence=None, lifecycle=None) -> DevelopmentAnalysisV1:
+def _failure(
+    request,
+    state,
+    reason,
+    evidence=None,
+    lifecycle=None,
+    citation_failure: DevelopmentCitationFailureV1 | None = None,
+) -> DevelopmentAnalysisV1:
     return DevelopmentAnalysisV1(
         state,
         request.request,
@@ -289,7 +308,14 @@ def _failure(request, state, reason, evidence=None, lifecycle=None) -> Developme
         else "UNAVAILABLE",
         reason_code=reason,
         lifecycle=lifecycle,
+        citation_failure=citation_failure,
     )
+
+
+def _allowed_fact_ids(context: object) -> tuple[str, ...]:
+    from app.development_analysis.synthesis import development_allowed_fact_ids
+
+    return development_allowed_fact_ids(context)
 
 
 def _validation_reason(error: ValueError) -> str:

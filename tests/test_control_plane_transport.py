@@ -26,6 +26,7 @@ from app.control_plane.transport import (
     PROJECT_QA_MAX_REQUEST_BODY_BYTES,
     ChappieControlPlaneServerV1,
     ControlPlaneTransportErrorV1,
+    _log_development_lifecycle,
 )
 from app.development_analysis.models import DevelopmentAnalysisStateV1, DevelopmentAnalysisV1
 from app.platform.bootstrap import (
@@ -344,6 +345,51 @@ def test_unexpected_development_exception_remains_fail_closed_500(server, caplog
     assert '"reason_code": "INTERNAL_ERROR"' in caplog.text
     assert "Analyze architecture" not in caplog.text
     assert "secret internal detail" not in caplog.text
+
+
+def test_development_failure_telemetry_survives_completion_without_sensitive_content(
+    caplog,
+) -> None:
+    caplog.set_level(logging.WARNING, logger="app.control_plane.transport")
+    _log_development_lifecycle(
+        {
+            "request": "sensitive prompt must never reach diagnostics",
+            "lifecycle": {
+                "request_id": "a" * 32,
+                "operation": "DEVELOPMENT_ANALYSIS",
+                "requested_role": "CODE",
+                "effective_model": "qwen3-coder:30b",
+                "events": [
+                    {
+                        "stage": "SYNTHESIS",
+                        "status": "FAILED",
+                        "elapsed_ms": 90_000,
+                        "reason_code": "UNSUPPORTED_KNOWLEDGE_CITATION",
+                    }
+                ],
+            },
+            "evidence": {
+                "allowed_fact_ids": ["knowledge.record.statement"],
+                "record_ids": ["record"],
+                "evidence_digest": "b" * 64,
+                "knowledge_context_digest": "c" * 64,
+                "requested_role": "CODE",
+                "effective_model": "qwen3-coder:30b",
+                "answer": "sensitive model answer",
+            },
+            "citation_failure": {
+                "citation_kind": "FACT_ID",
+                "rejected_identifier": "knowledge.unsupplied.statement",
+                "rejection": "NOT_IN_ALLOWLIST",
+            },
+        }
+    )
+    assert '"request_id": "' + "a" * 32 in caplog.text
+    assert "UNSUPPORTED_KNOWLEDGE_CITATION" in caplog.text
+    assert "knowledge.unsupplied.statement" in caplog.text
+    assert "knowledge.record.statement" in caplog.text
+    assert "sensitive prompt" not in caplog.text
+    assert "sensitive model answer" not in caplog.text
 
 
 def test_project_qa_transport_accepts_the_canonical_deep_question_boundary(server) -> None:

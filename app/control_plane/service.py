@@ -555,8 +555,8 @@ class ChappieControlPlaneV1:
         return DevelopmentAnalysisServiceV1(
             paths=self._paths,
             role_available=available,
-            runner=lambda item, knowledge, _evidence: _run_development_analysis_ai(
-                self._paths, item, knowledge
+            runner=lambda item, knowledge, evidence: _run_development_analysis_ai(
+                self._paths, item, knowledge, evidence
             ),
         ).analyze(value)
 
@@ -727,7 +727,9 @@ def _run_project_qa(
     )
 
 
-def _run_development_analysis_ai(paths: object, request: object, knowledge_context: object):
+def _run_development_analysis_ai(
+    paths: object, request: object, knowledge_context: object, evidence: object
+):
     """Reuse the configured local AI only as a read-only synthesis engine."""
     from app.ai.model_policy import resolve_development_model_role
     from app.platform.setup.ai_smoke import build_configured_chappie_ai, valid_setup_ai_config
@@ -742,7 +744,7 @@ def _run_development_analysis_ai(paths: object, request: object, knowledge_conte
     try:
         from app.development_analysis.synthesis import synthesize_development
 
-        return synthesize_development(ai, request, knowledge_context)
+        return synthesize_development(ai, request, knowledge_context, evidence)
     finally:
         ai.close()
 

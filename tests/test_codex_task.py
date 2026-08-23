@@ -33,6 +33,7 @@ def _analysis(**changes):
         "capability_identity": "development_model_role/CODE_ADVISORY",
         "record_ids": ("record",),
         "record_digests": ("d" * 64,),
+        "allowed_fact_ids": ("knowledge.record.statement",),
     }
     evidence = DevelopmentEvidencePackV1(**raw, evidence_digest=evidence_digest(raw))
     base = DevelopmentAnalysisV1(

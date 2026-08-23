@@ -9,6 +9,8 @@ from app.development_analysis.models import (
     DevelopmentAnalysisRequestV1,
     DevelopmentAnalysisStateV1,
     DevelopmentAnalysisV1,
+    DevelopmentCitationKindV1,
+    DevelopmentCitationRejectionV1,
     assess_development_analysis_readiness,
     development_readiness,
     validate_development_analysis,
@@ -19,8 +21,12 @@ from app.development_analysis.service import (
 )
 from app.development_analysis.synthesis import (
     DEVELOPMENT_SYNTHESIS_IDENTITY,
+    DEVELOPMENT_SYNTHESIS_INSTRUCTION,
+    DevelopmentCitationValidationError,
     DevelopmentSynthesisOutputV1,
+    development_allowed_fact_ids,
     parse_development_synthesis,
+    synthesize_development,
 )
 from app.knowledge import RepositorySnapshotV1, initial_records, manifest
 from app.knowledge.retrieval import retrieve
@@ -83,6 +89,9 @@ def test_analysis_builds_evidence_before_stubbed_inference(tmp_path, monkeypatch
     assert result.evidence.source_commit == snapshot.commit
     assert result.evidence.knowledge_manifest_digest
     assert result.evidence.evidence_digest
+    assert result.evidence.allowed_fact_ids == tuple(sorted(result.evidence.allowed_fact_ids))
+    assert len(result.evidence.allowed_fact_ids) == len(set(result.evidence.allowed_fact_ids))
+    assert result.evidence.allowed_fact_ids == development_allowed_fact_ids(observed[0][1])
     assert result.payload()["evidence"]["requested_role"] == role.value
     assert observed and observed[0][2] == result.evidence
     assert result.readiness == DevelopmentAnalysisReadinessV1.READY_FOR_TASK
@@ -224,6 +233,173 @@ def test_dedicated_development_contract_accepts_evidence_backed_output() -> None
     assert output.architecture_owners == ("MODULE_RESPONSIBILITY",)
     assert "diff review" in output.risks[0]
     assert request.startswith("Design a bounded")
+
+
+def test_development_synthesis_input_binds_the_exact_explicit_fact_allowlist() -> None:
+    _request, records = _development_context()
+    context = type("Context", (), {"records": records, "context_digest": "digest"})()
+    allowed_fact_ids = development_allowed_fact_ids(context)
+
+    class Provider:
+        def generate(self, request):
+            assert request.context["allowed_fact_ids"] == list(allowed_fact_ids)
+            assert tuple(sorted(fact.fact_id for fact in request.facts)) == allowed_fact_ids
+            return type("Result", (), {"structured_output": _synthesis_payload(context)})()
+
+    class AI:
+        config = type("Config", (), {"profile": "LOCAL", "temperature": 0, "timeout_seconds": 1})()
+        router = type("Router", (), {"provider_for": lambda _self, _profile: Provider()})()
+
+    evidence = type("Evidence", (), {"allowed_fact_ids": allowed_fact_ids})()
+    assert synthesize_development(
+        AI(), type("Request", (), {"request": "Analyze"})(), context, evidence
+    )
+    assert "allowed_fact_ids" in DEVELOPMENT_SYNTHESIS_INSTRUCTION
+    assert "model memory is not evidence" in DEVELOPMENT_SYNTHESIS_INSTRUCTION
+
+
+@pytest.mark.parametrize(
+    ("changes", "kind", "rejection"),
+    (
+        (
+            {"facts": ["knowledge.real-but-unsupplied.statement"]},
+            DevelopmentCitationKindV1.FACT_ID,
+            DevelopmentCitationRejectionV1.NOT_IN_ALLOWLIST,
+        ),
+        (
+            {"facts": ["knowledge.invented.statement"]},
+            DevelopmentCitationKindV1.FACT_ID,
+            DevelopmentCitationRejectionV1.NOT_IN_ALLOWLIST,
+        ),
+        (
+            {"architecture_owners": ["INVENTED_OWNER"]},
+            DevelopmentCitationKindV1.OWNER,
+            DevelopmentCitationRejectionV1.UNSUPPORTED_BY_CITED_FACT,
+        ),
+        (
+            {"affected_contracts": ["InventedContractV1"]},
+            DevelopmentCitationKindV1.CONTRACT,
+            DevelopmentCitationRejectionV1.NOT_IN_ALLOWLIST,
+        ),
+        (
+            {"likely_files": ["app/not-in-evidence.py"]},
+            DevelopmentCitationKindV1.FILE,
+            DevelopmentCitationRejectionV1.NOT_IN_ALLOWLIST,
+        ),
+    ),
+)
+def test_citation_rejection_retains_only_bounded_safe_metadata(changes, kind, rejection) -> None:
+    _request, records = _development_context()
+    context = type("Context", (), {"records": records, "context_digest": "digest"})()
+    with pytest.raises(DevelopmentCitationValidationError) as error:
+        parse_development_synthesis(_synthesis_payload(context, **changes), context)
+    assert error.value.code == "UNSUPPORTED_KNOWLEDGE_CITATION"
+    assert error.value.failure.citation_kind == kind
+    assert error.value.failure.rejection == rejection
+    assert len(error.value.failure.rejected_identifier) <= 160
+
+
+def test_citation_failure_survives_analysis_completion_without_request_or_model_text(
+    tmp_path, monkeypatch
+) -> None:
+    from app.development_analysis import service
+
+    snapshot = RepositorySnapshotV1("a" * 40, True)
+    records = initial_records(snapshot=snapshot)
+    monkeypatch.setattr(service, "committed_snapshot", lambda _root: snapshot)
+    monkeypatch.setattr(service, "read_store", lambda _path: (records, manifest(records, snapshot)))
+
+    def runner(_request, context, _evidence):
+        payload = {
+            "facts": ["knowledge.invented.statement"],
+            "inferences": ["bounded inference"],
+            "unknowns": ["Unknown from current evidence."],
+            "architecture_owners": [],
+            "affected_contracts": [],
+            "likely_files": [],
+            "risks": ["bounded risk"],
+            "required_tests": ["bounded test"],
+            "non_goals": ["No mutation."],
+            "acceptance_criteria": ["bounded criterion"],
+            "confidence": 0.5,
+        }
+        return parse_development_synthesis(payload, context)
+
+    result = DevelopmentAnalysisServiceV1(
+        paths=_paths(tmp_path),
+        runner=runner,
+        role_available=lambda _role: True,
+        request_id_factory=lambda: "a" * 32,
+    ).analyze(DevelopmentAnalysisRequestV1("sensitive request", DevelopmentModelRoleV1.CODE))
+
+    assert result.reason_code == "UNSUPPORTED_KNOWLEDGE_CITATION"
+    assert result.citation_failure is not None
+    assert result.citation_failure.rejected_identifier == "knowledge.invented.statement"
+    assert result.lifecycle is not None
+    assert result.lifecycle.events[-1].stage.value == "SYNTHESIS"
+    assert result.payload()["request"] == "sensitive request"
+    assert "sensitive request" not in str(result.payload()["lifecycle"])
+    assert "sensitive request" not in str(result.payload()["citation_failure"])
+
+
+def test_empty_allowlist_is_not_a_valid_synthesis_evidence_pack() -> None:
+    _request, records = _development_context()
+    context = type("Context", (), {"records": records, "context_digest": "digest"})()
+    with pytest.raises(AIValidationError, match="allowlist"):
+        synthesize_development(
+            object(),
+            type("Request", (), {"request": "Analyze"})(),
+            context,
+            type("Evidence", (), {"allowed_fact_ids": ()})(),
+        )
+
+
+def test_evidence_allowlist_rejects_duplicate_or_noncanonical_ids() -> None:
+    from app.development_analysis.models import DevelopmentEvidencePackV1
+
+    raw = {
+        "source_commit": "a" * 40,
+        "repository_clean": True,
+        "knowledge_identity": "chappie_knowledge/1.0.0",
+        "knowledge_manifest_digest": "b" * 64,
+        "knowledge_context_digest": "c" * 64,
+        "workspace_context_digest": None,
+        "requested_role": DevelopmentModelRoleV1.CODE,
+        "requested_model": "qwen3-coder:30b",
+        "effective_model": "qwen3-coder:30b",
+        "profile_identity": "CODE_ADVISORY",
+        "capability_identity": "development_model_role/CODE_ADVISORY",
+        "record_ids": ("record",),
+        "record_digests": ("d" * 64,),
+        "evidence_digest": "e" * 64,
+    }
+    with pytest.raises(ValueError, match="allowlist"):
+        DevelopmentEvidencePackV1(
+            **raw,
+            allowed_fact_ids=("knowledge.record.statement", "knowledge.record.statement"),
+        )
+
+
+def test_real_canonical_but_unsupplied_fact_remains_rejected() -> None:
+    snapshot = RepositorySnapshotV1("a" * 40, True)
+    records = initial_records(snapshot=snapshot)
+    context = type("Context", (), {"records": (records[0],), "context_digest": "digest"})()
+    payload = {
+        "facts": [f"knowledge.{records[1].knowledge_id}.statement"],
+        "inferences": ["bounded inference"],
+        "unknowns": ["Unknown from current evidence."],
+        "architecture_owners": [],
+        "affected_contracts": [],
+        "likely_files": [],
+        "risks": ["bounded risk"],
+        "required_tests": ["bounded test"],
+        "non_goals": ["No mutation."],
+        "acceptance_criteria": ["bounded criterion"],
+        "confidence": 0.5,
+    }
+    with pytest.raises(DevelopmentCitationValidationError) as error:
+        parse_development_synthesis(payload, context)
+    assert error.value.failure.rejection == DevelopmentCitationRejectionV1.NOT_IN_ALLOWLIST
 
 
 @pytest.mark.parametrize(

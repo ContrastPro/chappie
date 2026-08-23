@@ -429,14 +429,36 @@ class ChappieControlPlaneServerV1:
         handler.wfile.write(body)
 
 
-def _log_development_lifecycle(value: object) -> None:
-    """Keep only bounded Development operation metadata in service logs."""
-    if isinstance(value, dict):
-        LOGGER.info("Development Analysis lifecycle=%s", json.dumps(value, sort_keys=True))
+def _log_development_lifecycle(payload: object) -> None:
+    """Retain safe completed/failure lifecycle metadata in the existing operator log."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("lifecycle"), dict):
+        return
+    evidence = payload.get("evidence")
+    safe_evidence = None
+    if isinstance(evidence, dict):
+        safe_evidence = {
+            key: evidence.get(key)
+            for key in (
+                "allowed_fact_ids",
+                "record_ids",
+                "evidence_digest",
+                "knowledge_context_digest",
+                "requested_role",
+                "effective_model",
+            )
+        }
+    safe = {
+        "lifecycle": payload["lifecycle"],
+        "evidence": safe_evidence,
+        "citation_failure": payload.get("citation_failure"),
+    }
+    # Warning is deliberately used: the standard local service configuration emits it to
+    # the Chappie Output channel, unlike INFO, while the payload contains no request or model text.
+    LOGGER.warning("Development Analysis lifecycle=%s", json.dumps(safe, sort_keys=True))
 
 
 def _log_development_internal_failure(request_id: str) -> None:
-    LOGGER.info(
+    LOGGER.warning(
         "Development Analysis lifecycle=%s",
         json.dumps(
             {

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import PurePosixPath
@@ -13,6 +14,8 @@ DEVELOPMENT_ANALYSIS_IDENTITY = "chappie_development_analysis/1.0.0"
 MAX_DEVELOPMENT_REQUEST_CHARACTERS = 12_000
 MAX_ANALYSIS_ITEMS = 16
 MAX_LIFECYCLE_ELAPSED_MS = 120_000
+MAX_CITATION_IDENTIFIER_CHARACTERS = 160
+_SAFE_CITATION_IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._:/-]{0,159}")
 
 
 class DevelopmentAnalysisStateV1(StrEnum):
@@ -47,6 +50,32 @@ class DevelopmentLifecycleStatusV1(StrEnum):
     STARTED = "STARTED"
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
+
+
+class DevelopmentCitationKindV1(StrEnum):
+    FACT_ID = "FACT_ID"
+    OWNER = "OWNER"
+    CONTRACT = "CONTRACT"
+    FILE = "FILE"
+
+
+class DevelopmentCitationRejectionV1(StrEnum):
+    NOT_IN_ALLOWLIST = "NOT_IN_ALLOWLIST"
+    MALFORMED = "MALFORMED"
+    UNSUPPORTED_BY_CITED_FACT = "UNSUPPORTED_BY_CITED_FACT"
+
+
+@dataclass(frozen=True, slots=True)
+class DevelopmentCitationFailureV1:
+    """Bounded metadata for an evidence citation rejected before analysis exists."""
+
+    citation_kind: DevelopmentCitationKindV1
+    rejected_identifier: str
+    rejection: DevelopmentCitationRejectionV1
+
+    def __post_init__(self) -> None:
+        if not _SAFE_CITATION_IDENTIFIER.fullmatch(self.rejected_identifier):
+            raise ValueError("development citation identifier is unsafe")
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +136,14 @@ class DevelopmentEvidencePackV1:
     record_ids: tuple[str, ...]
     record_digests: tuple[str, ...]
     evidence_digest: str
+    allowed_fact_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.allowed_fact_ids and (
+            self.allowed_fact_ids != tuple(sorted(set(self.allowed_fact_ids)))
+            or any(not item.startswith("knowledge.") for item in self.allowed_fact_ids)
+        ):
+            raise ValueError("development evidence allowlist is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +166,7 @@ class DevelopmentAnalysisV1:
     readiness: DevelopmentAnalysisReadinessV1 | None = None
     reason_code: str | None = None
     lifecycle: DevelopmentLifecycleV1 | None = None
+    citation_failure: DevelopmentCitationFailureV1 | None = None
 
     def payload(self) -> dict[str, object]:
         return {
@@ -151,6 +189,7 @@ class DevelopmentAnalysisV1:
             "readiness": self.readiness.value if self.readiness else None,
             "reason_code": self.reason_code,
             "lifecycle": _lifecycle_payload(self.lifecycle),
+            "citation_failure": _citation_failure_payload(self.citation_failure),
         }
 
 
@@ -242,6 +281,7 @@ def development_analysis_from_payload(value: object) -> DevelopmentAnalysisV1:
             "capability_identity",
             "record_ids",
             "record_digests",
+            "allowed_fact_ids",
         )
     }
     if raw.get("evidence_digest") != evidence_digest(payload):
@@ -260,6 +300,7 @@ def development_analysis_from_payload(value: object) -> DevelopmentAnalysisV1:
         capability_identity=str(payload["capability_identity"]),
         record_ids=tuple(_strings(payload["record_ids"])),
         record_digests=tuple(_strings(payload["record_digests"])),
+        allowed_fact_ids=tuple(_strings(payload["allowed_fact_ids"])),
         evidence_digest=str(raw["evidence_digest"]),
     )
     lifecycle = _lifecycle_from_payload(value.get("lifecycle"))
@@ -286,6 +327,7 @@ def development_analysis_from_payload(value: object) -> DevelopmentAnalysisV1:
         ),
         reason_code=(str(value["reason_code"]) if value.get("reason_code") is not None else None),
         lifecycle=lifecycle,
+        citation_failure=_citation_failure_from_payload(value.get("citation_failure")),
     )
 
 
@@ -379,6 +421,7 @@ def _evidence_payload(value: DevelopmentEvidencePackV1 | None) -> dict[str, obje
         "capability_identity": value.capability_identity,
         "record_ids": list(value.record_ids),
         "record_digests": list(value.record_digests),
+        "allowed_fact_ids": list(value.allowed_fact_ids),
         "evidence_digest": value.evidence_digest,
     }
 
@@ -401,3 +444,30 @@ def _lifecycle_payload(value: DevelopmentLifecycleV1 | None) -> dict[str, object
             for event in value.events
         ],
     }
+
+
+def _citation_failure_payload(
+    value: DevelopmentCitationFailureV1 | None,
+) -> dict[str, str] | None:
+    if value is None:
+        return None
+    return {
+        "citation_kind": value.citation_kind.value,
+        "rejected_identifier": value.rejected_identifier,
+        "rejection": value.rejection.value,
+    }
+
+
+def _citation_failure_from_payload(value: object) -> DevelopmentCitationFailureV1 | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise TypeError("development citation failure is invalid")
+    try:
+        return DevelopmentCitationFailureV1(
+            DevelopmentCitationKindV1(value["citation_kind"]),
+            str(value["rejected_identifier"]),
+            DevelopmentCitationRejectionV1(value["rejection"]),
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("development citation failure is invalid") from error
