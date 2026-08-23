@@ -9,8 +9,12 @@ from pathlib import PurePosixPath
 
 from app.ai.model_policy import DevelopmentModelRoleV1
 from app.ai.schemas import digest
+from app.development_analysis.context import (
+    DevelopmentContextMapV1,
+    development_context_map_from_payload,
+)
 
-DEVELOPMENT_ANALYSIS_IDENTITY = "chappie_development_analysis/1.0.0"
+DEVELOPMENT_ANALYSIS_IDENTITY = "chappie_development_analysis/2.0.0"
 MAX_DEVELOPMENT_REQUEST_CHARACTERS = 12_000
 MAX_ANALYSIS_ITEMS = 16
 MAX_LIFECYCLE_ELAPSED_MS = 120_000
@@ -76,6 +80,19 @@ class DevelopmentCitationFailureV1:
     def __post_init__(self) -> None:
         if not _SAFE_CITATION_IDENTIFIER.fullmatch(self.rejected_identifier):
             raise ValueError("development citation identifier is unsafe")
+
+
+@dataclass(frozen=True, slots=True)
+class DevelopmentProposedScopeV1:
+    """Architecture-validated future scope; no item asserts existing repository state."""
+
+    proposed_owner: str | None
+    proposed_modified_files: tuple[str, ...]
+    proposed_new_files: tuple[str, ...]
+    proposed_contract_changes: tuple[str, ...]
+    proposed_components: tuple[str, ...]
+    proposed_behavior: tuple[str, ...]
+    rationale: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,6 +184,9 @@ class DevelopmentAnalysisV1:
     reason_code: str | None = None
     lifecycle: DevelopmentLifecycleV1 | None = None
     citation_failure: DevelopmentCitationFailureV1 | None = None
+    context_map: DevelopmentContextMapV1 | None = None
+    current_evidence_handles: tuple[str, ...] = ()
+    proposed_scope: DevelopmentProposedScopeV1 | None = None
 
     def payload(self) -> dict[str, object]:
         return {
@@ -190,6 +210,9 @@ class DevelopmentAnalysisV1:
             "reason_code": self.reason_code,
             "lifecycle": _lifecycle_payload(self.lifecycle),
             "citation_failure": _citation_failure_payload(self.citation_failure),
+            "context_map": self.context_map.payload() if self.context_map else None,
+            "current_evidence_handles": list(self.current_evidence_handles),
+            "proposed_scope": _proposed_scope_payload(self.proposed_scope),
         }
 
 
@@ -197,12 +220,14 @@ def validate_development_analysis(value: DevelopmentAnalysisV1) -> DevelopmentAn
     """Reject unsafe model-derived shape; the evidence pack stays authoritative."""
     if value.state != DevelopmentAnalysisStateV1.OK:
         return value
-    if value.evidence is None or not value.evidence.evidence_digest:
+    if value.evidence is None or not value.evidence.evidence_digest or value.context_map is None:
         raise ValueError("development analysis evidence is required")
     if not value.facts or not value.inferences or not value.required_tests or not value.non_goals:
         raise ValueError("development analysis sections are required")
     if not value.acceptance_criteria:
         raise ValueError("development analysis acceptance criteria are required")
+    if not value.current_evidence_handles or value.proposed_scope is None:
+        raise ValueError("development analysis reasoning scope is required")
     if len(value.likely_files) > MAX_ANALYSIS_ITEMS or any(
         not _relative_path(item) for item in value.likely_files
     ):
@@ -251,6 +276,14 @@ def development_readiness(
         item.casefold().strip().startswith("no unknowns identified") for item in value.unknowns
     ):
         return DevelopmentAnalysisReadinessV1.NEEDS_REVIEW, "INSUFFICIENT_EVIDENCE"
+    scope = value.proposed_scope
+    if scope is None or not (
+        scope.proposed_modified_files
+        or scope.proposed_new_files
+        or scope.proposed_contract_changes
+        or scope.proposed_components
+    ):
+        return DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE, "NO_PROPOSED_SCOPE"
     return DevelopmentAnalysisReadinessV1.READY_FOR_TASK, None
 
 
@@ -304,6 +337,8 @@ def development_analysis_from_payload(value: object) -> DevelopmentAnalysisV1:
         evidence_digest=str(raw["evidence_digest"]),
     )
     lifecycle = _lifecycle_from_payload(value.get("lifecycle"))
+    context_map = development_context_map_from_payload(value.get("context_map"))
+    proposed_scope = _proposed_scope_from_payload(value.get("proposed_scope"))
     return DevelopmentAnalysisV1(
         DevelopmentAnalysisStateV1(value["state"]),
         str(value["request"]),
@@ -328,6 +363,9 @@ def development_analysis_from_payload(value: object) -> DevelopmentAnalysisV1:
         reason_code=(str(value["reason_code"]) if value.get("reason_code") is not None else None),
         lifecycle=lifecycle,
         citation_failure=_citation_failure_from_payload(value.get("citation_failure")),
+        context_map=context_map,
+        current_evidence_handles=tuple(_strings(value.get("current_evidence_handles"))),
+        proposed_scope=proposed_scope,
     )
 
 
@@ -471,3 +509,37 @@ def _citation_failure_from_payload(value: object) -> DevelopmentCitationFailureV
         )
     except (KeyError, TypeError, ValueError) as error:
         raise ValueError("development citation failure is invalid") from error
+
+
+def _proposed_scope_payload(value: DevelopmentProposedScopeV1 | None) -> dict[str, object] | None:
+    if value is None:
+        return None
+    return {
+        "proposed_owner": value.proposed_owner,
+        "proposed_modified_files": list(value.proposed_modified_files),
+        "proposed_new_files": list(value.proposed_new_files),
+        "proposed_contract_changes": list(value.proposed_contract_changes),
+        "proposed_components": list(value.proposed_components),
+        "proposed_behavior": list(value.proposed_behavior),
+        "rationale": list(value.rationale),
+    }
+
+
+def _proposed_scope_from_payload(value: object) -> DevelopmentProposedScopeV1:
+    if not isinstance(value, dict):
+        raise TypeError("development proposed scope is invalid")
+    try:
+        owner = value["proposed_owner"]
+        if owner is not None and not isinstance(owner, str):
+            raise ValueError
+        return DevelopmentProposedScopeV1(
+            owner,
+            tuple(_strings(value["proposed_modified_files"])),
+            tuple(_strings(value["proposed_new_files"])),
+            tuple(_strings(value["proposed_contract_changes"])),
+            tuple(_strings(value["proposed_components"])),
+            tuple(_strings(value["proposed_behavior"])),
+            tuple(_strings(value["rationale"])),
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError("development proposed scope is invalid") from error

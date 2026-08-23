@@ -578,7 +578,8 @@ class ChappieControlPlaneV1:
             return CodexTaskV1(
                 "",
                 CodexTaskStateV1.VALIDATION_ERROR,
-                "chappie_development_analysis/1.0.0",
+                "chappie_development_analysis/2.0.0",
+                None,
                 None,
                 None,
                 None,

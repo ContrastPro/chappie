@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from app.ai.schemas import digest
+from app.development_analysis.context import DevelopmentEvidenceHandleV1
 from app.development_analysis.models import (
     DEVELOPMENT_ANALYSIS_IDENTITY,
     DevelopmentAnalysisReadinessV1,
@@ -14,7 +15,7 @@ from app.development_analysis.models import (
     validate_development_analysis,
 )
 
-CODEX_TASK_IDENTITY = "chappie_codex_task/1.0.0"
+CODEX_TASK_IDENTITY = "chappie_codex_handoff/1.0.0"
 KNOWN_OWNERS = frozenset(
     {"ARCHITECTURE", "MODULE_RESPONSIBILITY", "CONTRACT", "AUTHORITY_BOUNDARY"}
 )
@@ -48,6 +49,7 @@ class CodexTaskV1:
     source_analysis_identity: str
     source_commit: str | None
     evidence_digest: str | None
+    context_digest: str | None
     requested_role: str | None
     problem: str
     facts: tuple[str, ...] = ()
@@ -55,7 +57,12 @@ class CodexTaskV1:
     unknowns: tuple[str, ...] = ()
     architecture_owners: tuple[str, ...] = ()
     affected_contracts: tuple[str, ...] = ()
+    current_evidence_handles: tuple[str, ...] = ()
+    evidence_map: tuple[DevelopmentEvidenceHandleV1, ...] = ()
     allowed_files: tuple[str, ...] = ()
+    proposed_modified_files: tuple[str, ...] = ()
+    proposed_new_files: tuple[str, ...] = ()
+    proposed_contract_changes: tuple[str, ...] = ()
     forbidden_scope: tuple[str, ...] = ()
     implementation_objective: str = ""
     implementation_constraints: tuple[str, ...] = ()
@@ -71,14 +78,34 @@ class CodexTaskV1:
         """Stable copy/paste text derived only from the validated DTO."""
         return "\n".join(
             (
-                "Task",
+                "Codex handoff (advisory; human approval required)",
                 self.problem,
+                "\nCodex consumption guidance",
+                "- Begin from this bounded evidence pack; verify supplied files and contracts first.",
+                "- Do not broadly re-explore the repository unless this pack is inconsistent or insufficient.",
+                "- If scope expansion is required, report why before exceeding the validated scope.",
                 "\nFacts",
                 *_bullets(self.facts),
+                "\nEvidence handles",
+                *_bullets(self.current_evidence_handles),
+                "\nEvidence map",
+                *_bullets(
+                    tuple(
+                        f"{item.handle} [{item.category}] {item.statement}"
+                        for item in self.evidence_map
+                    )
+                    or ("No evidence map is available.",)
+                ),
                 "\nScope",
                 *_bullets(self.implementation_constraints),
                 "\nAllowed files",
                 *_bullets(self.allowed_files or ("None proposed by validated analysis.",)),
+                "\nProposed modified files",
+                *_bullets(self.proposed_modified_files or ("None.",)),
+                "\nProposed new files",
+                *_bullets(self.proposed_new_files or ("None.",)),
+                "\nProposed contract changes",
+                *_bullets(self.proposed_contract_changes or ("None.",)),
                 "\nForbidden scope",
                 *_bullets(self.forbidden_scope),
                 "\nRequired tests",
@@ -100,6 +127,7 @@ class CodexTaskV1:
             "source_analysis_identity": self.source_analysis_identity,
             "source_commit": self.source_commit,
             "evidence_digest": self.evidence_digest,
+            "context_digest": self.context_digest,
             "requested_role": self.requested_role,
             "problem": self.problem,
             "facts": list(self.facts),
@@ -107,7 +135,12 @@ class CodexTaskV1:
             "unknowns": list(self.unknowns),
             "architecture_owners": list(self.architecture_owners),
             "affected_contracts": list(self.affected_contracts),
+            "current_evidence_handles": list(self.current_evidence_handles),
+            "evidence_map": [item.payload() for item in self.evidence_map],
             "allowed_files": list(self.allowed_files),
+            "proposed_modified_files": list(self.proposed_modified_files),
+            "proposed_new_files": list(self.proposed_new_files),
+            "proposed_contract_changes": list(self.proposed_contract_changes),
             "forbidden_scope": list(self.forbidden_scope),
             "implementation_objective": self.implementation_objective,
             "implementation_constraints": list(self.implementation_constraints),
@@ -120,6 +153,10 @@ class CodexTaskV1:
             "reason_code": self.reason_code,
             "projection": self.projection(),
         }
+
+
+# The existing endpoint remains additive-compatible; the v2 projection is explicitly a handoff.
+CodexHandoffV1 = CodexTaskV1
 
 
 def prepare_codex_task(request: CodexTaskPreparationRequestV1) -> CodexTaskV1:
@@ -167,6 +204,7 @@ def prepare_codex_task(request: CodexTaskPreparationRequestV1) -> CodexTaskV1:
         DEVELOPMENT_ANALYSIS_IDENTITY,
         evidence.source_commit,
         evidence.evidence_digest,
+        analysis.context_map.context_digest if analysis.context_map else None,
         evidence.requested_role.value,
         analysis.request,
         analysis.facts,
@@ -174,7 +212,12 @@ def prepare_codex_task(request: CodexTaskPreparationRequestV1) -> CodexTaskV1:
         analysis.unknowns,
         analysis.architecture_owners,
         analysis.affected_contracts,
+        analysis.current_evidence_handles,
+        analysis.context_map.evidence_handles,
         analysis.likely_files,
+        analysis.proposed_scope.proposed_modified_files,
+        analysis.proposed_scope.proposed_new_files,
+        analysis.proposed_scope.proposed_contract_changes,
         (
             "No Codex invocation, file edits, shell, Git, Knowledge, trading, Risk, or execution authority.",
         ),
@@ -187,6 +230,9 @@ def prepare_codex_task(request: CodexTaskPreparationRequestV1) -> CodexTaskV1:
     )
 
 
+prepare_codex_handoff = prepare_codex_task
+
+
 def _invalid(analysis: DevelopmentAnalysisV1, reason: str) -> CodexTaskV1:
     return CodexTaskV1(
         "",
@@ -194,6 +240,7 @@ def _invalid(analysis: DevelopmentAnalysisV1, reason: str) -> CodexTaskV1:
         DEVELOPMENT_ANALYSIS_IDENTITY,
         analysis.evidence.source_commit if analysis.evidence else None,
         analysis.evidence.evidence_digest if analysis.evidence else None,
+        analysis.context_map.context_digest if analysis.context_map else None,
         analysis.evidence.requested_role.value if analysis.evidence else None,
         analysis.request,
         validation_status="INVALID",

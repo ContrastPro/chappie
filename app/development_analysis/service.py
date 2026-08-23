@@ -8,6 +8,7 @@ from time import monotonic
 from uuid import uuid4
 
 from app.ai.model_policy import resolve_development_model_role
+from app.development_analysis.context import build_development_context_map
 from app.development_analysis.models import (
     DevelopmentAnalysisRequestV1,
     DevelopmentAnalysisStateV1,
@@ -212,27 +213,38 @@ def _analysis_from_output(request, context, evidence, output) -> DevelopmentAnal
         raise AIValidationError(
             "development synthesis output is invalid", code="DEVELOPMENT_SCHEMA_INVALID"
         )
+    context_map = build_development_context_map(context, evidence)
+    requested_handles = output.current_evidence_handles
+    if not requested_handles:
+        legacy_fact_ids = getattr(output, "_legacy_fact_ids", ())
+        requested_handles = tuple(
+            item.handle for item in context_map.evidence_handles if item.fact_id in legacy_fact_ids
+        )
+    selected_handles = tuple(
+        item for item in context_map.evidence_handles if item.handle in requested_handles
+    )
     return DevelopmentAnalysisV1(
         DevelopmentAnalysisStateV1.OK,
         request.request,
         evidence,
-        facts=tuple(
-            fact.statement
-            for fact in context.records
-            for fact_id in output.facts
-            if fact_id == f"knowledge.{fact.knowledge_id}.statement"
-        ),
+        facts=tuple(item.statement for item in selected_handles),
         inferences=output.inferences,
         unknowns=output.unknowns,
-        architecture_owners=output.architecture_owners,
-        affected_contracts=output.affected_contracts,
-        likely_files=output.likely_files,
+        architecture_owners=(
+            getattr(output, "_legacy_architecture_owners", ())
+            or tuple(sorted({item.category for item in selected_handles}))
+        ),
+        affected_contracts=context_map.existing_contracts,
+        likely_files=context_map.existing_files,
         risks=output.risks,
         required_tests=output.required_tests,
         non_goals=output.non_goals,
         acceptance_criteria=output.acceptance_criteria,
         confidence=output.confidence,
         validation_status="VALID",
+        context_map=context_map,
+        current_evidence_handles=requested_handles,
+        proposed_scope=output.proposed_scope,
     )
 
 

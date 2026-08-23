@@ -413,6 +413,11 @@ test("Workbench Development mode is explicit and renders only advisory Codex tas
   assert.match(host, /turn\.development\.readiness !== "READY_FOR_TASK"/);
   assert.match(script, /Development analysis/);
   assert.match(script, /Prepare Codex Task/);
+  assert.match(script, /enrichDevelopmentReasoningV2/);
+  assert.match(script, /CURRENT/);
+  assert.match(script, /PROPOSED/);
+  assert.match(script, /UNKNOWN/);
+  assert.match(script, /Prepare Codex Handoff/);
   assert.match(script, /Validation:/);
   assert.match(script, /analysis\.readiness==='READY_FOR_TASK'/);
   assert.match(script, /turn\.codexTask\.approval_status/);
@@ -435,11 +440,11 @@ test("Workbench development snapshots are detached and task projection requires 
   const turn = session.begin("development_1", "request_1", "Plan an improvement", noContext, 100, [], "DEVELOPMENT");
   assert.ok(turn);
   const analysis: DevelopmentAnalysisV1 = {
-    identity: "chappie_development_analysis/1.0.0", state: "OK", request: "Plan an improvement", evidence: null,
-    facts: ["fact"], inferences: [], unknowns: [], architecture_owners: [], affected_contracts: [], likely_files: [], risks: [], required_tests: [], non_goals: [], acceptance_criteria: [], confidence: 1, validation_status: "VALID", readiness: "READY_FOR_TASK", reason_code: null,
+    identity: "chappie_development_analysis/2.0.0", state: "OK", request: "Plan an improvement", evidence: null,
+    facts: ["fact"], inferences: [], unknowns: [], architecture_owners: [], affected_contracts: [], likely_files: [], risks: [], required_tests: [], non_goals: [], acceptance_criteria: [], confidence: 1, validation_status: "VALID", readiness: "READY_FOR_TASK", reason_code: null, context_map: null, current_evidence_handles: [], proposed_scope: null,
   };
   assert.ok(session.completeDevelopment(turn.turnId, analysis, 200));
   analysis.facts[0] = "outside mutation";
   assert.equal(session.find(turn.turnId)?.development?.facts[0], "fact");
-  assert.equal(session.setCodexTask("missing", { identity: "chappie_codex_task/1.0.0" } as never), undefined);
+  assert.equal(session.setCodexTask("missing", { identity: "chappie_codex_handoff/1.0.0" } as never), undefined);
 });

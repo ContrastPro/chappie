@@ -4,11 +4,13 @@ import pytest
 
 from app.ai.model_policy import DevelopmentModelRoleV1
 from app.control_plane import ChappieControlPlaneV1
+from app.development_analysis.context import DevelopmentContextMapV1, build_context_digest
 from app.development_analysis.models import (
     DevelopmentAnalysisReadinessV1,
     DevelopmentAnalysisStateV1,
     DevelopmentAnalysisV1,
     DevelopmentEvidencePackV1,
+    DevelopmentProposedScopeV1,
     evidence_digest,
 )
 from app.development_analysis.task import (
@@ -50,8 +52,43 @@ def _analysis(**changes):
         acceptance_criteria=("Task remains advisory.",),
         validation_status="VALID",
         readiness=DevelopmentAnalysisReadinessV1.READY_FOR_TASK,
+        context_map=_context_map(),
+        current_evidence_handles=("E1",),
+        proposed_scope=_proposed_scope(),
     )
     return replace(base, **changes)
+
+
+def _context_map() -> DevelopmentContextMapV1:
+    value = DevelopmentContextMapV1(
+        "a" * 40,
+        "chappie_knowledge/1.0.0",
+        "b" * 64,
+        "c" * 64,
+        "d" * 64,
+        "CODE",
+        "qwen3-coder:30b",
+        (),
+        ("ARCHITECTURE",),
+        (),
+        ("app/development_analysis/task.py",),
+        ("tests/test_codex_task.py",),
+        ("Advisory only.",),
+        "",
+    )
+    return replace(value, context_digest=build_context_digest(value))
+
+
+def _proposed_scope() -> DevelopmentProposedScopeV1:
+    return DevelopmentProposedScopeV1(
+        "ARCHITECTURE",
+        ("app/development_analysis/task.py",),
+        ("app/development_analysis/diff_review.py",),
+        ("Add bounded DTO.",),
+        ("Diff review",),
+        ("Remain advisory.",),
+        ("Bounded scope.",),
+    )
 
 
 def test_valid_analysis_prepares_deterministic_advisory_task() -> None:

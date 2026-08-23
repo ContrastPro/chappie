@@ -4,6 +4,7 @@ import pytest
 
 from app.ai.errors import AIProviderTimeoutError, AIValidationError
 from app.ai.model_policy import DevelopmentModelRoleV1
+from app.development_analysis.context import DevelopmentContextMapV1, build_context_digest
 from app.development_analysis.models import (
     DevelopmentAnalysisReadinessV1,
     DevelopmentAnalysisRequestV1,
@@ -11,6 +12,7 @@ from app.development_analysis.models import (
     DevelopmentAnalysisV1,
     DevelopmentCitationKindV1,
     DevelopmentCitationRejectionV1,
+    DevelopmentProposedScopeV1,
     assess_development_analysis_readiness,
     development_readiness,
     validate_development_analysis,
@@ -229,7 +231,7 @@ def test_dedicated_development_contract_accepts_evidence_backed_output() -> None
     request, records = _development_context()
     context = type("Context", (), {"records": records, "context_digest": "digest"})()
     output = parse_development_synthesis(_synthesis_payload(context), context)
-    assert DEVELOPMENT_SYNTHESIS_IDENTITY == "chappie_development_synthesis/1.0.0"
+    assert DEVELOPMENT_SYNTHESIS_IDENTITY == "chappie_development_synthesis/2.0.0"
     assert output.architecture_owners == ("MODULE_RESPONSIBILITY",)
     assert "diff review" in output.risks[0]
     assert request.startswith("Design a bounded")
@@ -242,19 +244,60 @@ def test_development_synthesis_input_binds_the_exact_explicit_fact_allowlist() -
 
     class Provider:
         def generate(self, request):
-            assert request.context["allowed_fact_ids"] == list(allowed_fact_ids)
-            assert tuple(sorted(fact.fact_id for fact in request.facts)) == allowed_fact_ids
-            return type("Result", (), {"structured_output": _synthesis_payload(context)})()
+            assert request.context["development_context_map"]["evidence_handles"]
+            assert request.facts == ()
+            return type(
+                "Result",
+                (),
+                {
+                    "structured_output": {
+                        "current_evidence_handles": ["E1"],
+                        "inferences": ["Bounded evidence supports this analysis."],
+                        "unknowns": [
+                            "Exact future detail cannot be established from current evidence."
+                        ],
+                        "proposed_scope": {
+                            "proposed_owner": request.context["development_context_map"][
+                                "owner_candidates"
+                            ][0],
+                            "proposed_modified_files": [],
+                            "proposed_new_files": ["app/development_analysis/diff_review.py"],
+                            "proposed_contract_changes": ["Add bounded diff-review DTO."],
+                            "proposed_components": ["Diff review"],
+                            "proposed_behavior": ["Remain advisory and read-only."],
+                            "rationale": ["The request requires a bounded proposal."],
+                        },
+                        "risks": ["Diff review must preserve the advisory boundary."],
+                        "required_tests": ["Test diff review validation."],
+                        "non_goals": ["No mutation."],
+                        "acceptance_criteria": ["The result remains evidence-bound."],
+                        "confidence": 0.5,
+                    }
+                },
+            )()
 
     class AI:
         config = type("Config", (), {"profile": "LOCAL", "temperature": 0, "timeout_seconds": 1})()
         router = type("Router", (), {"provider_for": lambda _self, _profile: Provider()})()
 
-    evidence = type("Evidence", (), {"allowed_fact_ids": allowed_fact_ids})()
+    evidence = type(
+        "Evidence",
+        (),
+        {
+            "allowed_fact_ids": allowed_fact_ids,
+            "source_commit": "a" * 40,
+            "knowledge_identity": "chappie_knowledge/1.0.0",
+            "knowledge_manifest_digest": "b" * 64,
+            "knowledge_context_digest": "digest",
+            "evidence_digest": "c" * 64,
+            "requested_role": DevelopmentModelRoleV1.CODE,
+            "effective_model": "qwen3-coder:30b",
+        },
+    )()
     assert synthesize_development(
         AI(), type("Request", (), {"request": "Analyze"})(), context, evidence
     )
-    assert "allowed_fact_ids" in DEVELOPMENT_SYNTHESIS_INSTRUCTION
+    assert "E-handles" in DEVELOPMENT_SYNTHESIS_INSTRUCTION
     assert "model memory is not evidence" in DEVELOPMENT_SYNTHESIS_INSTRUCTION
 
 
@@ -501,8 +544,43 @@ def _ready_analysis(**changes) -> DevelopmentAnalysisV1:
         non_goals=("No mutation.",),
         acceptance_criteria=("The requested diff review remains evidence-bound.",),
         validation_status="VALID",
+        context_map=_test_context_map(),
+        current_evidence_handles=("E1",),
+        proposed_scope=_test_proposed_scope(),
     )
     return replace(base, **changes)
+
+
+def _test_context_map() -> DevelopmentContextMapV1:
+    value = DevelopmentContextMapV1(
+        "a" * 40,
+        "chappie_knowledge/1.0.0",
+        "b" * 64,
+        "c" * 64,
+        "d" * 64,
+        "CODE",
+        "qwen3-coder:30b",
+        (),
+        ("MODULE_RESPONSIBILITY",),
+        ("DevelopmentAnalysisV1",),
+        ("app/development_analysis/models.py",),
+        ("tests/test_development_analysis.py",),
+        ("Advisory only.",),
+        "",
+    )
+    return replace(value, context_digest=build_context_digest(value))
+
+
+def _test_proposed_scope() -> DevelopmentProposedScopeV1:
+    return DevelopmentProposedScopeV1(
+        "MODULE_RESPONSIBILITY",
+        ("app/development_analysis/models.py",),
+        ("app/development_analysis/diff_review.py",),
+        ("Add bounded review DTO.",),
+        ("Diff review",),
+        ("Remain advisory.",),
+        ("Bounded design proposal.",),
+    )
 
 
 def test_structural_validity_is_distinct_from_task_readiness() -> None:

@@ -158,7 +158,7 @@ function parseProjectQA(value: unknown): ProjectQAResponseV1 {
 }
 
 function parseDevelopmentAnalysis(value: unknown): DevelopmentAnalysisV1 {
-  if (!isRecord(value) || value.identity !== "chappie_development_analysis/1.0.0" || typeof value.state !== "string" || typeof value.request !== "string" || !isStringArray(value.facts) || !isStringArray(value.inferences) || !isStringArray(value.unknowns) || !isStringArray(value.architecture_owners) || !isStringArray(value.affected_contracts) || !isStringArray(value.likely_files) || !isStringArray(value.risks) || !isStringArray(value.required_tests) || !isStringArray(value.non_goals) || !isStringArray(value.acceptance_criteria) || typeof value.validation_status !== "string" || (value.readiness !== null && value.readiness !== "READY_FOR_TASK" && value.readiness !== "INSUFFICIENT_EVIDENCE" && value.readiness !== "NEEDS_REVIEW") || (value.reason_code !== null && typeof value.reason_code !== "string")) {
+  if (!isRecord(value) || value.identity !== "chappie_development_analysis/2.0.0" || typeof value.state !== "string" || typeof value.request !== "string" || !isStringArray(value.facts) || !isStringArray(value.inferences) || !isStringArray(value.unknowns) || !isStringArray(value.architecture_owners) || !isStringArray(value.affected_contracts) || !isStringArray(value.likely_files) || !isStringArray(value.risks) || !isStringArray(value.required_tests) || !isStringArray(value.non_goals) || !isStringArray(value.acceptance_criteria) || !isStringArray(value.current_evidence_handles) || (value.context_map !== null && !isRecord(value.context_map)) || (value.proposed_scope !== null && !isRecord(value.proposed_scope)) || typeof value.validation_status !== "string" || (value.readiness !== null && value.readiness !== "READY_FOR_TASK" && value.readiness !== "INSUFFICIENT_EVIDENCE" && value.readiness !== "NEEDS_REVIEW") || (value.reason_code !== null && typeof value.reason_code !== "string")) {
     throw new ControlPlaneClientError("Control Plane returned an invalid Development Analysis response");
   }
   if (value.lifecycle !== undefined && value.lifecycle !== null && !isDevelopmentLifecycle(value.lifecycle)) {
@@ -174,7 +174,7 @@ function isDevelopmentLifecycle(value: unknown): boolean {
 }
 
 function parseCodexTask(value: unknown): CodexTaskV1 {
-  if (!isRecord(value) || value.identity !== "chappie_codex_task/1.0.0" || typeof value.task_id !== "string" || (value.state !== "ADVISORY" && value.state !== "VALIDATION_ERROR") || typeof value.projection !== "string" || value.approval_status !== "HUMAN_APPROVAL_REQUIRED") {
+  if (!isRecord(value) || value.identity !== "chappie_codex_handoff/1.0.0" || typeof value.task_id !== "string" || (value.state !== "ADVISORY" && value.state !== "VALIDATION_ERROR") || typeof value.projection !== "string" || value.approval_status !== "HUMAN_APPROVAL_REQUIRED") {
     throw new ControlPlaneClientError("Control Plane returned an invalid Codex task response");
   }
   return value as unknown as CodexTaskV1;
