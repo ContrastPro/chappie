@@ -40,6 +40,112 @@ class DevelopmentAnalysisReadinessV1(StrEnum):
     NEEDS_REVIEW = "NEEDS_REVIEW"
 
 
+DEVELOPMENT_DIFF_REVIEW_IDENTITY = "chappie_development_diff_review/1.0.0"
+
+
+class DevelopmentDiffReviewCheckV1(StrEnum):
+    PASS = "PASS"
+    FAIL = "FAIL"
+    UNKNOWN = "UNKNOWN"
+
+
+class DevelopmentDiffReviewStatusV1(StrEnum):
+    MATCHES_APPROVED_SCOPE = "MATCHES_APPROVED_SCOPE"
+    NEEDS_REVIEW = "NEEDS_REVIEW"
+    REJECTED = "REJECTED"
+
+
+class DevelopmentDiffReviewStateV1(StrEnum):
+    COMPLETE = "COMPLETE"
+    VALIDATION_ERROR = "VALIDATION_ERROR"
+
+
+@dataclass(frozen=True, slots=True)
+class DevelopmentDiffReviewCheckResultV1:
+    status: DevelopmentDiffReviewCheckV1
+    reason_code: str
+
+
+@dataclass(frozen=True, slots=True)
+class DevelopmentDiffChangeEvidenceV1:
+    path: str
+    change_kind: str
+    before_digest: str
+    after_digest: str
+    changed_symbols: tuple[str, ...]
+    line_count: int
+    authority_markers: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class DevelopmentDiffTestEvidenceV1:
+    identifier: str
+    status: DevelopmentDiffReviewCheckV1
+    evidence_digest: str
+
+
+@dataclass(frozen=True, slots=True)
+class DevelopmentDiffContractEvidenceV1:
+    identifier: str
+    status: DevelopmentDiffReviewCheckV1
+    evidence_digest: str
+
+
+@dataclass(frozen=True, slots=True)
+class DevelopmentDiffAcceptanceEvidenceV1:
+    identifier: str
+    status: DevelopmentDiffReviewCheckV1
+    evidence_digest: str
+
+
+@dataclass(frozen=True, slots=True)
+class DevelopmentDiffReviewRequestV1:
+    analysis: DevelopmentAnalysisV1
+    handoff: object
+    target_identity: str
+    changed_files: tuple[str, ...]
+    changes: tuple[DevelopmentDiffChangeEvidenceV1, ...]
+    tests: tuple[DevelopmentDiffTestEvidenceV1, ...]
+    knowledge_identity: str
+    knowledge_manifest_digest: str
+    knowledge_context_digest: str
+    observed_owner: str | None = None
+    contract_changes: tuple[str, ...] = ()
+    contract_evidence: tuple[DevelopmentDiffContractEvidenceV1, ...] = ()
+    acceptance_evidence: tuple[DevelopmentDiffAcceptanceEvidenceV1, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class DevelopmentDiffReviewV1:
+    identity: str
+    state: DevelopmentDiffReviewStateV1
+    validation_status: str
+    review_status: DevelopmentDiffReviewStatusV1
+    reason_code: str | None
+    source_analysis_identity: str | None
+    source_commit: str | None
+    source_analysis_evidence_digest: str | None
+    source_handoff_identity: str | None
+    source_handoff_task_id: str | None
+    source_handoff_evidence_digest: str | None
+    source_context_digest: str | None
+    knowledge_identity: str | None
+    knowledge_manifest_digest: str | None
+    knowledge_context_digest: str | None
+    target_identity: str
+    reviewed_files: tuple[str, ...]
+    expected_files: tuple[str, ...]
+    unexpected_files: tuple[str, ...]
+    unresolved_unknowns: tuple[str, ...]
+    owner_check: DevelopmentDiffReviewCheckResultV1
+    contract_check: DevelopmentDiffReviewCheckResultV1
+    tests_check: DevelopmentDiffReviewCheckResultV1
+    acceptance_check: DevelopmentDiffReviewCheckResultV1
+    authority_check: DevelopmentDiffReviewCheckResultV1
+    risks: tuple[str, ...]
+    human_approval_status: str = "HUMAN_APPROVAL_REQUIRED"
+
+
 class DevelopmentLifecycleStageV1(StrEnum):
     REQUEST_ACCEPTED = "REQUEST_ACCEPTED"
     ROLE_RESOLUTION = "ROLE_RESOLUTION"

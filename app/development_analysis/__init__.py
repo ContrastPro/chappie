@@ -2,10 +2,21 @@
 
 from app.development_analysis.models import (
     DEVELOPMENT_ANALYSIS_IDENTITY,
+    DEVELOPMENT_DIFF_REVIEW_IDENTITY,
     DevelopmentAnalysisReadinessV1,
     DevelopmentAnalysisRequestV1,
     DevelopmentAnalysisStateV1,
     DevelopmentAnalysisV1,
+    DevelopmentDiffAcceptanceEvidenceV1,
+    DevelopmentDiffChangeEvidenceV1,
+    DevelopmentDiffContractEvidenceV1,
+    DevelopmentDiffReviewCheckResultV1,
+    DevelopmentDiffReviewCheckV1,
+    DevelopmentDiffReviewRequestV1,
+    DevelopmentDiffReviewStateV1,
+    DevelopmentDiffReviewStatusV1,
+    DevelopmentDiffReviewV1,
+    DevelopmentDiffTestEvidenceV1,
     development_analysis_from_payload,
 )
 from app.development_analysis.service import DevelopmentAnalysisServiceV1
@@ -23,11 +34,13 @@ from app.development_analysis.task import (
     CodexTaskV1,
     prepare_codex_handoff,
     prepare_codex_task,
+    review_development_diff,
 )
 
 __all__ = (
     "CODEX_TASK_IDENTITY",
     "DEVELOPMENT_ANALYSIS_IDENTITY",
+    "DEVELOPMENT_DIFF_REVIEW_IDENTITY",
     "CodexHandoffV1",
     "CodexTaskPreparationRequestV1",
     "CodexTaskStateV1",
@@ -37,6 +50,16 @@ __all__ = (
     "DevelopmentAnalysisServiceV1",
     "DevelopmentAnalysisStateV1",
     "DevelopmentAnalysisV1",
+    "DevelopmentDiffAcceptanceEvidenceV1",
+    "DevelopmentDiffChangeEvidenceV1",
+    "DevelopmentDiffContractEvidenceV1",
+    "DevelopmentDiffReviewCheckResultV1",
+    "DevelopmentDiffReviewCheckV1",
+    "DevelopmentDiffReviewRequestV1",
+    "DevelopmentDiffReviewStateV1",
+    "DevelopmentDiffReviewStatusV1",
+    "DevelopmentDiffReviewV1",
+    "DevelopmentDiffTestEvidenceV1",
     "DevelopmentGroundingV1",
     "DevelopmentProposalV1",
     "DevelopmentReviewV1",
@@ -44,4 +67,5 @@ __all__ = (
     "development_analysis_from_payload",
     "prepare_codex_handoff",
     "prepare_codex_task",
+    "review_development_diff",
 )
