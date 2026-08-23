@@ -142,7 +142,7 @@ function projectQaRequestFailureMessage(code: string, fallback: string): string 
 
 export function developmentAnalysisFailureMessage(code: string | undefined): string {
   if (code === "AI_PROVIDER_TIMEOUT") return "Chappie Development Analysis timed out during local model inference.";
-  if (code === "ANALYSIS_INVALID") return "Chappie Development Analysis returned an invalid bounded result.";
+  if (code === "ANALYSIS_INVALID" || code === "DEVELOPMENT_ANALYSIS_INVALID") return "Chappie Development Analysis returned an invalid bounded result.";
   if (code === "MODEL_ROLE_UNAVAILABLE") return "The selected Chappie development model role is unavailable; no fallback was used.";
   if (code === "KNOWLEDGE_STALE" || code === "KNOWLEDGE_UNAVAILABLE" || code === "NO_RELEVANT_KNOWLEDGE") return "Chappie Knowledge is not ready for Development Analysis.";
   return "Chappie Development Analysis is temporarily unavailable.";

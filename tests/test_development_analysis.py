@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.ai.errors import AIProviderTimeoutError
+from app.ai.errors import AIProviderTimeoutError, AIValidationError
 from app.ai.model_policy import DevelopmentModelRoleV1
 from app.development_analysis.models import (
     DevelopmentAnalysisRequestV1,
@@ -49,6 +49,7 @@ def test_analysis_builds_evidence_before_stubbed_inference(tmp_path, monkeypatch
     assert result.evidence.source_commit == snapshot.commit
     assert result.evidence.knowledge_manifest_digest
     assert result.evidence.evidence_digest
+    assert result.payload()["evidence"]["requested_role"] == role.value
     assert observed and observed[0][2] == result.evidence
 
 
@@ -79,6 +80,25 @@ def test_provider_timeout_is_a_typed_development_analysis_failure(tmp_path, monk
 
     assert result.state == DevelopmentAnalysisStateV1.TIMEOUT
     assert result.reason_code == "AI_PROVIDER_TIMEOUT"
+
+
+def test_model_validation_failure_is_a_typed_development_analysis_failure(
+    tmp_path, monkeypatch
+) -> None:
+    from app.development_analysis import service
+
+    snapshot = RepositorySnapshotV1("a" * 40, True)
+    records = initial_records(snapshot=snapshot)
+    monkeypatch.setattr(service, "committed_snapshot", lambda _root: snapshot)
+    monkeypatch.setattr(service, "read_store", lambda _path: (records, manifest(records, snapshot)))
+    result = DevelopmentAnalysisServiceV1(
+        paths=_paths(tmp_path),
+        runner=lambda *_args: (_ for _ in ()).throw(AIValidationError("invalid model output")),
+        role_available=lambda _role: True,
+    ).analyze(DevelopmentAnalysisRequestV1("Understand architecture", DevelopmentModelRoleV1.CODE))
+
+    assert result.state == DevelopmentAnalysisStateV1.ANALYSIS_INVALID
+    assert result.reason_code == "DEVELOPMENT_ANALYSIS_INVALID"
 
 
 @pytest.mark.parametrize("unsafe", ("C:/secret.py", "../secret.py"))

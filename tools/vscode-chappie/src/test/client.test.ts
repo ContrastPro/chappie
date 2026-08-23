@@ -61,6 +61,7 @@ test("Development Analysis has its own finite transport deadline beyond the CODE
   assert.ok(DEVELOPMENT_ANALYSIS_HTTP_TIMEOUT_MS > 90_000);
   assert.ok(DEVELOPMENT_ANALYSIS_HTTP_TIMEOUT_MS <= 120_000);
   assert.equal(developmentAnalysisFailureMessage("AI_PROVIDER_TIMEOUT"), "Chappie Development Analysis timed out during local model inference.");
+  assert.equal(developmentAnalysisFailureMessage("DEVELOPMENT_ANALYSIS_INVALID"), "Chappie Development Analysis returned an invalid bounded result.");
   assert.equal(developmentAnalysisFailureMessage("MODEL_ROLE_UNAVAILABLE"), "The selected Chappie development model role is unavailable; no fallback was used.");
   assert.equal(developmentAnalysisFailureMessage("KNOWLEDGE_STALE"), "Chappie Knowledge is not ready for Development Analysis.");
 });

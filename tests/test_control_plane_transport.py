@@ -290,6 +290,57 @@ def test_development_analysis_transport_round_trip_is_read_only(server) -> None:
     assert body["data"]["inferences"] == ["bounded inference"]
 
 
+@pytest.mark.parametrize(
+    ("state", "reason"),
+    (
+        (DevelopmentAnalysisStateV1.TIMEOUT, "AI_PROVIDER_TIMEOUT"),
+        (DevelopmentAnalysisStateV1.ANALYSIS_INVALID, "DEVELOPMENT_ANALYSIS_INVALID"),
+    ),
+)
+def test_development_analysis_typed_failure_is_not_an_opaque_500(server, state, reason) -> None:
+    class TypedFailurePlane(_FakeControlPlane):
+        def analyze_development(
+            self, request: str, *, requested_role: str, workspace_context: object | None = None
+        ) -> DevelopmentAnalysisV1:
+            _ = requested_role, workspace_context
+            return DevelopmentAnalysisV1(state, request, reason_code=reason)
+
+    server._control_plane = TypedFailurePlane()
+    status, _headers, body = _request(
+        server,
+        "POST",
+        "/v1/development/analyze",
+        json.dumps({"request": "Analyze architecture", "requested_role": "CODE"}),
+    )
+
+    assert status == 503
+    assert body["error"] == {"code": reason, "message": "Development analysis is unavailable"}
+
+
+def test_unexpected_development_exception_remains_fail_closed_500(server) -> None:
+    class BrokenPlane(_FakeControlPlane):
+        def analyze_development(
+            self, _request: str, *, requested_role: str, workspace_context: object | None = None
+        ) -> DevelopmentAnalysisV1:
+            _ = requested_role, workspace_context
+            raise RuntimeError("secret internal detail")
+
+    server._control_plane = BrokenPlane()
+    status, _headers, body = _request(
+        server,
+        "POST",
+        "/v1/development/analyze",
+        json.dumps({"request": "Analyze architecture", "requested_role": "CODE"}),
+    )
+
+    assert status == 500
+    assert body["error"] == {
+        "code": "INTERNAL_ERROR",
+        "message": "Project QA request could not be completed",
+    }
+    assert "secret" not in json.dumps(body)
+
+
 def test_project_qa_transport_accepts_the_canonical_deep_question_boundary(server) -> None:
     body = json.dumps({"question": "architecture " * 1_000})
     assert len(body.encode("utf-8")) > 2_048

@@ -563,7 +563,7 @@ function chatError(error: unknown): string {
   if (error instanceof Error && error.message === "SENSITIVE_FILE_BLOCKED") return "Sensitive files cannot be attached as context.";
   if (error instanceof ControlPlaneTransportTimeoutError) return "Chappie request timed out before the Control Plane returned a result.";
   if (error instanceof ControlPlaneDependencyError) {
-    return error.reasonCode.startsWith("AI_PROVIDER_") || error.reasonCode.startsWith("ANALYSIS_") || error.reasonCode === "MODEL_ROLE_UNAVAILABLE" || error.reasonCode.startsWith("KNOWLEDGE_") || error.reasonCode === "NO_RELEVANT_KNOWLEDGE"
+    return error.reasonCode.startsWith("AI_PROVIDER_") || error.reasonCode.startsWith("ANALYSIS_") || error.reasonCode.startsWith("DEVELOPMENT_ANALYSIS_") || error.reasonCode === "MODEL_ROLE_UNAVAILABLE" || error.reasonCode.startsWith("KNOWLEDGE_") || error.reasonCode === "NO_RELEVANT_KNOWLEDGE"
       ? developmentAnalysisFailureMessage(error.reasonCode)
       : projectQaFailureMessage(error.reasonCode);
   }
