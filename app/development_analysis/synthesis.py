@@ -258,11 +258,31 @@ class DevelopmentStageError(AIValidationError):
         *,
         stage_elapsed_ms: tuple[tuple[str, int], ...] = (),
         proposal_diagnostics: ProposalParseDiagnosticsV1 | None = None,
+        grounding_diagnostics: GroundingParseDiagnosticsV1 | None = None,
     ) -> None:
         super().__init__("development staged synthesis failed", code=code)
         self.stage = stage
         self.stage_elapsed_ms = stage_elapsed_ms
         self.proposal_diagnostics = proposal_diagnostics
+        self.grounding_diagnostics = grounding_diagnostics
+
+
+@dataclass(frozen=True, slots=True)
+class GroundingParseDiagnosticsV1:
+    """Bounded structural metadata for an unsupported public evidence handle."""
+
+    parser_stage: str
+    reason_code: str
+    bounded_error_path: str
+    bounded_error_category: str
+
+    def payload(self) -> dict[str, str]:
+        return {
+            "parser_stage": self.parser_stage,
+            "reason_code": self.reason_code,
+            "bounded_error_path": self.bounded_error_path,
+            "bounded_error_category": self.bounded_error_category,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -363,7 +383,9 @@ class DevelopmentStagedSynthesisOutputV1:
 
 
 def parse_development_grounding(
-    value: object, context_map: DevelopmentContextMapV1
+    value: object,
+    context_map: DevelopmentContextMapV1,
+    repository_inventory_attachment: object | None = None,
 ) -> DevelopmentGroundingV1:
     if not isinstance(value, dict) or set(value) != set(GROUNDING_SCHEMA["required"]):
         raise DevelopmentStageError("GROUNDING", "GROUNDING_SCHEMA_INVALID")
@@ -380,10 +402,43 @@ def parse_development_grounding(
         or any(not isinstance(item, str) or not item.strip() for item in unknowns)
     ):
         raise DevelopmentStageError("GROUNDING", "GROUNDING_SCHEMA_INVALID")
-    allowed = {item.handle for item in context_map.evidence_handles}
-    if any(item not in allowed for item in handles):
-        raise DevelopmentStageError("GROUNDING", "GROUNDING_UNSUPPORTED_EVIDENCE")
+    allowed = set(public_grounding_evidence_handles(context_map, repository_inventory_attachment))
+    for index, item in enumerate(handles):
+        if item not in allowed:
+            raise DevelopmentStageError(
+                "GROUNDING",
+                "GROUNDING_UNSUPPORTED_EVIDENCE",
+                grounding_diagnostics=GroundingParseDiagnosticsV1(
+                    "GROUNDING_PARSE",
+                    "GROUNDING_UNSUPPORTED_EVIDENCE",
+                    f"$.relevant_evidence_handles[{index}]",
+                    _unsupported_grounding_handle_category(item),
+                ),
+            )
     return DevelopmentGroundingV1(tuple(dict.fromkeys(handles)), interpretation, tuple(unknowns))
+
+
+def public_grounding_evidence_handles(
+    context_map: DevelopmentContextMapV1, repository_inventory_attachment: object | None = None
+) -> tuple[str, ...]:
+    """Return the exact request-local public handle namespace used by prompt and parser."""
+    knowledge = tuple(item.handle for item in context_map.evidence_handles)
+    if repository_inventory_attachment is None:
+        return knowledge
+    inventory = tuple(
+        item.handle for item in getattr(repository_inventory_attachment, "evidence_groups", ())
+    )
+    return tuple(dict.fromkeys((*knowledge, *inventory)))
+
+
+def _unsupported_grounding_handle_category(value: str) -> str:
+    if value.startswith(("knowledge.", "knowledge-")) or any(
+        marker in value for marker in ("/", "\\", "#", ".")
+    ):
+        return "INTERNAL_IDENTIFIER"
+    if value.startswith(("E", "RI")) and value.removeprefix("RI").removeprefix("E").isdigit():
+        return "UNKNOWN_HANDLE"
+    return "MALFORMED_HANDLE"
 
 
 def parse_development_proposal(
@@ -838,14 +893,22 @@ def synthesize_development(
     grounding_result = call(
         "GROUNDING",
         DEVELOPMENT_GROUNDING_IDENTITY,
-        _grounding_instruction(request),
+        _grounding_instruction(
+            public_grounding_evidence_handles(
+                context_map, getattr(request, "repository_inventory_attachment", None)
+            )
+        ),
         GROUNDING_SCHEMA,
         _with_repository_inventory(
             {"request": request.request, "development_context_map": context_map.payload()}, request
         ),
     )
     try:
-        grounding = parse_development_grounding(grounding_result.structured_output, context_map)
+        grounding = parse_development_grounding(
+            grounding_result.structured_output,
+            context_map,
+            getattr(request, "repository_inventory_attachment", None),
+        )
     except DevelopmentStageError as error:
         error.stage_elapsed_ms = (("GROUNDING_SYNTHESIS", grounding_result.latency_ms),)
         raise
@@ -919,13 +982,14 @@ def _with_repository_inventory(payload: dict[str, object], request: object) -> d
     return {**payload, "repository_inventory_attachment": attachment.payload()}
 
 
-def _grounding_instruction(request: object) -> str:
-    base = "Return only JSON. Select supplied E-handles that establish CURRENT state, give one short task interpretation, and list UNKNOWNs. Never propose files, contracts, or authority."
-    if getattr(request, "repository_inventory_attachment", None) is None:
-        return base
+def _grounding_instruction(public_handles: tuple[str, ...]) -> str:
+    handles = ", ".join(public_handles)
     return (
-        base
-        + " The separate RI-handles are verified, grouped RepositoryInventory structural facts; use them only as read-only CURRENT repository evidence. Keep relevant_evidence_handles limited to canonical Knowledge E-handles."
+        "Return only JSON. Select exact supplied public handles that establish CURRENT state, "
+        "give one short task interpretation, and list UNKNOWNs. E-handles are canonical Knowledge "
+        "evidence. RI-handles are verified grouped RepositoryInventory structural evidence. "
+        f"For this request, relevant_evidence_handles may contain only: {handles}. "
+        "Never invent or normalize a handle, and never propose files, contracts, or authority."
     )
 
 

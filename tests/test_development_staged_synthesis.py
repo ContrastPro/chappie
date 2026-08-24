@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -15,10 +16,12 @@ from app.development_analysis.synthesis import (
     PROPOSAL_SCHEMA,
     PROPOSED_SCOPE_FIELDS,
     DevelopmentStageError,
+    _grounding_instruction,
     parse_development_grounding,
     parse_development_proposal,
     parse_development_review,
     proposal_provider_schema,
+    public_grounding_evidence_handles,
 )
 
 
@@ -83,6 +86,89 @@ def test_grounding_accepts_only_supplied_evidence_and_unknowns() -> None:
             _context_map(),
         )
     assert error.value.code == "GROUNDING_UNSUPPORTED_EVIDENCE"
+
+
+def _inventory_attachment(*handles: str):
+    return SimpleNamespace(
+        evidence_groups=tuple(SimpleNamespace(handle=handle) for handle in handles)
+    )
+
+
+@pytest.mark.parametrize("handles", (("RI1",), ("RI5",), ("E1", "RI1")))
+def test_grounding_accepts_exact_public_inventory_handles(handles) -> None:
+    attachment = _inventory_attachment("RI1", "RI2", "RI3", "RI4", "RI5")
+    result = parse_development_grounding(
+        {
+            "relevant_evidence_handles": list(handles),
+            "task_interpretation": "Review repository evidence.",
+            "unknowns": [],
+        },
+        _context_map(),
+        attachment,
+    )
+    assert result.relevant_evidence_handles == handles
+
+
+@pytest.mark.parametrize(
+    ("handle", "category"),
+    (
+        ("RI6", "UNKNOWN_HANDLE"),
+        ("E9", "UNKNOWN_HANDLE"),
+        ("knowledge.development.statement", "INTERNAL_IDENTIFIER"),
+        ("app/development_analysis/models.py", "INTERNAL_IDENTIFIER"),
+        ("E1+RI1", "MALFORMED_HANDLE"),
+    ),
+)
+def test_grounding_rejects_handles_outside_exact_public_set(handle, category) -> None:
+    with pytest.raises(DevelopmentStageError) as error:
+        parse_development_grounding(
+            {
+                "relevant_evidence_handles": [handle],
+                "task_interpretation": "Review.",
+                "unknowns": [],
+            },
+            _context_map(),
+            _inventory_attachment("RI1", "RI2", "RI3", "RI4", "RI5"),
+        )
+    assert error.value.code == "GROUNDING_UNSUPPORTED_EVIDENCE"
+    diagnostics = error.value.grounding_diagnostics
+    assert diagnostics is not None
+    assert diagnostics.bounded_error_path == "$.relevant_evidence_handles[0]"
+    assert diagnostics.bounded_error_category == category
+    assert handle not in str(diagnostics.payload())
+
+
+def test_grounding_prompt_and_parser_share_deterministic_public_handles() -> None:
+    attachment = _inventory_attachment("RI1", "RI2", "RI3", "RI4", "RI5")
+    handles = public_grounding_evidence_handles(_context_map(), attachment)
+    assert handles == ("E1", "RI1", "RI2", "RI3", "RI4", "RI5")
+    instruction = _grounding_instruction(handles)
+    assert "E1, RI1, RI2, RI3, RI4, RI5" in instruction
+    for handle in handles:
+        result = parse_development_grounding(
+            {
+                "relevant_evidence_handles": [handle],
+                "task_interpretation": "Review.",
+                "unknowns": [],
+            },
+            _context_map(),
+            attachment,
+        )
+        assert result.relevant_evidence_handles == (handle,)
+
+
+def test_non_inventory_grounding_does_not_accept_inventory_handles() -> None:
+    assert public_grounding_evidence_handles(_context_map()) == ("E1",)
+    with pytest.raises(DevelopmentStageError) as error:
+        parse_development_grounding(
+            {
+                "relevant_evidence_handles": ["RI1"],
+                "task_interpretation": "Review.",
+                "unknowns": [],
+            },
+            _context_map(),
+        )
+    assert error.value.grounding_diagnostics.bounded_error_category == "UNKNOWN_HANDLE"
 
 
 @pytest.mark.parametrize(
