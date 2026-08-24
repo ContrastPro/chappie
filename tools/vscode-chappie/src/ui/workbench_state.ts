@@ -1,4 +1,4 @@
-import { CodexTaskV1, DevelopmentAnalysisV1 } from "../api/contracts";
+import { CodexTaskV1, DevelopmentAnalysisV1, DevelopmentTaskIntentKindV1 } from "../api/contracts";
 import { buildDevelopmentPresentation } from "./development_presentation";
 import { ContextOptionsV1, WorkbenchContextAttachmentV1, WorkbenchDevelopmentFailureV1, WorkbenchModeV1, WorkbenchTurnV1 } from "./workbench_protocol";
 
@@ -11,9 +11,9 @@ export class WorkbenchSessionV1 {
   public get active(): boolean { return this.turns.some((turn) => turn.status === "pending"); }
   public get currentRevision(): number { return this.revision; }
   public snapshot(): readonly WorkbenchTurnV1[] { return this.turns.map(copyTurn); }
-  public begin(turnId: string, requestId: string, question: string, context: ContextOptionsV1, startedAtMs = Date.now(), attachments: readonly WorkbenchContextAttachmentV1[] = [], mode: WorkbenchModeV1 = "CHAT"): WorkbenchTurnV1 | undefined {
+  public begin(turnId: string, requestId: string, question: string, context: ContextOptionsV1, startedAtMs = Date.now(), attachments: readonly WorkbenchContextAttachmentV1[] = [], mode: WorkbenchModeV1 = "CHAT", requestedIntent?: DevelopmentTaskIntentKindV1): WorkbenchTurnV1 | undefined {
     if (this.active) return undefined;
-    const turn: WorkbenchTurnV1 = { turnId, requestId, question, context: { ...context }, attachments: attachments.map(copyAttachment), status: "pending", startedAtMs, mode };
+    const turn: WorkbenchTurnV1 = { turnId, requestId, question, context: { ...context }, attachments: attachments.map(copyAttachment), status: "pending", startedAtMs, mode, ...(mode === "DEVELOPMENT" && requestedIntent ? { requestedIntent } : {}) };
     this.turns.push(turn); this.trim(); this.revision += 1; return copyTurn(turn);
   }
   public complete(turnId: string, response: WorkbenchTurnV1["response"], completedAtMs = Date.now()): WorkbenchTurnV1 | undefined { return this.settle(turnId, { response, status: "complete", completedAtMs }); }

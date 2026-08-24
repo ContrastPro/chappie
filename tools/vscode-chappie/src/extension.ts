@@ -16,6 +16,7 @@ import { capabilitySummary, contextPreview, humanState, projectChatAvailability,
 import { ChappieStatusSidebarV1, StatusRefreshGateV1 } from "./ui/status";
 import { ChappieWorkbenchV1 } from "./ui/workbench";
 import { roleUnavailableMessage, selectRole } from "./ui/model_roles";
+import { DEVELOPMENT_INTENT_OPTIONS } from "./ui/development_intent";
 import { WorkbenchContextAttachmentV1, WorkbenchContextKindV1 } from "./ui/workbench_protocol";
 import { EditorContextInputV1, WorkspaceContextCollector } from "./workspace/context";
 import { collectGitMetadata } from "./workspace/git_metadata";
@@ -303,7 +304,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   workbench = new ChappieWorkbenchV1({
     askProject: (question, options, attachments, role) => new ChappieControlPlaneClient(configuredPort()).askProject(question, collectAttachedWorkbenchContext(options, attachments, workbenchSnapshots), role),
-    analyzeDevelopment: (request, options, attachments, role) => new ChappieControlPlaneClient(configuredPort()).analyzeDevelopment({ request, requested_role: role, workspace_context: collectAttachedWorkbenchContext(options, attachments, workbenchSnapshots) ?? null }),
+    analyzeDevelopment: (request, options, attachments, role, intent) => new ChappieControlPlaneClient(configuredPort()).analyzeDevelopment({ request, requested_role: role, requested_intent: intent, workspace_context: collectAttachedWorkbenchContext(options, attachments, workbenchSnapshots) ?? null }),
     prepareCodexTask: (analysis) => new ChappieControlPlaneClient(configuredPort()).prepareCodexTask({ analysis }),
     selectModelRole: async () => {
       const models = (await new ChappieControlPlaneClient(configuredPort()).models()).models.filter((item) => item.role !== null);
@@ -330,6 +331,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       await vscode.workspace.getConfiguration("chappie").update("workbenchMode", mode, vscode.ConfigurationTarget.Workspace);
       output.appendLine(`Selected workspace Workbench mode: ${mode}`);
       return mode;
+    },
+    selectDevelopmentIntent: async (current) => {
+      const selected = await vscode.window.showQuickPick(DEVELOPMENT_INTENT_OPTIONS, { title: "Chappie Development intent", placeHolder: "Select the explicit intent for future Development turns" });
+      if (!selected) return current;
+      output.appendLine(`Selected Development intent: ${selected.intent}`);
+      return selected.intent;
     },
     workbenchMode: selectedWorkbenchMode,
     attachContext: async (kind) => {

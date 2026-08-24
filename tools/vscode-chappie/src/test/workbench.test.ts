@@ -436,11 +436,17 @@ test("Workbench Development mode is explicit and renders only advisory Codex tas
   const host = readFileSync("src/ui/workbench.ts", "utf8");
   const manifest = JSON.parse(readFileSync("package.json", "utf8")) as { contributes: { configuration: { properties: Record<string, { default?: string; scope?: string }> } } };
   assert.deepEqual(parseWebviewMessage({ type: "selectWorkbenchMode" }), { type: "selectWorkbenchMode" });
+  assert.deepEqual(parseWebviewMessage({ type: "selectDevelopmentIntent" }), { type: "selectDevelopmentIntent" });
   assert.deepEqual(parseWebviewMessage({ type: "prepareCodexTask", turnId: "turn_1" }), { type: "prepareCodexTask", turnId: "turn_1" });
   assert.equal(manifest.contributes.configuration.properties["chappie.workbenchMode"].default, "CHAT");
   assert.equal(manifest.contributes.configuration.properties["chappie.workbenchMode"].scope, "resource");
   assert.match(host, /turn\.mode === "DEVELOPMENT"/);
   assert.match(host, /analyzeDevelopment/);
+  assert.match(host, /turn\.requestedIntent!/);
+  assert.match(host, /intentSelection\.reset\(\)/);
+  assert.match(script, /Intent: '/);
+  assert.match(script, /connection\.mode!==\'DEVELOPMENT\'/);
+  assert.match(script, /type:'selectDevelopmentIntent'/);
   assert.match(host, /prepareCodexTask/);
   assert.match(host, /task\.state !== "ADVISORY"/);
   assert.match(host, /turn\.development\.readiness !== "READY_FOR_TASK"/);

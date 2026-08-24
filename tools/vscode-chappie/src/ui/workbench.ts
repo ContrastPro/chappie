@@ -1,16 +1,18 @@
 import * as vscode from "vscode";
-import { CodexTaskV1, DevelopmentAnalysisV1, DevelopmentModelRoleV1, ProjectQAResponseV1 } from "../api/contracts";
+import { CodexTaskV1, DevelopmentAnalysisV1, DevelopmentModelRoleV1, DevelopmentTaskIntentKindV1, ProjectQAResponseV1 } from "../api/contracts";
 import { ControlPlaneDependencyError, ControlPlaneRequestError } from "../api/client";
 import { workbenchHtml } from "./workbench_html";
 import { ContextOptionsV1, DevelopmentFailureCategoryV1, HostMessageV1, parseWebviewMessage, RuntimeTelemetryV1, WorkbenchActionV1, WorkbenchConnectionSnapshotV1, WorkbenchContextAttachmentV1, WorkbenchContextKindV1, WorkbenchDevelopmentFailureV1, WorkbenchModeV1 } from "./workbench_protocol";
 import { WorkbenchSessionV1 } from "./workbench_state";
+import { DevelopmentIntentSelectionV1 } from "./development_intent";
 
 export interface WorkbenchDependenciesV1 {
   askProject(question: string, context: ContextOptionsV1, attachments: readonly WorkbenchContextAttachmentV1[], role: DevelopmentModelRoleV1): Promise<ProjectQAResponseV1>;
-  analyzeDevelopment(request: string, context: ContextOptionsV1, attachments: readonly WorkbenchContextAttachmentV1[], role: DevelopmentModelRoleV1): Promise<DevelopmentAnalysisV1>;
+  analyzeDevelopment(request: string, context: ContextOptionsV1, attachments: readonly WorkbenchContextAttachmentV1[], role: DevelopmentModelRoleV1, intent: DevelopmentTaskIntentKindV1): Promise<DevelopmentAnalysisV1>;
   prepareCodexTask(analysis: DevelopmentAnalysisV1): Promise<CodexTaskV1>;
   selectModelRole(): Promise<void>;
   selectWorkbenchMode(): Promise<WorkbenchModeV1>;
+  selectDevelopmentIntent(current: DevelopmentTaskIntentKindV1): Promise<DevelopmentTaskIntentKindV1>;
   workbenchMode(): WorkbenchModeV1;
   attachContext(kind: WorkbenchContextKindV1): Promise<WorkbenchContextAttachmentV1>;
   removeContext(kind: WorkbenchContextKindV1): void;
@@ -26,11 +28,12 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
   private contextPreviewPanel: vscode.WebviewPanel | undefined;
   private readonly session = new WorkbenchSessionV1();
   private readonly attachments = new Map<WorkbenchContextKindV1, WorkbenchContextAttachmentV1>();
-  private connection: WorkbenchConnectionSnapshotV1 = { state: "DISCONNECTED", system: "UNKNOWN", model: null, modelRole: "FAST", mode: "CHAT", models: [], knowledge: "UNKNOWN", availability: "Chappie setup is required before the local service can connect.", setupAction: "Set up" };
+  private connection: WorkbenchConnectionSnapshotV1 = { state: "DISCONNECTED", system: "UNKNOWN", model: null, modelRole: "FAST", mode: "CHAT", developmentIntent: "QUESTION", models: [], knowledge: "UNKNOWN", availability: "Chappie setup is required before the local service can connect.", setupAction: "Set up" };
   private mode: WorkbenchModeV1;
+  private readonly intentSelection = new DevelopmentIntentSelectionV1();
   private sequence = 0;
 
-  public constructor(private readonly dependencies: WorkbenchDependenciesV1) { this.mode = dependencies.workbenchMode(); this.connection = { ...this.connection, mode: this.mode }; }
+  public constructor(private readonly dependencies: WorkbenchDependenciesV1) { this.mode = dependencies.workbenchMode(); this.connection = { ...this.connection, mode: this.mode, developmentIntent: this.intentSelection.current }; }
 
   public open(): void {
     if (this.panel) { this.panel.reveal(vscode.ViewColumn.Active, true); return; }
@@ -42,8 +45,8 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
     this.initialize();
   }
 
-  public updateConnection(connection: WorkbenchConnectionSnapshotV1): void { this.connection = connection; this.post({ type: "connectionChanged", connection }); }
-  public newChat(): void { if (this.session.active) return; this.session.clear(); this.clearAttachments(); this.open(); this.post({ type: "replaceSession", session: this.session.snapshot(), sessionRevision: this.session.currentRevision }); }
+  public updateConnection(connection: WorkbenchConnectionSnapshotV1): void { this.connection = { ...connection, developmentIntent: this.intentSelection.current }; this.post({ type: "connectionChanged", connection: this.connection }); }
+  public newChat(): void { if (this.session.active) return; this.session.clear(); this.intentSelection.reset(); this.connection = { ...this.connection, developmentIntent: this.intentSelection.current }; this.clearAttachments(); this.open(); this.post({ type: "connectionChanged", connection: this.connection }); this.post({ type: "replaceSession", session: this.session.snapshot(), sessionRevision: this.session.currentRevision }); }
   public focusComposer(): void { this.open(); this.post({ type: "notice", message: "Focus the composer to ask Chappie about this project." }); }
   public dispose(): void { this.panel?.dispose(); this.contextPreviewPanel?.dispose(); this.panel = undefined; this.contextPreviewPanel = undefined; }
 
@@ -72,11 +75,17 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
     }
     if (message.type === "previewContext") { const attachment = this.attachments.get(message.kind); if (attachment) this.openContextPreview(attachment); return; }
     if (message.type === "removeContext") { this.attachments.delete(message.kind); this.dependencies.removeContext(message.kind); this.post({ type: "notice", message: "" }); this.post({ type: "attachmentsChanged", attachments: this.attachmentSnapshot() }); return; }
-    if (message.type === "clearConversation") { this.session.clear(); this.clearAttachments(); await this.postSession(); return; }
+    if (message.type === "clearConversation") { this.session.clear(); this.intentSelection.reset(); this.connection = { ...this.connection, developmentIntent: this.intentSelection.current }; this.clearAttachments(); await this.post({ type: "connectionChanged", connection: this.connection }); await this.postSession(); return; }
     if (message.type === "selectModelRole") { await this.dependencies.selectModelRole(); return; }
     if (message.type === "selectWorkbenchMode") {
       this.mode = await this.dependencies.selectWorkbenchMode();
       this.connection = { ...this.connection, mode: this.mode };
+      await this.post({ type: "connectionChanged", connection: this.connection });
+      return;
+    }
+    if (message.type === "selectDevelopmentIntent") {
+      this.intentSelection.select(await this.dependencies.selectDevelopmentIntent(this.intentSelection.current));
+      this.connection = { ...this.connection, developmentIntent: this.intentSelection.current };
       await this.post({ type: "connectionChanged", connection: this.connection });
       return;
     }
@@ -103,14 +112,15 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
       await this.post({ type: "notice", message: this.connection.availability });
       return;
     }
-    const turn = this.session.begin(`turn_${++this.sequence}`, requestId, question, context, Date.now(), attachments, this.mode);
+    const requestedIntent = message.type === "retry" ? original!.requestedIntent : this.mode === "DEVELOPMENT" ? this.intentSelection.current : undefined;
+    const turn = this.session.begin(`turn_${++this.sequence}`, requestId, question, context, Date.now(), attachments, this.mode, requestedIntent);
     if (!turn) return;
     if (message.type === "ask") this.clearAttachments();
     await this.postSession();
     const telemetry = setInterval(() => { void this.publishTelemetry(); }, 1_500); void this.publishTelemetry();
     try {
       if (turn.mode === "DEVELOPMENT") {
-        const analysis = await this.dependencies.analyzeDevelopment(turn.question, turn.context, turn.attachments, this.connection.modelRole);
+        const analysis = await this.dependencies.analyzeDevelopment(turn.question, turn.context, turn.attachments, this.connection.modelRole, turn.requestedIntent!);
         if (analysis.state !== "OK" && analysis.outcome === undefined) throw new Error(analysis.reason_code ?? "Development analysis did not return a valid result.");
         if (!this.session.completeDevelopment(turn.turnId, analysis)) throw new Error("Development analysis completed after its Workbench turn was no longer pending.");
       } else {

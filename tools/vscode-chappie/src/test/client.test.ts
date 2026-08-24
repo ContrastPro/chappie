@@ -121,6 +121,22 @@ test("Project QA propagates a selected stable role without changing durable mode
   });
   await client.askProject("Architecture", undefined, "CODE");
   assert.deepEqual(JSON.parse(body), { question: "Architecture", workspace_context: null, requested_model_role: "CODE" });
+  assert.equal("requested_intent" in JSON.parse(body), false);
+});
+
+test("Development Analysis propagates each explicit requested intent without changing role", async () => {
+  const bodies: Record<string, unknown>[] = [];
+  const response = { identity: "chappie_development_analysis/2.0.0", state: "OK", request: "Request", evidence: null, facts: [], inferences: [], unknowns: [], architecture_owners: [], affected_contracts: [], likely_files: [], risks: [], required_tests: [], non_goals: [], acceptance_criteria: [], confidence: 1, validation_status: "VALID", readiness: null, reason_code: null, context_map: null, current_evidence_handles: [], proposed_scope: null, task_intent: null, answer: "Answer", plan_items: [] };
+  const client = new ChappieControlPlaneClient(8765, async (_url, init) => { bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>); return envelope(response); });
+  for (const requested_intent of ["QUESTION", "ANALYSIS", "PLAN", "IMPLEMENTATION"] as const) {
+    await client.analyzeDevelopment({ request: "Implement this change.", requested_role: "DEEP", requested_intent, workspace_context: null });
+  }
+  assert.deepEqual(bodies.map(({ requested_role, requested_intent }) => ({ requested_role, requested_intent })), [
+    { requested_role: "DEEP", requested_intent: "QUESTION" },
+    { requested_role: "DEEP", requested_intent: "ANALYSIS" },
+    { requested_role: "DEEP", requested_intent: "PLAN" },
+    { requested_role: "DEEP", requested_intent: "IMPLEMENTATION" },
+  ]);
 });
 
 test("Development Analysis and Codex task use typed read-only Control Plane contracts", async () => {
@@ -130,12 +146,12 @@ test("Development Analysis and Codex task use typed read-only Control Plane cont
   Object.assign(analysis, { task_intent: null, answer: null, plan_items: [] });
   let index = 0;
   const client = new ChappieControlPlaneClient(8765, async (_url, init) => { bodies.push(String(init?.body)); return envelope([analysis, task][index++]); });
-  const parsed = await client.analyzeDevelopment({ request: "Plan", requested_role: "CODE", workspace_context: null });
+  const parsed = await client.analyzeDevelopment({ request: "Plan", requested_role: "CODE", requested_intent: "PLAN", workspace_context: null });
   assert.equal(parsed.identity, analysis.identity);
   assert.equal(parsed.outcome?.status, "NEEDS_CONTEXT");
   assert.equal(parsed.lifecycle?.events[0]?.stage, "GROUNDING_PARSE");
   assert.equal((await client.prepareCodexTask({ analysis: analysis as never })).approval_status, "HUMAN_APPROVAL_REQUIRED");
-  assert.deepEqual(JSON.parse(bodies[0]), { request: "Plan", requested_role: "CODE", workspace_context: null });
+  assert.deepEqual(JSON.parse(bodies[0]), { request: "Plan", requested_role: "CODE", requested_intent: "PLAN", workspace_context: null });
   assert.deepEqual(JSON.parse(bodies[1]), { analysis });
 });
 
