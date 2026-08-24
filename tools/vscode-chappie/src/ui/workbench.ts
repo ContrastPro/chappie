@@ -82,7 +82,7 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
     }
     if (message.type === "prepareCodexTask") {
       const turn = this.session.find(message.turnId);
-      if (!turn?.development || turn.development.state !== "OK" || turn.development.validation_status !== "VALID" || turn.development.readiness !== "READY_FOR_TASK" || (turn.development.outcome !== undefined && turn.development.outcome.status !== "COMPLETED")) return;
+      if (!turn?.development || turn.development.state !== "OK" || turn.development.validation_status !== "VALID" || turn.development.readiness !== "READY_FOR_TASK" || (turn.development.outcome !== undefined && turn.development.outcome.status !== "NEEDS_HUMAN_REVIEW")) return;
       try {
         const task = await this.dependencies.prepareCodexTask(turn.development);
         if (task.state !== "ADVISORY") throw new Error(task.reason_code ?? "Codex task preparation was rejected.");

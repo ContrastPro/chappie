@@ -16,15 +16,20 @@ from app.development_analysis.models import (
     DevelopmentAnalysisV1,
 )
 
-DEVELOPMENT_OUTCOME_IDENTITY = "chappie_development_outcome/1.0.0"
+DEVELOPMENT_OUTCOME_IDENTITY = "chappie_development_outcome/1.1.0"
 
 
 class DevelopmentOutcomeStatusV1(StrEnum):
-    COMPLETED = "COMPLETED"
+    ANSWER = "ANSWER"
     NEEDS_CONTEXT = "NEEDS_CONTEXT"
+    TASK_TOO_BROAD = "TASK_TOO_BROAD"
     NEEDS_HUMAN_REVIEW = "NEEDS_HUMAN_REVIEW"
-    UNSUPPORTED_WITH_CURRENT_CAPABILITIES = "UNSUPPORTED_WITH_CURRENT_CAPABILITIES"
-    SYSTEM_FAILURE = "SYSTEM_FAILURE"
+    UNSUPPORTED_CAPABILITY = "UNSUPPORTED_CAPABILITY"
+    MODEL_UNAVAILABLE = "MODEL_UNAVAILABLE"
+    TEMPORARY_FAILURE = "TEMPORARY_FAILURE"
+    INTERNAL_FAILURE = "INTERNAL_FAILURE"
+    # In-process compatibility for existing strict implementation authorization gates.
+    COMPLETED = "NEEDS_HUMAN_REVIEW"
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,7 +77,7 @@ def project_development_outcome(analysis: DevelopmentAnalysisV1) -> DevelopmentO
         return _failure_outcome(analysis, unknowns, request_id, failed_stage)
     if analysis.validation_status != "VALID":
         return DevelopmentOutcomeV1(
-            DevelopmentOutcomeStatusV1.SYSTEM_FAILURE,
+            DevelopmentOutcomeStatusV1.INTERNAL_FAILURE,
             "DEVELOPMENT_ANALYSIS_INVALID",
             "Development analysis did not pass structural validation.",
             None,
@@ -165,12 +170,46 @@ def project_development_outcome(analysis: DevelopmentAnalysisV1) -> DevelopmentO
             unknowns,
             "The supplied bounded evidence cannot support the requested task safely.",
         )
+    return _successful_outcome(analysis, unknowns, request_id)
+
+
+def _successful_outcome(
+    analysis: DevelopmentAnalysisV1,
+    unknowns: tuple[str, ...],
+    request_id: str | None,
+) -> DevelopmentOutcomeV1:
+    from app.development_analysis.models import DevelopmentTaskIntentKindV1
+
+    intent = analysis.task_intent.intent if analysis.task_intent else None
+    if intent is DevelopmentTaskIntentKindV1.QUESTION:
+        explanation = "The grounded Development question was answered from bounded evidence."
+        action = "Review the answer and ask a more specific follow-up if needed."
+        status = DevelopmentOutcomeStatusV1.ANSWER
+    elif intent is DevelopmentTaskIntentKindV1.ANALYSIS:
+        explanation = "The requested advisory Development analysis completed."
+        action = "Review the analysis, including its bounded risks and remaining unknowns."
+        status = DevelopmentOutcomeStatusV1.ANSWER
+    elif intent is DevelopmentTaskIntentKindV1.PLAN:
+        explanation = "The requested plan completed and remains advisory."
+        action = (
+            "Select one bounded plan item and explicitly request IMPLEMENTATION if you want to "
+            "prepare implementation scope."
+        )
+        status = DevelopmentOutcomeStatusV1.ANSWER
+    elif intent is DevelopmentTaskIntentKindV1.UNKNOWN:
+        explanation = "The request needs an explicit Development task intent."
+        action = "Choose QUESTION, ANALYSIS, PLAN, or IMPLEMENTATION."
+        status = DevelopmentOutcomeStatusV1.ANSWER
+    else:
+        explanation = "The implementation analysis is ready for bounded human review."
+        action = "Review the advisory analysis and approve the handoff before implementation."
+        status = DevelopmentOutcomeStatusV1.NEEDS_HUMAN_REVIEW
     return DevelopmentOutcomeV1(
-        DevelopmentOutcomeStatusV1.COMPLETED,
+        status,
         None,
-        "Development analysis completed with sufficient bounded evidence.",
+        explanation,
         None,
-        "Review the advisory analysis and obtain human approval before implementation.",
+        action,
         False,
         request_id,
         None,
@@ -209,7 +248,7 @@ def _failure_outcome(
         "UNSUPPORTED_WITH_CURRENT_CAPABILITIES",
     }:
         return DevelopmentOutcomeV1(
-            DevelopmentOutcomeStatusV1.UNSUPPORTED_WITH_CURRENT_CAPABILITIES,
+            DevelopmentOutcomeStatusV1.UNSUPPORTED_CAPABILITY,
             reason,
             "The requested evidence cannot be produced by the current bounded capabilities.",
             "REPOSITORY_INVENTORY",
@@ -222,32 +261,63 @@ def _failure_outcome(
             unknowns,
             "The required evidence capability is not available in the current bounded runtime.",
         )
-    if reason in {"AI_PROVIDER_TIMEOUT", "AI_UNAVAILABLE", "MODEL_ROLE_UNAVAILABLE"}:
-        explanation = (
-            "The selected local AI provider did not complete the bounded Development request."
-            if reason == "AI_PROVIDER_TIMEOUT"
-            else "The selected local AI dependency is currently unavailable."
-        )
+    if reason == "REVIEW_TARGET_SET_BUDGET_EXCEEDED":
         return DevelopmentOutcomeV1(
-            DevelopmentOutcomeStatusV1.SYSTEM_FAILURE,
+            DevelopmentOutcomeStatusV1.TASK_TOO_BROAD,
             reason,
-            explanation,
+            "The requested implementation is too broad for one safe development cycle. No files were changed.",
             None,
-            "Retry after the local AI provider or selected model is available.",
+            "Split the request into smaller bounded scopes before preparing implementation.",
+            False,
+            request_id,
+            failed_stage,
+            reason,
+            True,
+            unknowns,
+            "The unchanged safety bound rejected the oversized implementation scope.",
+        )
+    if reason == "AI_PROVIDER_TIMEOUT":
+        return DevelopmentOutcomeV1(
+            DevelopmentOutcomeStatusV1.TEMPORARY_FAILURE,
+            reason,
+            "The selected model did not respond in time. No project changes were made.",
+            None,
+            "Retry this request when the selected model is responsive.",
             True,
             request_id,
             failed_stage,
             reason,
             True,
             unknowns,
-            "The technical dependency must recover before the request can complete.",
+            "The bounded provider call exceeded its configured timeout.",
         )
+    if reason in {"AI_UNAVAILABLE", "MODEL_ROLE_UNAVAILABLE"}:
+        return DevelopmentOutcomeV1(
+            DevelopmentOutcomeStatusV1.MODEL_UNAVAILABLE,
+            reason,
+            "The selected Development role or model is unavailable. No project changes were made.",
+            None,
+            "Retry when it is available or explicitly choose another available role.",
+            True,
+            request_id,
+            failed_stage,
+            reason,
+            True,
+            unknowns,
+            "No silent model substitution or fallback is permitted.",
+        )
+    partial = analysis.validation_status == "PARTIAL"
     return DevelopmentOutcomeV1(
-        DevelopmentOutcomeStatusV1.SYSTEM_FAILURE,
+        DevelopmentOutcomeStatusV1.INTERNAL_FAILURE,
         reason,
-        "Development analysis could not complete safely.",
+        (
+            "I could analyze part of the request, but could not safely validate the later "
+            "implementation stage. No implementation was authorized."
+            if partial
+            else "Development analysis could not complete safely. No project changes were made."
+        ),
         None,
-        "Review the bounded technical diagnostic before retrying.",
+        "Review the available bounded result and the separate technical diagnostic before retrying.",
         False,
         request_id,
         failed_stage,

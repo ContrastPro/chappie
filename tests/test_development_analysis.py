@@ -30,6 +30,8 @@ from app.development_analysis.synthesis import (
     DEVELOPMENT_SYNTHESIS_IDENTITY,
     DEVELOPMENT_SYNTHESIS_INSTRUCTION,
     DevelopmentCitationValidationError,
+    DevelopmentGroundingV1,
+    DevelopmentProposalV1,
     DevelopmentStageError,
     DevelopmentSynthesisOutputV1,
     development_allowed_fact_ids,
@@ -497,7 +499,11 @@ def test_stage_parse_failure_keeps_completed_provider_stage_telemetry(
     result = DevelopmentAnalysisServiceV1(
         paths=_paths(tmp_path), runner=runner, role_available=lambda _role: True
     ).analyze(
-        DevelopmentAnalysisRequestV1("Analyze DevelopmentAnalysisV1", DevelopmentModelRoleV1.CODE)
+        DevelopmentAnalysisRequestV1(
+            "Analyze DevelopmentAnalysisV1",
+            DevelopmentModelRoleV1.CODE,
+            requested_intent=DevelopmentTaskIntentKindV1.IMPLEMENTATION,
+        )
     )
 
     assert result.reason_code == "PROPOSAL_SCHEMA_INVALID"
@@ -546,7 +552,11 @@ def test_review_target_budget_diagnostics_reach_bounded_operator_sink(
         role_available=lambda _role: True,
         diagnostics_sink=captured.append,
     ).analyze(
-        DevelopmentAnalysisRequestV1("Analyze DevelopmentAnalysisV1", DevelopmentModelRoleV1.CODE)
+        DevelopmentAnalysisRequestV1(
+            "Analyze DevelopmentAnalysisV1",
+            DevelopmentModelRoleV1.CODE,
+            requested_intent=DevelopmentTaskIntentKindV1.IMPLEMENTATION,
+        )
     )
 
     assert result.reason_code == "REVIEW_TARGET_SET_BUDGET_EXCEEDED"
@@ -558,6 +568,67 @@ def test_review_target_budget_diagnostics_reach_bounded_operator_sink(
         "source_index": 0,
         "identifier_length": 300,
     }
+
+
+@pytest.mark.parametrize("failed_stage", ("PROPOSAL", "REVIEW"))
+def test_later_implementation_failure_preserves_only_validated_public_stages(
+    tmp_path, monkeypatch, failed_stage
+) -> None:
+    from app.development_analysis import service
+
+    snapshot = RepositorySnapshotV1("a" * 40, True)
+    records = initial_records(snapshot=snapshot)
+    monkeypatch.setattr(service, "committed_snapshot", lambda _root: snapshot)
+    monkeypatch.setattr(service, "read_store", lambda _path: (records, manifest(records, snapshot)))
+    grounding = DevelopmentGroundingV1(
+        ("E1",), "Bounded validated interpretation.", ("Grounding unknown.",)
+    )
+    proposal = DevelopmentProposalV1(
+        DevelopmentProposedScopeV1(
+            "app.development_analysis",
+            ("app/development_analysis/models.py",),
+            (),
+            ("Bounded contract change.",),
+            ("Development outcome",),
+            ("Expose a bounded outcome.",),
+            ("The approved scope requires it.",),
+        ),
+        ("Proposal unknown.",),
+    )
+
+    def runner(*_args):
+        raise DevelopmentStageError(
+            failed_stage,
+            f"{failed_stage}_SCHEMA_INVALID",
+            completed_grounding=grounding,
+            completed_proposal=proposal if failed_stage == "REVIEW" else None,
+        )
+
+    result = DevelopmentAnalysisServiceV1(
+        paths=_paths(tmp_path), runner=runner, role_available=lambda _role: True
+    ).analyze(
+        DevelopmentAnalysisRequestV1(
+            "Implement the approved bounded change.",
+            DevelopmentModelRoleV1.CODE,
+            requested_intent=DevelopmentTaskIntentKindV1.IMPLEMENTATION,
+        )
+    )
+    assert result.validation_status == "PARTIAL"
+    assert result.readiness is None
+    assert result.facts
+    assert result.inferences == ("Bounded validated interpretation.",)
+    assert result.staged_results is not None
+    assert set(result.staged_results) == (
+        {"grounding", "proposal", "proposal_status"} if failed_stage == "REVIEW" else {"grounding"}
+    )
+    assert "raw provider response" not in str(result.payload()).casefold()
+    if failed_stage == "REVIEW":
+        assert result.proposed_scope == proposal.proposed_scope
+        assert result.staged_results["proposal_status"] == (
+            "PROPOSED_IMPLEMENTATION_NOT_AUTHORIZED"
+        )
+    else:
+        assert result.proposed_scope is None
 
 
 @pytest.mark.parametrize(
@@ -634,6 +705,8 @@ def test_staged_parser_failure_requires_its_provider_call(
         (f"{stage}_SYNTHESIS", index)
         for index, stage in enumerate(("GROUNDING", "PROPOSAL", "REVIEW")[:expected_calls], start=1)
     )
+    assert error.value.completed_grounding is not None
+    assert (error.value.completed_proposal is not None) is (failed_stage == "REVIEW")
 
 
 @pytest.mark.parametrize(

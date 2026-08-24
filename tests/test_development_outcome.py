@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from app.development_analysis.models import (
     DevelopmentAnalysisReadinessV1,
     DevelopmentAnalysisStateV1,
     DevelopmentAnalysisV1,
+    DevelopmentTaskIntentKindV1,
 )
 from app.development_analysis.outcome import (
     DevelopmentOutcomeStatusV1,
@@ -27,9 +30,57 @@ def _analysis(**changes: object) -> DevelopmentAnalysisV1:
     return DevelopmentAnalysisV1(**base)  # type: ignore[arg-type]
 
 
-def test_sufficient_valid_analysis_projects_completed() -> None:
+def _intent_analysis(intent: DevelopmentTaskIntentKindV1) -> DevelopmentAnalysisV1:
+    evidence = SimpleNamespace(evidence_digest="e" * 64, repository_inventory_digest=None)
+    context_map = SimpleNamespace(context_digest="c" * 64)
+    task_intent = SimpleNamespace(
+        intent=intent,
+        requesting_evidence_digest=evidence.evidence_digest,
+        requesting_context_digest=context_map.context_digest,
+    )
+    return _analysis(
+        evidence=evidence,
+        context_map=context_map,
+        task_intent=task_intent,
+        readiness=None,
+        answer="Bounded response.",
+    )
+
+
+@pytest.mark.parametrize(
+    "intent",
+    (
+        DevelopmentTaskIntentKindV1.QUESTION,
+        DevelopmentTaskIntentKindV1.ANALYSIS,
+        DevelopmentTaskIntentKindV1.PLAN,
+    ),
+)
+def test_non_implementation_success_has_intent_appropriate_answer_outcome(intent) -> None:
+    outcome = project_development_outcome(_intent_analysis(intent))
+    assert outcome.status is DevelopmentOutcomeStatusV1.ANSWER
+    assert "approval before implementation" not in outcome.suggested_next_action.casefold()
+    if intent is DevelopmentTaskIntentKindV1.PLAN:
+        assert "advisory" in outcome.explanation.casefold()
+        assert "explicitly request implementation" in outcome.suggested_next_action.casefold()
+
+
+def test_target_overflow_is_a_human_readable_task_too_broad_outcome() -> None:
+    outcome = project_development_outcome(
+        _analysis(
+            state=DevelopmentAnalysisStateV1.ANALYSIS_INVALID,
+            validation_status="PARTIAL",
+            readiness=None,
+            reason_code="REVIEW_TARGET_SET_BUDGET_EXCEEDED",
+        )
+    )
+    assert outcome.status is DevelopmentOutcomeStatusV1.TASK_TOO_BROAD
+    assert outcome.safe_to_retry is False
+    assert "REVIEW_TARGET_SET_BUDGET_EXCEEDED" not in outcome.explanation
+
+
+def test_sufficient_valid_implementation_requires_human_review() -> None:
     outcome = project_development_outcome(_analysis())
-    assert outcome.status is DevelopmentOutcomeStatusV1.COMPLETED
+    assert outcome.status is DevelopmentOutcomeStatusV1.NEEDS_HUMAN_REVIEW
     assert outcome.safe_to_retry is False
     assert outcome.no_changes_made is True
 
@@ -44,7 +95,7 @@ def test_sufficient_valid_analysis_projects_completed() -> None:
 def test_non_blocking_context_unknown_does_not_automatically_block(unknown: str) -> None:
     assert (
         project_development_outcome(_analysis(unknowns=(unknown,))).status
-        is DevelopmentOutcomeStatusV1.COMPLETED
+        is DevelopmentOutcomeStatusV1.NEEDS_HUMAN_REVIEW
     )
 
 
@@ -98,20 +149,38 @@ def test_readiness_human_review_remains_distinct_from_context_and_system_failure
 
 
 @pytest.mark.parametrize(
-    ("state", "reason", "retry"),
+    ("state", "reason", "expected", "retry"),
     (
-        (DevelopmentAnalysisStateV1.TIMEOUT, "AI_PROVIDER_TIMEOUT", True),
-        (DevelopmentAnalysisStateV1.MODEL_UNAVAILABLE, "AI_UNAVAILABLE", True),
-        (DevelopmentAnalysisStateV1.ANALYSIS_INVALID, "DEVELOPMENT_SCHEMA_INVALID", False),
+        (
+            DevelopmentAnalysisStateV1.TIMEOUT,
+            "AI_PROVIDER_TIMEOUT",
+            DevelopmentOutcomeStatusV1.TEMPORARY_FAILURE,
+            True,
+        ),
+        (
+            DevelopmentAnalysisStateV1.MODEL_UNAVAILABLE,
+            "AI_UNAVAILABLE",
+            DevelopmentOutcomeStatusV1.MODEL_UNAVAILABLE,
+            True,
+        ),
+        (
+            DevelopmentAnalysisStateV1.ANALYSIS_INVALID,
+            "DEVELOPMENT_SCHEMA_INVALID",
+            DevelopmentOutcomeStatusV1.INTERNAL_FAILURE,
+            False,
+        ),
     ),
 )
 def test_typed_system_failures_remain_system_failures(
-    state: DevelopmentAnalysisStateV1, reason: str, retry: bool
+    state: DevelopmentAnalysisStateV1,
+    reason: str,
+    expected: DevelopmentOutcomeStatusV1,
+    retry: bool,
 ) -> None:
     outcome = project_development_outcome(
         _analysis(state=state, validation_status="UNAVAILABLE", readiness=None, reason_code=reason)
     )
-    assert outcome.status is DevelopmentOutcomeStatusV1.SYSTEM_FAILURE
+    assert outcome.status is expected
     assert outcome.reason_code == reason
     assert outcome.safe_to_retry is retry
 
@@ -125,7 +194,7 @@ def test_unsupported_capability_stays_distinct_from_context_and_system_failure()
             reason_code="REPOSITORY_INVENTORY_UNSUPPORTED",
         )
     )
-    assert outcome.status is DevelopmentOutcomeStatusV1.UNSUPPORTED_WITH_CURRENT_CAPABILITIES
+    assert outcome.status is DevelopmentOutcomeStatusV1.UNSUPPORTED_CAPABILITY
     assert outcome.safe_to_retry is False
 
 

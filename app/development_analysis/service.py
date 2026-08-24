@@ -259,9 +259,26 @@ class DevelopmentAnalysisServiceV1:
                 self._diagnostics_sink(error.review_target_diagnostics)
             _record_completed_staged_lifecycle(lifecycle, error.stage_elapsed_ms, error.stage)
             lifecycle.begin(_stage_failure_lifecycle_stage(error))
+            state = (
+                DevelopmentAnalysisStateV1.TIMEOUT
+                if error.code == "AI_PROVIDER_TIMEOUT"
+                else DevelopmentAnalysisStateV1.MODEL_UNAVAILABLE
+                if error.code == "AI_UNAVAILABLE"
+                else DevelopmentAnalysisStateV1.ANALYSIS_INVALID
+            )
+            if error.completed_grounding is not None:
+                return _partial_stage_failure(
+                    request,
+                    state,
+                    error,
+                    evidence,
+                    context_map,
+                    task_intent,
+                    lifecycle.failed(error.code),
+                )
             return _failure(
                 request,
-                DevelopmentAnalysisStateV1.ANALYSIS_INVALID,
+                state,
                 error.code,
                 evidence,
                 lifecycle.failed(error.code),
@@ -454,9 +471,55 @@ def _record_completed_staged_lifecycle(
 
 
 def _stage_failure_lifecycle_stage(error: DevelopmentStageError) -> DevelopmentLifecycleStageV1:
-    if error.code.endswith("_PROVIDER_FAILED"):
+    if error.code.endswith("_PROVIDER_FAILED") or error.code in {
+        "AI_PROVIDER_TIMEOUT",
+        "AI_UNAVAILABLE",
+    }:
         return DevelopmentLifecycleStageV1[f"{error.stage}_SYNTHESIS"]
     return DevelopmentLifecycleStageV1[f"{error.stage}_PARSE"]
+
+
+def _partial_stage_failure(
+    request, state, error, evidence, context_map, task_intent, lifecycle
+) -> DevelopmentAnalysisV1:
+    grounding = error.completed_grounding
+    proposal = error.completed_proposal
+    selected = tuple(
+        item
+        for item in context_map.evidence_handles
+        if item.handle in grounding.relevant_evidence_handles
+    )
+    staged_results: dict[str, object] = {"grounding": grounding.payload()}
+    unknowns = grounding.unknowns
+    proposed_scope = None
+    if proposal is not None:
+        staged_results.update(
+            {
+                "proposal": proposal.payload(),
+                "proposal_status": "PROPOSED_IMPLEMENTATION_NOT_AUTHORIZED",
+            }
+        )
+        unknowns = (*unknowns, *proposal.proposal_unknowns)
+        proposed_scope = proposal.proposed_scope
+    return DevelopmentAnalysisV1(
+        state,
+        request.request,
+        evidence,
+        facts=tuple(item.statement for item in selected),
+        inferences=(grounding.task_interpretation,),
+        unknowns=unknowns,
+        architecture_owners=context_map.owner_candidates,
+        affected_contracts=context_map.existing_contracts,
+        likely_files=context_map.existing_files,
+        validation_status="PARTIAL",
+        reason_code=error.code,
+        lifecycle=lifecycle,
+        context_map=context_map,
+        current_evidence_handles=grounding.relevant_evidence_handles,
+        proposed_scope=proposed_scope,
+        staged_results=staged_results,
+        task_intent=task_intent,
+    )
 
 
 def _development_retrieval_request(records, request: str, workspace_path: str | None):

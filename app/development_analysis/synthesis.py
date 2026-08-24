@@ -309,6 +309,8 @@ class DevelopmentStageError(AIValidationError):
         grounding_diagnostics: GroundingParseDiagnosticsV1 | None = None,
         review_diagnostics: ReviewParseDiagnosticsV1 | None = None,
         review_target_diagnostics: ReviewProposalTargetProjectionDiagnosticsV1 | None = None,
+        completed_grounding: DevelopmentGroundingV1 | None = None,
+        completed_proposal: DevelopmentProposalV1 | None = None,
     ) -> None:
         super().__init__("development staged synthesis failed", code=code)
         self.stage = stage
@@ -317,6 +319,8 @@ class DevelopmentStageError(AIValidationError):
         self.grounding_diagnostics = grounding_diagnostics
         self.review_diagnostics = review_diagnostics
         self.review_target_diagnostics = review_target_diagnostics
+        self.completed_grounding = completed_grounding
+        self.completed_proposal = completed_proposal
 
 
 @dataclass(frozen=True, slots=True)
@@ -1287,20 +1291,39 @@ def synthesize_development(
     except DevelopmentStageError as error:
         error.stage_elapsed_ms = (("GROUNDING_SYNTHESIS", grounding_result.latency_ms),)
         raise
-    proposal_result = call(
-        "PROPOSAL",
-        DEVELOPMENT_PROPOSAL_IDENTITY,
-        proposal_instruction(context_map.owner_candidates),
-        proposal_provider_schema(context_map.owner_candidates),
-        _with_repository_inventory(
-            {
-                "request": request.request,
-                "development_context_map": context_map.payload(),
-                "grounding": grounding.payload(),
-            },
-            request,
-        ),
-    )
+    try:
+        proposal_result = call(
+            "PROPOSAL",
+            DEVELOPMENT_PROPOSAL_IDENTITY,
+            proposal_instruction(context_map.owner_candidates),
+            proposal_provider_schema(context_map.owner_candidates),
+            _with_repository_inventory(
+                {
+                    "request": request.request,
+                    "development_context_map": context_map.payload(),
+                    "grounding": grounding.payload(),
+                },
+                request,
+            ),
+        )
+    except AIProviderTimeoutError as error:
+        raise DevelopmentStageError(
+            "PROPOSAL",
+            "AI_PROVIDER_TIMEOUT",
+            stage_elapsed_ms=(("GROUNDING_SYNTHESIS", grounding_result.latency_ms),),
+            completed_grounding=grounding,
+        ) from error
+    except AIProviderError as error:
+        raise DevelopmentStageError(
+            "PROPOSAL",
+            "AI_UNAVAILABLE",
+            stage_elapsed_ms=(("GROUNDING_SYNTHESIS", grounding_result.latency_ms),),
+            completed_grounding=grounding,
+        ) from error
+    except DevelopmentStageError as error:
+        error.completed_grounding = grounding
+        error.stage_elapsed_ms = (("GROUNDING_SYNTHESIS", grounding_result.latency_ms),)
+        raise
     try:
         proposal = parse_development_proposal(
             proposal_result.structured_output,
@@ -1313,24 +1336,65 @@ def synthesize_development(
             ("GROUNDING_SYNTHESIS", grounding_result.latency_ms),
             ("PROPOSAL_SYNTHESIS", proposal_result.latency_ms),
         )
+        error.completed_grounding = grounding
         raise
-    review_targets = _review_target_set(proposal)
-    review_result = call(
-        "REVIEW",
-        DEVELOPMENT_REVIEW_IDENTITY,
-        _review_instruction(proposal, review_targets),
-        REVIEW_SCHEMA,
-        _with_repository_inventory(
-            {
-                "request": request.request,
-                "grounding": grounding.payload(),
-                "proposal": proposal.payload(),
-                "review_proposal_targets": review_targets.payload(),
-                "authority_constraints": list(context_map.authority_constraints),
-            },
-            request,
-        ),
-    )
+    try:
+        review_targets = _review_target_set(proposal)
+    except DevelopmentStageError as error:
+        error.completed_grounding = grounding
+        error.completed_proposal = proposal
+        error.stage_elapsed_ms = (
+            ("GROUNDING_SYNTHESIS", grounding_result.latency_ms),
+            ("PROPOSAL_SYNTHESIS", proposal_result.latency_ms),
+        )
+        raise
+    try:
+        review_result = call(
+            "REVIEW",
+            DEVELOPMENT_REVIEW_IDENTITY,
+            _review_instruction(proposal, review_targets),
+            REVIEW_SCHEMA,
+            _with_repository_inventory(
+                {
+                    "request": request.request,
+                    "grounding": grounding.payload(),
+                    "proposal": proposal.payload(),
+                    "review_proposal_targets": review_targets.payload(),
+                    "authority_constraints": list(context_map.authority_constraints),
+                },
+                request,
+            ),
+        )
+    except AIProviderTimeoutError as error:
+        raise DevelopmentStageError(
+            "REVIEW",
+            "AI_PROVIDER_TIMEOUT",
+            stage_elapsed_ms=(
+                ("GROUNDING_SYNTHESIS", grounding_result.latency_ms),
+                ("PROPOSAL_SYNTHESIS", proposal_result.latency_ms),
+            ),
+            completed_grounding=grounding,
+            completed_proposal=proposal,
+        ) from error
+    except AIProviderError as error:
+        raise DevelopmentStageError(
+            "REVIEW",
+            "AI_UNAVAILABLE",
+            stage_elapsed_ms=(
+                ("GROUNDING_SYNTHESIS", grounding_result.latency_ms),
+                ("PROPOSAL_SYNTHESIS", proposal_result.latency_ms),
+            ),
+            completed_grounding=grounding,
+            completed_proposal=proposal,
+        ) from error
+    except DevelopmentStageError as error:
+        error.completed_grounding = grounding
+        error.completed_proposal = proposal
+        error.stage_elapsed_ms = (
+            ("GROUNDING_SYNTHESIS", grounding_result.latency_ms),
+            ("PROPOSAL_SYNTHESIS", proposal_result.latency_ms),
+        )
+        raise
     try:
         review = parse_development_review(review_result.structured_output, proposal, review_targets)
     except DevelopmentStageError as error:
@@ -1339,6 +1403,8 @@ def synthesize_development(
             ("PROPOSAL_SYNTHESIS", proposal_result.latency_ms),
             ("REVIEW_SYNTHESIS", review_result.latency_ms),
         )
+        error.completed_grounding = grounding
+        error.completed_proposal = proposal
         raise
     return DevelopmentStagedSynthesisOutputV1(
         grounding,

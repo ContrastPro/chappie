@@ -123,6 +123,19 @@ def test_authorization_pair_round_trips_exact_public_dtos(tmp_path: Path) -> Non
     assert raw["approval_status"] == "HUMAN_APPROVAL_REQUIRED"
 
 
+def test_partial_analysis_cannot_persist_authorization_pair(tmp_path: Path) -> None:
+    analysis, handoff = _pair()
+    partial = replace(
+        analysis,
+        state=DevelopmentAnalysisStateV1.ANALYSIS_INVALID,
+        validation_status="PARTIAL",
+        readiness=None,
+        reason_code="REVIEW_SCHEMA_INVALID",
+    )
+    with pytest.raises(ValueError, match="not implementation-authorizable"):
+        persist_authorization_pair(tmp_path / AUTHORIZATION_PAIR_FILENAME, partial, handoff)
+
+
 def test_authorization_pair_digest_is_deterministic() -> None:
     analysis, handoff = _pair()
     first = authorization_pair_payload(analysis, handoff)

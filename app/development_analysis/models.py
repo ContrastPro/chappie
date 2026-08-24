@@ -621,6 +621,7 @@ def development_analysis_from_payload(value: object) -> DevelopmentAnalysisV1:
         context_map=context_map,
         current_evidence_handles=tuple(_strings(value.get("current_evidence_handles"))),
         proposed_scope=proposed_scope,
+        staged_results=_staged_results_from_payload(value.get("staged_results")),
         task_intent=_task_intent_from_payload(value.get("task_intent")),
         answer=_optional_string(value.get("answer")),
         plan_items=tuple(_strings(value.get("plan_items", []))),
@@ -647,6 +648,28 @@ def _task_intent_from_payload(value: object) -> DevelopmentTaskIntentV1 | None:
         str(value["requesting_context_digest"]),
         str(value["identity"]),
     )
+
+
+def _staged_results_from_payload(value: object) -> dict[str, object] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict) or not set(value).issubset(
+        {"grounding", "proposal", "review", "proposal_status"}
+    ):
+        raise ValueError("development staged results are invalid")
+    identities = {
+        "grounding": "chappie_development_grounding/1.0.0",
+        "proposal": "chappie_development_proposal/1.0.0",
+        "review": "chappie_development_review/1.0.0",
+    }
+    for key, identity in identities.items():
+        if key in value and (
+            not isinstance(value[key], dict) or value[key].get("identity") != identity
+        ):
+            raise ValueError("development staged results are invalid")
+    if value.get("proposal_status") not in {None, "PROPOSED_IMPLEMENTATION_NOT_AUTHORIZED"}:
+        raise ValueError("development staged results are invalid")
+    return dict(value)
 
 
 def _strings(value: object) -> tuple[str, ...]:

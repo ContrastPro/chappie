@@ -91,6 +91,18 @@ def _proposed_scope() -> DevelopmentProposedScopeV1:
     )
 
 
+def test_partial_analysis_cannot_prepare_handoff() -> None:
+    partial = _analysis(
+        state=DevelopmentAnalysisStateV1.ANALYSIS_INVALID,
+        validation_status="PARTIAL",
+        readiness=None,
+        reason_code="REVIEW_SCHEMA_INVALID",
+    )
+    task = prepare_codex_task(CodexTaskPreparationRequestV1(partial))
+    assert task.validation_status == "INVALID"
+    assert task.state is CodexTaskStateV1.VALIDATION_ERROR
+
+
 def test_valid_analysis_prepares_deterministic_advisory_task() -> None:
     analysis = _analysis()
     task = prepare_codex_task(CodexTaskPreparationRequestV1(analysis))

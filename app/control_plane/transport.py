@@ -455,10 +455,10 @@ class ChappieControlPlaneServerV1:
                 diagnostics = self._record_development_diagnostic(
                     request_id, _development_diagnostics(payload, request_id=request_id)
                 )
-                if response.state.value != "OK":
+                if response.state.value == "VALIDATION_ERROR":
                     self._write(
                         handler,
-                        400 if response.state.value == "VALIDATION_ERROR" else 503,
+                        400,
                         _envelope(
                             request_id=request_id,
                             error=ControlPlaneTransportErrorV1(

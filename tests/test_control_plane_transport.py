@@ -292,12 +292,12 @@ def test_development_analysis_transport_round_trip_is_read_only(server) -> None:
     assert body["data"]["state"] == "OK"
     assert body["data"]["inferences"] == ["bounded inference"]
     assert body["data"]["outcome"] == {
-        "identity": "chappie_development_outcome/1.0.0",
-        "status": "COMPLETED",
+        "identity": "chappie_development_outcome/1.1.0",
+        "status": "NEEDS_HUMAN_REVIEW",
         "blocker_code": None,
-        "explanation": "Development analysis completed with sufficient bounded evidence.",
+        "explanation": "The implementation analysis is ready for bounded human review.",
         "required_context": None,
-        "suggested_next_action": "Review the advisory analysis and obtain human approval before implementation.",
+        "suggested_next_action": "Review the advisory analysis and approve the handoff before implementation.",
         "safe_to_retry": False,
         "request_id": None,
         "failed_stage": None,
@@ -370,9 +370,9 @@ def test_development_transport_propagates_explicit_task_intent(server) -> None:
 @pytest.mark.parametrize(
     ("state", "reason", "expected_status"),
     (
-        (DevelopmentAnalysisStateV1.TIMEOUT, "AI_PROVIDER_TIMEOUT", 503),
-        (DevelopmentAnalysisStateV1.ANALYSIS_INVALID, "DEVELOPMENT_SCHEMA_INVALID", 503),
-        (DevelopmentAnalysisStateV1.MODEL_UNAVAILABLE, "AI_UNAVAILABLE", 503),
+        (DevelopmentAnalysisStateV1.TIMEOUT, "AI_PROVIDER_TIMEOUT", 200),
+        (DevelopmentAnalysisStateV1.ANALYSIS_INVALID, "DEVELOPMENT_SCHEMA_INVALID", 200),
+        (DevelopmentAnalysisStateV1.MODEL_UNAVAILABLE, "AI_UNAVAILABLE", 200),
         (DevelopmentAnalysisStateV1.VALIDATION_ERROR, "INVALID_REQUEST", 400),
     ),
 )
@@ -395,10 +395,51 @@ def test_development_analysis_typed_failure_is_not_an_opaque_500(
     )
 
     assert status == expected_status
-    assert body["error"] == {"code": reason, "message": "Development analysis is unavailable"}
-    assert body["diagnostics"]["request_id"] == body["request_id"]
-    assert body["diagnostics"]["reason_code"] == reason
-    assert server.get_development_diagnostic(body["request_id"]) == body["diagnostics"]
+    if expected_status == 400:
+        assert body["error"] == {
+            "code": reason,
+            "message": "Development analysis is unavailable",
+        }
+        assert body["diagnostics"]["reason_code"] == reason
+    else:
+        assert body["data"]["reason_code"] == reason
+        assert body["data"]["outcome"]["reason_code"] == reason
+        assert reason not in body["data"]["outcome"]["explanation"]
+    assert server.get_development_diagnostic(body["request_id"])["reason_code"] == reason
+
+
+def test_partial_development_result_remains_public_with_separate_diagnostics(server) -> None:
+    class PartialPlane(_FakeControlPlane):
+        def analyze_development(
+            self, request: str, *, requested_role: str, workspace_context: object | None = None
+        ) -> DevelopmentAnalysisV1:
+            _ = requested_role, workspace_context
+            return DevelopmentAnalysisV1(
+                DevelopmentAnalysisStateV1.ANALYSIS_INVALID,
+                request,
+                facts=("Validated grounding fact.",),
+                inferences=("Validated grounding interpretation.",),
+                validation_status="PARTIAL",
+                reason_code="REVIEW_SCHEMA_INVALID",
+                staged_results={"grounding": {"identity": "public-grounding"}},
+            )
+
+    server._control_plane = PartialPlane()
+    status, _headers, body = _request(
+        server,
+        "POST",
+        "/v1/development/analyze",
+        json.dumps({"request": "Implement bounded scope", "requested_role": "CODE"}),
+    )
+    assert status == 200
+    assert body["data"]["validation_status"] == "PARTIAL"
+    assert body["data"]["facts"] == ["Validated grounding fact."]
+    assert body["data"]["outcome"]["status"] == "INTERNAL_FAILURE"
+    assert "REVIEW_SCHEMA_INVALID" not in body["data"]["outcome"]["explanation"]
+    assert body["data"]["outcome"]["reason_code"] == "REVIEW_SCHEMA_INVALID"
+    assert server.get_development_diagnostic(body["request_id"])["reason_code"] == (
+        "REVIEW_SCHEMA_INVALID"
+    )
 
 
 def test_unexpected_development_exception_remains_fail_closed_500(server, caplog) -> None:

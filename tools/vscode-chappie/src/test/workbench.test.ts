@@ -464,12 +464,16 @@ test("Workbench presents bounded Development outcomes separately from technical 
   assert.match(script, /Status: '\+outcome\.status/);
   assert.match(script, /Required context/);
   assert.match(script, /Suggested next action/);
+  assert.match(script, /renderMarkdown\(answer,analysis\.answer\)/);
+  assert.match(script, /\['Plan',analysis\.plan_items\]/);
   assert.match(script, /enrichDevelopmentOutcomeInspector/);
+  assert.match(script, /enrichDevelopmentPartialResults/);
+  assert.match(script, /PROPOSED — IMPLEMENTATION NOT AUTHORIZED/);
   assert.match(script, /Request ID/);
   assert.match(script, /Failed stage/);
   assert.match(script, /button\[title="Prepare Codex Task"\]/);
   assert.match(host, /turn\.development\.outcome !== undefined/);
-  assert.match(host, /outcome\.status !== "COMPLETED"/);
+  assert.match(host, /outcome\.status !== "NEEDS_HUMAN_REVIEW"/);
   assert.doesNotMatch(script, /raw provider payload|chain.of.thought|Knowledge text/i);
 });
 
@@ -489,6 +493,7 @@ test("Workbench development snapshots are detached and task projection requires 
   const turn = session.begin("development_1", "request_1", "Plan an improvement", noContext, 100, [], "DEVELOPMENT");
   assert.ok(turn);
   const analysis: DevelopmentAnalysisV1 = {
+    task_intent: null, answer: null, plan_items: [],
     identity: "chappie_development_analysis/2.0.0", state: "OK", request: "Plan an improvement", evidence: null,
     facts: ["fact"], inferences: [], unknowns: [], architecture_owners: [], affected_contracts: [], likely_files: [], risks: [], required_tests: [], non_goals: [], acceptance_criteria: [], confidence: 1, validation_status: "VALID", readiness: "READY_FOR_TASK", reason_code: null, context_map: null, current_evidence_handles: [], proposed_scope: null,
   };
