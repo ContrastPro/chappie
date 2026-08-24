@@ -38,6 +38,13 @@ from app.development_analysis.repository_inventory import (
     build_repository_inventory_attachment,
     development_context_requirement,
 )
+from app.development_analysis.review_targets import (
+    REVIEW_PROPOSAL_TARGETS_IDENTITY,
+    ReviewProposalTargetKindV1,
+    ReviewProposalTargetSetV1,
+    ReviewProposalTargetV1,
+    build_review_proposal_target_set,
+)
 from app.development_analysis.service import DevelopmentAnalysisServiceV1
 from app.development_analysis.synthesis import (
     DevelopmentGroundingV1,
@@ -63,6 +70,7 @@ __all__ = (
     "DEVELOPMENT_DIFF_REVIEW_IDENTITY",
     "DEVELOPMENT_OUTCOME_IDENTITY",
     "REPOSITORY_INVENTORY_ATTACHMENT_IDENTITY",
+    "REVIEW_PROPOSAL_TARGETS_IDENTITY",
     "CodexHandoffV1",
     "CodexTaskPreparationRequestV1",
     "CodexTaskStateV1",
@@ -93,8 +101,12 @@ __all__ = (
     "DevelopmentReviewV1",
     "DevelopmentStagedSynthesisOutputV1",
     "RepositoryInventoryIntegrationError",
+    "ReviewProposalTargetKindV1",
+    "ReviewProposalTargetSetV1",
+    "ReviewProposalTargetV1",
     "analyze_development_with_repository_inventory",
     "build_repository_inventory_attachment",
+    "build_review_proposal_target_set",
     "deduplicate_development_unknowns",
     "development_analysis_from_payload",
     "development_context_requirement",

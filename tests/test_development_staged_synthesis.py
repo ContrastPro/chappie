@@ -372,7 +372,7 @@ def _review_proposal(*, analysis_only: bool = False) -> DevelopmentProposalV1:
     (
         (["Run tests."], ["DevelopmentDiffReviewV1 remains valid."], "REVIEW_TESTS_NOT_SPECIFIC"),
         (
-            ["Verify app/development_analysis/diff_review.py rejects invalid input."],
+            ["Verify RT1 rejects invalid input."],
             ["The result remains valid."],
             "REVIEW_CRITERIA_NOT_SPECIFIC",
         ),
@@ -408,8 +408,8 @@ def _review_payload(test: str, criterion: str) -> dict[str, object]:
 def test_implementation_review_accepts_exact_target_and_condition_without_request_tokens() -> None:
     result = parse_development_review(
         _review_payload(
-            "Verify app/development_analysis/diff_review.py rejects invalid input.",
-            "app/development_analysis/diff_review.py remains advisory.",
+            "Verify RT1 rejects invalid input.",
+            "RT1 remains advisory.",
         ),
         _review_proposal(),
     )
@@ -420,8 +420,8 @@ def test_implementation_review_accepts_exact_target_and_condition_without_reques
 def test_shared_review_actions_require_and_accept_target_and_condition(action) -> None:
     result = parse_development_review(
         _review_payload(
-            f"{action.title()} app/development_analysis/diff_review.py rejects invalid input.",
-            "app/development_analysis/diff_review.py remains advisory.",
+            f"{action.title()} RT1 rejects invalid input.",
+            "RT1 remains advisory.",
         ),
         _review_proposal(),
     )
@@ -433,11 +433,11 @@ def test_shared_review_actions_require_and_accept_target_and_condition(action) -
     (
         (
             "Verify app/unrelated.py rejects invalid input.",
-            "MISSING_PROPOSAL_TARGET",
+            "TARGET_NOT_RECOGNIZED",
             (True, False, True),
         ),
         (
-            "Verify app/development_analysis/diff_review.py.",
+            "Verify RT1.",
             "MISSING_VERIFICATION_CONDITION",
             (True, True, False),
         ),
@@ -467,13 +467,13 @@ def test_implementation_review_rejects_unrelated_missing_or_lexical_only_items(
 @pytest.mark.parametrize(
     "test",
     (
-        "Verify direct consumers for each cleanup candidate and fail if consumers remain.",
-        "Confirm manifest references for each cleanup candidate are present before removal.",
+        "Verify RT1 and fail if consumers remain.",
+        "Confirm RT1 references are present before removal.",
     ),
 )
 def test_analysis_only_review_accepts_candidate_specific_verification(test) -> None:
     result = parse_development_review(
-        _review_payload(test, "Cleanup candidates remain evidence-bound before removal."),
+        _review_payload(test, "RT1 remains evidence-bound before removal."),
         _review_proposal(analysis_only=True),
     )
     assert result.required_tests == (test,)
@@ -482,14 +482,14 @@ def test_analysis_only_review_accepts_candidate_specific_verification(test) -> N
 @pytest.mark.parametrize(
     "test",
     (
-        "Inspect direct consumers for each cleanup candidate and fail if consumers remain.",
-        "Compare manifest references for each cleanup candidate against the expected absence state.",
-        "Ensure cleanup candidate references are absent before removal.",
+        "Inspect RT1 consumers and fail if consumers remain.",
+        "Compare RT1 references against the expected absence state.",
+        "Ensure RT1 references are absent before removal.",
     ),
 )
 def test_analysis_only_observable_action_vocabulary(test) -> None:
     result = parse_development_review(
-        _review_payload(test, "Cleanup candidates remain evidence-bound before removal."),
+        _review_payload(test, "RT1 remains evidence-bound before removal."),
         _review_proposal(analysis_only=True),
     )
     assert result.required_tests == (test,)
@@ -503,7 +503,7 @@ def test_analysis_only_review_rejects_generic_verification(test) -> None:
             _review_proposal(analysis_only=True),
         )
     assert error.value.review_diagnostics.bounded_error_category in {
-        "MISSING_PROPOSAL_TARGET",
+        "TARGET_NOT_RECOGNIZED",
         "MISSING_VERIFICATION_CONDITION",
     }
 
@@ -529,10 +529,10 @@ def test_vague_or_unsupported_actions_remain_rejected(test) -> None:
 
 def test_review_instruction_matches_proposal_aware_specificity_rules() -> None:
     concrete = _review_instruction(_review_proposal())
-    assert "exact proposed file, contract, or component target" in concrete
+    assert "Allowed Proposal targets" in concrete and "RT1 | FILE" in concrete
     assert "exact action from" in concrete and "result or failure condition" in concrete
     analysis_only = _review_instruction(_review_proposal(analysis_only=True))
-    assert "exact proposed behavior or evidence/candidate condition" in analysis_only
+    assert "RT1 | BEHAVIOR" in analysis_only and "RT2 | RATIONALE" in analysis_only
     assert "repeat" not in analysis_only.casefold()
     vocabulary = ", ".join(REVIEW_VERIFICATION_ACTIONS)
     assert vocabulary in concrete and vocabulary in analysis_only
@@ -571,8 +571,8 @@ def test_review_instruction_matches_proposal_aware_specificity_rules() -> None:
 def test_shared_observable_condition_categories(condition, category) -> None:
     result = parse_development_review(
         _review_payload(
-            f"Verify app/development_analysis/diff_review.py {condition}.",
-            "app/development_analysis/diff_review.py remains advisory.",
+            f"Verify RT1 {condition}.",
+            "RT1 remains advisory.",
         ),
         _review_proposal(),
     )
@@ -588,8 +588,8 @@ def test_vague_observable_conditions_remain_rejected(condition) -> None:
     with pytest.raises(DevelopmentStageError) as error:
         parse_development_review(
             _review_payload(
-                f"Verify app/development_analysis/diff_review.py {condition}.",
-                "app/development_analysis/diff_review.py remains advisory.",
+                f"Verify RT1 {condition}.",
+                "RT1 remains advisory.",
             ),
             _review_proposal(),
         )
@@ -604,8 +604,8 @@ def test_bare_reference_subject_is_not_an_observable_condition(subject) -> None:
     with pytest.raises(DevelopmentStageError) as error:
         parse_development_review(
             _review_payload(
-                f"Inspect app/development_analysis/diff_review.py {subject}.",
-                "app/development_analysis/diff_review.py remains advisory.",
+                f"Inspect RT1 {subject}.",
+                "RT1 remains advisory.",
             ),
             _review_proposal(),
         )

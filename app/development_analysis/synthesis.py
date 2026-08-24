@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -19,6 +20,11 @@ from app.development_analysis.models import (
     DevelopmentCitationRejectionV1,
     DevelopmentEvidencePackV1,
     DevelopmentProposedScopeV1,
+)
+from app.development_analysis.review_targets import (
+    ReviewProposalTargetProjectionError,
+    ReviewProposalTargetSetV1,
+    build_review_proposal_target_set,
 )
 
 if TYPE_CHECKING:
@@ -299,6 +305,8 @@ class ReviewParseDiagnosticsV1:
     target_recognized: bool
     condition_recognized: bool
     condition_category: str | None
+    target_kind: str | None = None
+    target_count: int | None = None
 
     def payload(self) -> dict[str, object]:
         return {
@@ -310,6 +318,8 @@ class ReviewParseDiagnosticsV1:
             "target_recognized": self.target_recognized,
             "condition_recognized": self.condition_recognized,
             "condition_category": self.condition_category,
+            "target_kind": self.target_kind,
+            "target_count": self.target_count,
         }
 
 
@@ -635,7 +645,12 @@ def _proposal_parse_diagnostics(
     )
 
 
-def parse_development_review(value: object, proposal: DevelopmentProposalV1) -> DevelopmentReviewV1:
+def parse_development_review(
+    value: object,
+    proposal: DevelopmentProposalV1,
+    target_set: ReviewProposalTargetSetV1 | None = None,
+) -> DevelopmentReviewV1:
+    target_set = target_set or _review_target_set(proposal)
     if not isinstance(value, dict) or set(value) != set(REVIEW_SCHEMA["required"]):
         raise DevelopmentStageError("REVIEW", "REVIEW_SCHEMA_INVALID")
     lists = {}
@@ -660,9 +675,9 @@ def parse_development_review(value: object, proposal: DevelopmentProposalV1) -> 
     ):
         raise DevelopmentStageError("REVIEW", "REVIEW_SCHEMA_INVALID")
     if failure := _review_specificity_failure(
-        proposal, lists["required_tests"], require_action=True
+        target_set, lists["required_tests"], require_action=True
     ):
-        index, category, action, target, condition, condition_category = failure
+        index, category, action, target, condition, condition_category, target_kind = failure
         raise DevelopmentStageError(
             "REVIEW",
             "REVIEW_TESTS_NOT_SPECIFIC",
@@ -675,12 +690,14 @@ def parse_development_review(value: object, proposal: DevelopmentProposalV1) -> 
                 target,
                 condition,
                 condition_category,
+                target_kind,
+                len(target_set.targets),
             ),
         )
     if failure := _review_specificity_failure(
-        proposal, lists["acceptance_criteria"], require_action=False
+        target_set, lists["acceptance_criteria"], require_action=False
     ):
-        index, category, action, target, condition, condition_category = failure
+        index, category, action, target, condition, condition_category, target_kind = failure
         raise DevelopmentStageError(
             "REVIEW",
             "REVIEW_CRITERIA_NOT_SPECIFIC",
@@ -693,6 +710,8 @@ def parse_development_review(value: object, proposal: DevelopmentProposalV1) -> 
                 target,
                 condition,
                 condition_category,
+                target_kind,
+                len(target_set.targets),
             ),
         )
     return DevelopmentReviewV1(**lists, confidence=float(confidence))
@@ -710,6 +729,7 @@ REVIEW_VERIFICATION_ACTIONS = (
     "verify",
 )
 _VERIFICATION_ACTIONS = frozenset(REVIEW_VERIFICATION_ACTIONS)
+_GENERIC_VERIFICATION_WORDS = frozenset({"consider", "look", "review"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -741,57 +761,62 @@ REVIEW_OBSERVABLE_CONDITIONS = (
         ("consumer", "consumers", "reference", "references"),
     ),
 )
-_TARGET_STOP_WORDS = frozenset(
-    {
-        "add",
-        "analysis",
-        "bounded",
-        "capability",
-        "change",
-        "changes",
-        "component",
-        "implementation",
-        "proposed",
-        "review",
-        "workflow",
-    }
-)
 
 
 def _review_specificity_failure(
-    proposal: DevelopmentProposalV1,
+    target_set: ReviewProposalTargetSetV1,
     values: tuple[str, ...],
     *,
     require_action: bool,
-) -> tuple[int, str, bool, bool, bool, str | None] | None:
-    scope = proposal.proposed_scope
-    concrete_targets = (
-        *scope.proposed_modified_files,
-        *scope.proposed_new_files,
-        *scope.proposed_contract_changes,
-        *scope.proposed_components,
-    )
-    analysis_targets = (*scope.proposed_behavior, *scope.rationale)
-    target_tokens = _target_tokens(concrete_targets or analysis_targets)
+) -> tuple[int, str, bool, bool, bool, str | None, str | None] | None:
+    allowed = {target.public_id: target for target in target_set.targets}
     for index, value in enumerate(values):
         tokens = _normalized_tokens(value)
         action = not require_action or bool(tokens.intersection(_VERIFICATION_ACTIONS))
-        target = bool(target_tokens and tokens.intersection(target_tokens))
+        handles = _review_target_handles(value)
+        recognized = handles[0] in allowed if len(handles) == 1 else False
+        target_kind = allowed[handles[0]].kind.value if recognized else None
         condition_category = _observable_condition_category(tokens)
         condition = condition_category is not None
+        if not target_set.targets:
+            return index, "EMPTY_TARGET_SET", action, False, condition, condition_category, None
         if not action:
-            return index, "GENERIC_VERIFICATION", action, target, condition, condition_category
-        if not target:
+            category = (
+                "GENERIC_VERIFICATION"
+                if tokens.intersection(_GENERIC_VERIFICATION_WORDS)
+                else "MISSING_VERIFICATION_ACTION"
+            )
             return (
                 index,
-                "MISSING_PROPOSAL_TARGET",
+                category,
                 action,
-                target,
+                recognized,
                 condition,
                 condition_category,
+                target_kind,
+            )
+        if len(handles) > 1:
+            return index, "MULTIPLE_TARGETS", action, False, condition, condition_category, None
+        if not recognized:
+            return (
+                index,
+                "TARGET_NOT_RECOGNIZED",
+                action,
+                False,
+                condition,
+                condition_category,
+                None,
             )
         if not condition:
-            return index, "MISSING_VERIFICATION_CONDITION", action, target, condition, None
+            return (
+                index,
+                "MISSING_VERIFICATION_CONDITION",
+                action,
+                recognized,
+                condition,
+                None,
+                target_kind,
+            )
     return None
 
 
@@ -804,13 +829,8 @@ def _observable_condition_category(tokens: frozenset[str]) -> str | None:
     return None
 
 
-def _target_tokens(values: tuple[str, ...]) -> frozenset[str]:
-    return frozenset(
-        token
-        for value in values
-        for token in _normalized_tokens(value)
-        if len(token) > 3 and token not in _TARGET_STOP_WORDS
-    )
+def _review_target_handles(value: str) -> tuple[str, ...]:
+    return tuple(re.findall(r"(?<![A-Za-z0-9_])RT[1-9][0-9]*(?![A-Za-z0-9_])", value))
 
 
 def _normalized_tokens(value: str) -> frozenset[str]:
@@ -1112,23 +1132,25 @@ def synthesize_development(
             ("PROPOSAL_SYNTHESIS", proposal_result.latency_ms),
         )
         raise
+    review_targets = _review_target_set(proposal)
     review_result = call(
         "REVIEW",
         DEVELOPMENT_REVIEW_IDENTITY,
-        _review_instruction(proposal),
+        _review_instruction(proposal, review_targets),
         REVIEW_SCHEMA,
         _with_repository_inventory(
             {
                 "request": request.request,
                 "grounding": grounding.payload(),
                 "proposal": proposal.payload(),
+                "review_proposal_targets": review_targets.payload(),
                 "authority_constraints": list(context_map.authority_constraints),
             },
             request,
         ),
     )
     try:
-        review = parse_development_review(review_result.structured_output, proposal)
+        review = parse_development_review(review_result.structured_output, proposal, review_targets)
     except DevelopmentStageError as error:
         error.stage_elapsed_ms = (
             ("GROUNDING_SYNTHESIS", grounding_result.latency_ms),
@@ -1166,18 +1188,14 @@ def _grounding_instruction(public_handles: tuple[str, ...]) -> str:
     )
 
 
-def _review_instruction(proposal: DevelopmentProposalV1) -> str:
-    scope = proposal.proposed_scope
-    concrete = (
-        *scope.proposed_modified_files,
-        *scope.proposed_new_files,
-        *scope.proposed_contract_changes,
-        *scope.proposed_components,
-    )
-    mode = (
-        "For each required test, cite an exact proposed file, contract, or component target"
-        if concrete
-        else "For each required verification, cite an exact proposed behavior or evidence/candidate condition"
+def _review_instruction(
+    proposal: DevelopmentProposalV1,
+    target_set: ReviewProposalTargetSetV1 | None = None,
+) -> str:
+    target_set = target_set or _review_target_set(proposal)
+    rendered_targets = "; ".join(
+        f"{target.public_id} | {target.kind.value} | {target.display_summary}"
+        for target in target_set.targets
     )
     conditions = "; ".join(
         f"{item.category}: {', '.join((*item.subject_markers, *item.markers))}"
@@ -1186,7 +1204,9 @@ def _review_instruction(proposal: DevelopmentProposalV1) -> str:
     return (
         "Return only JSON. Critique the supplied proposal with bounded proposal-specific risks, "
         "required tests or verification, non-goals, acceptance criteria, unresolved unknowns, and "
-        f"confidence. {mode}. Each item must use one exact action from: "
+        f"confidence. Allowed Proposal targets: {rendered_targets}. Every required_tests and "
+        "acceptance_criteria item must contain exactly ONE allowed RT handle. Do not invent, "
+        "normalize, alias, or paraphrase RT handles. Each required_tests item must use one exact action from: "
         f"{', '.join(REVIEW_VERIFICATION_ACTIONS)}; `ensure` is valid only with both a concrete "
         "target and observable result or failure condition. Use one observable condition from: "
         f"{conditions}. Reference/consumer categories require both a reference or consumer subject "
@@ -1194,6 +1214,15 @@ def _review_instruction(proposal: DevelopmentProposalV1) -> str:
         "Generic testing or repository-wide verification is invalid. Do not redesign or claim "
         "authority."
     )
+
+
+def _review_target_set(proposal: DevelopmentProposalV1) -> ReviewProposalTargetSetV1:
+    try:
+        return build_review_proposal_target_set(
+            proposal, proposal_identity=DEVELOPMENT_PROPOSAL_IDENTITY
+        )
+    except ReviewProposalTargetProjectionError as error:
+        raise DevelopmentStageError("REVIEW", error.code) from error
 
 
 def _provider_response_length(result: object) -> int | None:

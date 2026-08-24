@@ -277,13 +277,9 @@ def test_development_synthesis_input_binds_the_exact_explicit_fact_allowlist() -
             else:
                 payload = {
                     "risks": ["Analyze must preserve the advisory boundary."],
-                    "required_tests": [
-                        "Verify app/development_analysis/diff_review.py rejects invalid evidence."
-                    ],
+                    "required_tests": ["Verify RT1 rejects invalid evidence."],
                     "non_goals": ["No mutation."],
-                    "acceptance_criteria": [
-                        "app/development_analysis/diff_review.py remains evidence-bound."
-                    ],
+                    "acceptance_criteria": ["RT1 remains evidence-bound."],
                     "unresolved_unknowns": ["Exact endpoint shape remains unknown."],
                     "confidence": 0.5,
                 }
@@ -330,6 +326,18 @@ def test_development_synthesis_input_binds_the_exact_explicit_fact_allowlist() -
     ]["enum"] == [candidate, None]
     assert candidate in proposal_request.system_instruction
     assert "If no candidate is justified" in proposal_request.system_instruction
+    review_request = provider_requests[2]
+    review_targets = review_request.context["review_proposal_targets"]["targets"]
+    assert [target["public_id"] for target in review_targets] == [
+        "RT1",
+        "RT2",
+        "RT3",
+        "RT4",
+        "RT5",
+    ]
+    assert all(
+        target["public_id"] in review_request.system_instruction for target in review_targets
+    )
     assert "E-handles" in DEVELOPMENT_SYNTHESIS_INSTRUCTION
     assert "model memory is not evidence" in DEVELOPMENT_SYNTHESIS_INSTRUCTION
 
