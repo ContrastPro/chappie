@@ -250,7 +250,14 @@ def test_non_ready_analysis_cannot_prepare_codex_task(readiness) -> None:
 
 
 def test_ready_analysis_with_blocking_repository_context_cannot_prepare_codex_task() -> None:
-    analysis = _analysis(unknowns=("Full repository file inventory unavailable.",))
+    analysis = _analysis(
+        unknowns=(
+            "Full repository file inventory unavailable.",
+            "Complete file usage patterns unavailable.",
+            "Incomplete knowledge of non-import consumers.",
+            "Insufficient evidence of unused/redundant files.",
+        )
+    )
     task = prepare_codex_task(CodexTaskPreparationRequestV1(analysis))
     assert task.state == CodexTaskStateV1.VALIDATION_ERROR
     assert task.reason_code == "SOURCE_ANALYSIS_OUTCOME_NOT_AUTHORIZABLE"

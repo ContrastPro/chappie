@@ -143,6 +143,30 @@ class DevelopmentAnalysisServiceV1:
             "record_digests": result.selected_record_digests,
             "allowed_fact_ids": _allowed_fact_ids(context),
         }
+        attachment = request.repository_inventory_attachment
+        if attachment is not None:
+            from app.development_analysis.repository_inventory import (
+                DevelopmentRepositoryInventoryAttachmentV1,
+            )
+
+            if not isinstance(attachment, DevelopmentRepositoryInventoryAttachmentV1):
+                return _failure(
+                    request,
+                    DevelopmentAnalysisStateV1.VALIDATION_ERROR,
+                    "REPOSITORY_INVENTORY_ATTACHMENT_INVALID",
+                    lifecycle=lifecycle.failed("REPOSITORY_INVENTORY_ATTACHMENT_INVALID"),
+                )
+            payload.update(
+                {
+                    "repository_inventory_identity": attachment.inventory_identity,
+                    "repository_inventory_digest": attachment.inventory_digest,
+                    "repository_inventory_policy_identity": attachment.policy_identity,
+                    "repository_inventory_policy_digest": attachment.policy_digest,
+                    "repository_inventory_attachment_digest": attachment.attachment_digest,
+                    "original_evidence_digest": attachment.original_evidence_digest,
+                    "original_context_digest": attachment.original_context_digest,
+                }
+            )
         evidence = DevelopmentEvidencePackV1(
             **{**payload, "requested_role": request.requested_role},
             evidence_digest=evidence_digest(payload),

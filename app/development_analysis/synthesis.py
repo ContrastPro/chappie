@@ -838,9 +838,11 @@ def synthesize_development(
     grounding_result = call(
         "GROUNDING",
         DEVELOPMENT_GROUNDING_IDENTITY,
-        "Return only JSON. Select supplied E-handles that establish CURRENT state, give one short task interpretation, and list UNKNOWNs. Never propose files, contracts, or authority.",
+        _grounding_instruction(request),
         GROUNDING_SCHEMA,
-        {"request": request.request, "development_context_map": context_map.payload()},
+        _with_repository_inventory(
+            {"request": request.request, "development_context_map": context_map.payload()}, request
+        ),
     )
     try:
         grounding = parse_development_grounding(grounding_result.structured_output, context_map)
@@ -852,11 +854,14 @@ def synthesize_development(
         DEVELOPMENT_PROPOSAL_IDENTITY,
         proposal_instruction(context_map.owner_candidates),
         proposal_provider_schema(context_map.owner_candidates),
-        {
-            "request": request.request,
-            "development_context_map": context_map.payload(),
-            "grounding": grounding.payload(),
-        },
+        _with_repository_inventory(
+            {
+                "request": request.request,
+                "development_context_map": context_map.payload(),
+                "grounding": grounding.payload(),
+            },
+            request,
+        ),
     )
     try:
         proposal = parse_development_proposal(
@@ -876,12 +881,15 @@ def synthesize_development(
         DEVELOPMENT_REVIEW_IDENTITY,
         "Return only JSON. Critique the supplied proposal: task-specific risks, tests, non-goals, acceptance criteria, unresolved unknowns, and confidence. Do not redesign or claim authority.",
         REVIEW_SCHEMA,
-        {
-            "request": request.request,
-            "grounding": grounding.payload(),
-            "proposal": proposal.payload(),
-            "authority_constraints": list(context_map.authority_constraints),
-        },
+        _with_repository_inventory(
+            {
+                "request": request.request,
+                "grounding": grounding.payload(),
+                "proposal": proposal.payload(),
+                "authority_constraints": list(context_map.authority_constraints),
+            },
+            request,
+        ),
     )
     try:
         review = parse_development_review(review_result.structured_output, request.request)
@@ -901,6 +909,23 @@ def synthesize_development(
             ("PROPOSAL_SYNTHESIS", proposal_result.latency_ms),
             ("REVIEW_SYNTHESIS", review_result.latency_ms),
         ),
+    )
+
+
+def _with_repository_inventory(payload: dict[str, object], request: object) -> dict[str, object]:
+    attachment = getattr(request, "repository_inventory_attachment", None)
+    if attachment is None:
+        return payload
+    return {**payload, "repository_inventory_attachment": attachment.payload()}
+
+
+def _grounding_instruction(request: object) -> str:
+    base = "Return only JSON. Select supplied E-handles that establish CURRENT state, give one short task interpretation, and list UNKNOWNs. Never propose files, contracts, or authority."
+    if getattr(request, "repository_inventory_attachment", None) is None:
+        return base
+    return (
+        base
+        + " The separate RI-handles are verified, grouped RepositoryInventory structural facts; use them only as read-only CURRENT repository evidence. Keep relevant_evidence_handles limited to canonical Knowledge E-handles."
     )
 
 

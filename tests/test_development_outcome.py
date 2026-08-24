@@ -131,7 +131,12 @@ def test_unsupported_capability_stays_distinct_from_context_and_system_failure()
 
 def test_needs_context_cannot_persist_authorization_pair(tmp_path) -> None:
     analysis = _analysis(
-        unknowns=("Full repository file inventory unavailable.",),
+        unknowns=(
+            "Full repository file inventory unavailable.",
+            "Complete file usage patterns unavailable.",
+            "Incomplete knowledge of non-import consumers.",
+            "Insufficient evidence of unused/redundant files.",
+        ),
     )
     with pytest.raises(ValueError, match="not implementation-authorizable"):
         persist_authorization_pair(tmp_path / "authorization_pair.json", analysis, object())  # type: ignore[arg-type]

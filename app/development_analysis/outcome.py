@@ -85,13 +85,17 @@ def project_development_outcome(analysis: DevelopmentAnalysisV1) -> DevelopmentO
             unknowns,
             "Structural validity is required before the advisory result can be used safely.",
         )
-    if _requires_repository_inventory(unknowns):
+    from app.development_analysis.repository_inventory import development_context_requirement
+
+    requirement = development_context_requirement(analysis)
+    inventory_supplied = bool(analysis.evidence and analysis.evidence.repository_inventory_digest)
+    if requirement is not None and not inventory_supplied:
         return DevelopmentOutcomeV1(
             DevelopmentOutcomeStatusV1.NEEDS_CONTEXT,
             "REPOSITORY_INVENTORY_REQUIRED",
             "Repository-wide file and consumer evidence is unavailable.",
             "REPOSITORY_INVENTORY",
-            "Build a bounded read-only repository inventory, then rerun the hygiene analysis.",
+            "Build a bounded read-only repository inventory, then rerun the analysis.",
             False,
             request_id,
             None,
@@ -99,6 +103,21 @@ def project_development_outcome(analysis: DevelopmentAnalysisV1) -> DevelopmentO
             True,
             unknowns,
             "Safe cleanup classification cannot be proven from the current bounded context.",
+        )
+    if requirement is not None:
+        return DevelopmentOutcomeV1(
+            DevelopmentOutcomeStatusV1.NEEDS_CONTEXT,
+            "REPOSITORY_INVENTORY_GAP_UNRESOLVED",
+            "Repository inventory was supplied, but the analysis still reports repository-wide evidence gaps.",
+            "TARGETED_CONTEXT",
+            "Review the exact remaining bounded evidence gaps before rerunning the analysis.",
+            False,
+            request_id,
+            None,
+            analysis.reason_code,
+            True,
+            unknowns,
+            "Supplying a capability does not prove that the task-specific evidence gap was resolved.",
         )
     required_context = _blocking_targeted_context(unknowns)
     if required_context is not None:
@@ -160,17 +179,6 @@ def project_development_outcome(analysis: DevelopmentAnalysisV1) -> DevelopmentO
         unknowns,
         "",
     )
-
-
-def _requires_repository_inventory(unknowns: tuple[str, ...]) -> bool:
-    markers = (
-        "repository file inventory unavailable",
-        "complete file usage patterns unavailable",
-        "insufficient evidence of unused/redundant files",
-        "incomplete knowledge of non-import consumers",
-        "uncertain legacy/diagnostic external consumers",
-    )
-    return any(any(marker in item.casefold() for marker in markers) for item in unknowns)
 
 
 def _blocking_targeted_context(unknowns: tuple[str, ...]) -> str | None:

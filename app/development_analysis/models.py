@@ -13,6 +13,13 @@ from app.development_analysis.context import (
     DevelopmentContextMapV1,
     development_context_map_from_payload,
 )
+from app.repository_inventory import (
+    POLICY_DIGEST as REPOSITORY_INVENTORY_POLICY_DIGEST,
+)
+from app.repository_inventory import (
+    REPOSITORY_INVENTORY_IDENTITY,
+    REPOSITORY_INVENTORY_POLICY_IDENTITY,
+)
 
 DEVELOPMENT_ANALYSIS_IDENTITY = "chappie_development_analysis/2.0.0"
 MAX_DEVELOPMENT_REQUEST_CHARACTERS = 12_000
@@ -243,6 +250,7 @@ class DevelopmentAnalysisRequestV1:
     request: str
     requested_role: DevelopmentModelRoleV1
     workspace_context: object | None = None
+    repository_inventory_attachment: object | None = None
 
     def __post_init__(self) -> None:
         if not self.request.strip() or len(self.request) > MAX_DEVELOPMENT_REQUEST_CHARACTERS:
@@ -266,6 +274,13 @@ class DevelopmentEvidencePackV1:
     record_digests: tuple[str, ...]
     evidence_digest: str
     allowed_fact_ids: tuple[str, ...] = ()
+    repository_inventory_identity: str | None = None
+    repository_inventory_digest: str | None = None
+    repository_inventory_policy_identity: str | None = None
+    repository_inventory_policy_digest: str | None = None
+    repository_inventory_attachment_digest: str | None = None
+    original_evidence_digest: str | None = None
+    original_context_digest: str | None = None
 
     def __post_init__(self) -> None:
         if self.allowed_fact_ids and (
@@ -273,6 +288,35 @@ class DevelopmentEvidencePackV1:
             or any(not item.startswith("knowledge.") for item in self.allowed_fact_ids)
         ):
             raise ValueError("development evidence allowlist is invalid")
+        inventory_values = (
+            self.repository_inventory_identity,
+            self.repository_inventory_digest,
+            self.repository_inventory_policy_identity,
+            self.repository_inventory_policy_digest,
+            self.repository_inventory_attachment_digest,
+            self.original_evidence_digest,
+            self.original_context_digest,
+        )
+        if any(item is not None for item in inventory_values):
+            if any(item is None for item in inventory_values):
+                raise ValueError("development inventory evidence binding is incomplete")
+            if any(
+                len(item) != 64
+                for item in (
+                    self.repository_inventory_digest,
+                    self.repository_inventory_policy_digest,
+                    self.repository_inventory_attachment_digest,
+                    self.original_evidence_digest,
+                    self.original_context_digest,
+                )
+            ):
+                raise ValueError("development inventory evidence digest is invalid")
+            if (
+                self.repository_inventory_identity != REPOSITORY_INVENTORY_IDENTITY
+                or self.repository_inventory_policy_identity != REPOSITORY_INVENTORY_POLICY_IDENTITY
+                or self.repository_inventory_policy_digest != REPOSITORY_INVENTORY_POLICY_DIGEST
+            ):
+                raise ValueError("development inventory evidence contract is unsupported")
 
 
 @dataclass(frozen=True, slots=True)
@@ -431,6 +475,17 @@ def development_analysis_from_payload(value: object) -> DevelopmentAnalysisV1:
             "allowed_fact_ids",
         )
     }
+    for key in (
+        "repository_inventory_identity",
+        "repository_inventory_digest",
+        "repository_inventory_policy_identity",
+        "repository_inventory_policy_digest",
+        "repository_inventory_attachment_digest",
+        "original_evidence_digest",
+        "original_context_digest",
+    ):
+        if key in raw:
+            payload[key] = raw[key]
     if raw.get("evidence_digest") != evidence_digest(payload):
         raise ValueError("development analysis evidence digest is invalid")
     evidence = DevelopmentEvidencePackV1(
@@ -449,6 +504,21 @@ def development_analysis_from_payload(value: object) -> DevelopmentAnalysisV1:
         record_digests=tuple(_strings(payload["record_digests"])),
         allowed_fact_ids=tuple(_strings(payload["allowed_fact_ids"])),
         evidence_digest=str(raw["evidence_digest"]),
+        repository_inventory_identity=_optional_string(
+            payload.get("repository_inventory_identity")
+        ),
+        repository_inventory_digest=_optional_string(payload.get("repository_inventory_digest")),
+        repository_inventory_policy_identity=_optional_string(
+            payload.get("repository_inventory_policy_identity")
+        ),
+        repository_inventory_policy_digest=_optional_string(
+            payload.get("repository_inventory_policy_digest")
+        ),
+        repository_inventory_attachment_digest=_optional_string(
+            payload.get("repository_inventory_attachment_digest")
+        ),
+        original_evidence_digest=_optional_string(payload.get("original_evidence_digest")),
+        original_context_digest=_optional_string(payload.get("original_context_digest")),
     )
     lifecycle = _lifecycle_from_payload(value.get("lifecycle"))
     context_map = development_context_map_from_payload(value.get("context_map"))
@@ -487,6 +557,10 @@ def _strings(value: object) -> tuple[str, ...]:
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
         raise ValueError("development analysis list is invalid")
     return tuple(value)
+
+
+def _optional_string(value: object) -> str | None:
+    return str(value) if value is not None else None
 
 
 def _lifecycle_from_payload(value: object) -> DevelopmentLifecycleV1 | None:
@@ -559,7 +633,7 @@ def _task_specific(request: str, values: tuple[str, ...]) -> bool:
 def _evidence_payload(value: DevelopmentEvidencePackV1 | None) -> dict[str, object] | None:
     if value is None:
         return None
-    return {
+    payload = {
         "source_commit": value.source_commit,
         "repository_clean": value.repository_clean,
         "knowledge_identity": value.knowledge_identity,
@@ -576,6 +650,17 @@ def _evidence_payload(value: DevelopmentEvidencePackV1 | None) -> dict[str, obje
         "allowed_fact_ids": list(value.allowed_fact_ids),
         "evidence_digest": value.evidence_digest,
     }
+    optional = {
+        "repository_inventory_identity": value.repository_inventory_identity,
+        "repository_inventory_digest": value.repository_inventory_digest,
+        "repository_inventory_policy_identity": value.repository_inventory_policy_identity,
+        "repository_inventory_policy_digest": value.repository_inventory_policy_digest,
+        "repository_inventory_attachment_digest": value.repository_inventory_attachment_digest,
+        "original_evidence_digest": value.original_evidence_digest,
+        "original_context_digest": value.original_context_digest,
+    }
+    payload.update({key: item for key, item in optional.items() if item is not None})
+    return payload
 
 
 def _lifecycle_payload(value: DevelopmentLifecycleV1 | None) -> dict[str, object] | None:
