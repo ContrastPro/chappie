@@ -9,9 +9,9 @@ from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import PurePosixPath
 
-REPOSITORY_INVENTORY_IDENTITY = "chappie_repository_inventory/1.0.0"
+REPOSITORY_INVENTORY_IDENTITY = "chappie_repository_inventory/1.1.0"
 REPOSITORY_INVENTORY_REQUEST_IDENTITY = "chappie_repository_inventory_request/1.0.0"
-REPOSITORY_INVENTORY_POLICY_IDENTITY = "chappie_repository_inventory_policy/1.0.2"
+REPOSITORY_INVENTORY_POLICY_IDENTITY = "chappie_repository_inventory_policy/1.1.0"
 
 SAFE_ENV_TEMPLATE_NAMES = (".env.example", ".env.sample", ".env.template")
 FORBIDDEN_LOCAL_STATE_ROOTS = ("cache", "data", "logs", "runtime", "tmp", "var")
@@ -28,7 +28,8 @@ APPROVED_TRACKED_FIXTURE_EVIDENCE = (
 
 MAX_TRACKED_FILES = 2048
 MAX_RELATIONS = 8192
-MAX_REFERENCES_PER_FILE = 64
+MAX_REFERENCES_PER_FILE = 72
+MAX_REPRESENTATIVE_LOCATORS = 4
 MAX_DECLARED_SYMBOLS = 4096
 MAX_DECLARED_SYMBOLS_PER_FILE = 64
 MAX_PATH_CHARACTERS = 512
@@ -131,6 +132,12 @@ class ReferenceCoverageV1(StrEnum):
     NOT_APPLICABLE = "NOT_APPLICABLE"
 
 
+class RepositorySymbolCoverageV1(StrEnum):
+    TOP_LEVEL_SOURCE_COMPLETE_TEST_FUNCTIONS_SUMMARIZED = (
+        "TOP_LEVEL_SOURCE_COMPLETE_TEST_FUNCTIONS_SUMMARIZED"
+    )
+
+
 class RepositoryRelationKindV1(StrEnum):
     IMPORTS = "IMPORTS"
     REFERENCES = "REFERENCES"
@@ -216,31 +223,79 @@ class RepositoryDeclaredSymbolV1:
 
 
 @dataclass(frozen=True, slots=True)
+class RepositoryDeclaredSymbolSummaryV1:
+    path: str
+    symbol_kind: str
+    count: int
+    representative_identifiers: tuple[str, ...]
+    identifier_digest: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "path", safe_path(self.path))
+        _bounded(self.symbol_kind, MAX_IDENTIFIER_CHARACTERS, "summary symbol kind")
+        if self.count < 1 or len(self.representative_identifiers) > MAX_REPRESENTATIVE_LOCATORS:
+            raise ValueError("symbol summary count is invalid")
+        identifiers = tuple(
+            sorted(
+                {
+                    _bounded(item, MAX_IDENTIFIER_CHARACTERS, "representative identifier")
+                    for item in self.representative_identifiers
+                }
+            )
+        )
+        object.__setattr__(self, "representative_identifiers", identifiers)
+        _digest(self.identifier_digest, "identifier digest")
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "path": self.path,
+            "symbol_kind": self.symbol_kind,
+            "count": self.count,
+            "representative_identifiers": list(self.representative_identifiers),
+            "identifier_digest": self.identifier_digest,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class RepositoryDirectRelationV1:
     relation_kind: RepositoryRelationKindV1
     source_path: str
     target_kind: RepositoryTargetKindV1
     target_ref: str
     evidence_kind: str
-    evidence_locator: str
-    source_content_digest: str
+    occurrence_count: int = 1
+    representative_locators: tuple[str, ...] = ()
+    locator_digest: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "source_path", safe_path(self.source_path))
         _bounded(self.target_ref, MAX_IDENTIFIER_CHARACTERS, "target ref")
         _bounded(self.evidence_kind, MAX_IDENTIFIER_CHARACTERS, "evidence kind")
-        _bounded(self.evidence_locator, MAX_LOCATOR_CHARACTERS, "evidence locator")
-        _digest(self.source_content_digest, "source content digest")
+        if self.occurrence_count < 1:
+            raise ValueError("relation occurrence count is invalid")
+        locators = self.representative_locators
+        if not locators:
+            raise ValueError("relation representative locators are required")
+        if len(locators) > MAX_REPRESENTATIVE_LOCATORS:
+            raise ValueError("too many representative locators")
+        locators = tuple(
+            sorted({_bounded(item, MAX_LOCATOR_CHARACTERS, "locator") for item in locators})
+        )
+        object.__setattr__(self, "representative_locators", locators)
+        locator_digest = self.locator_digest or semantic_digest(list(locators))
+        _digest(locator_digest, "locator digest")
+        object.__setattr__(self, "locator_digest", locator_digest)
 
-    def payload(self) -> dict[str, str]:
+    def payload(self) -> dict[str, object]:
         return {
             "relation_kind": self.relation_kind.value,
             "source_path": self.source_path,
             "target_kind": self.target_kind.value,
             "target_ref": self.target_ref,
             "evidence_kind": self.evidence_kind,
-            "evidence_locator": self.evidence_locator,
-            "source_content_digest": self.source_content_digest,
+            "occurrence_count": self.occurrence_count,
+            "representative_locators": list(self.representative_locators),
+            "locator_digest": self.locator_digest,
         }
 
 
@@ -307,6 +362,8 @@ class RepositoryInventoryV1:
     knowledge_manifest_digest: str
     files: tuple[RepositoryFileRecordV1, ...]
     declared_symbols: tuple[RepositoryDeclaredSymbolV1, ...]
+    declared_symbol_summaries: tuple[RepositoryDeclaredSymbolSummaryV1, ...]
+    symbol_coverage: RepositorySymbolCoverageV1
     relations: tuple[RepositoryDirectRelationV1, ...]
     coverage: dict[str, int]
     counts: dict[str, int]
@@ -350,6 +407,10 @@ class RepositoryInventoryV1:
             "knowledge_manifest_digest": self.knowledge_manifest_digest,
             "files": [item.payload() for item in self.files],
             "declared_symbols": [item.payload() for item in self.declared_symbols],
+            "declared_symbol_summaries": [
+                item.payload() for item in self.declared_symbol_summaries
+            ],
+            "symbol_coverage": self.symbol_coverage.value,
             "relations": [item.payload() for item in self.relations],
             "coverage": dict(sorted(self.coverage.items())),
             "counts": dict(sorted(self.counts.items())),
@@ -382,6 +443,21 @@ def repository_inventory_policy_payload() -> dict[str, object]:
             "approved_tracked_fixture_evidence": APPROVED_TRACKED_FIXTURE_EVIDENCE,
             "env_rule": "EXACT_TEMPLATE_ALLOWLIST_OTHER_ENV_NAMES_FORBIDDEN",
             "root_rule": "REPOSITORY_ROOT_ONLY",
+            "relation_budget_rule": "CANONICAL_NON_DECLARE_SEMANTIC_EDGES_PER_FILE",
+            "relation_grouping_key": ["source_path", "relation_kind", "target_kind", "target_ref"],
+            "relation_payload": {
+                "source_digest": "DERIVED_FROM_EXACT_SOURCE_PATH_FILE_RECORD",
+                "primary_locator": "REPRESENTATIVE_LOCATORS_FIRST_ITEM",
+                "all_locator_evidence": "LOCATOR_DIGEST",
+            },
+            "symbol_coverage": (
+                RepositorySymbolCoverageV1.TOP_LEVEL_SOURCE_COMPLETE_TEST_FUNCTIONS_SUMMARIZED.value
+            ),
+            "test_symbol_summary": {
+                "kind": "TEST_FUNCTION",
+                "representative_identifiers": MAX_REPRESENTATIVE_LOCATORS,
+                "identity": ["path", "symbol_kind"],
+            },
         },
     }
 

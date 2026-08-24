@@ -22,6 +22,7 @@ from app.repository_inventory.models import (
     MAX_PARSEABLE_FILE_BYTES,
     MAX_REFERENCES_PER_FILE,
     MAX_RELATIONS,
+    MAX_REPRESENTATIVE_LOCATORS,
     MAX_SEMANTIC_ARTIFACT_BYTES,
     MAX_SINGLE_FILE_BYTES,
     MAX_TOTAL_FILE_BYTES,
@@ -31,6 +32,7 @@ from app.repository_inventory.models import (
     ArtifactClassificationV1,
     KnowledgeSourceMetadataV1,
     ReferenceCoverageV1,
+    RepositoryDeclaredSymbolSummaryV1,
     RepositoryDeclaredSymbolV1,
     RepositoryDirectRelationV1,
     RepositoryFileKindV1,
@@ -40,6 +42,7 @@ from app.repository_inventory.models import (
     RepositoryInventoryStateV1,
     RepositoryInventoryV1,
     RepositoryRelationKindV1,
+    RepositorySymbolCoverageV1,
     RepositoryTargetKindV1,
     canonical_json,
     semantic_digest,
@@ -146,39 +149,99 @@ def _owner(path: str) -> tuple[str | None, str | None]:
     return None, None
 
 
-def _relation(kind, path, target_kind, target, evidence, locator, digest):
+def _relation(kind, path, target_kind, target, evidence, locator, _source_content_digest):
     return RepositoryDirectRelationV1(
-        kind, path, target_kind, target[:256], evidence, locator[:256], digest
+        relation_kind=kind,
+        source_path=path,
+        target_kind=target_kind,
+        target_ref=target[:256],
+        evidence_kind=evidence,
+        representative_locators=(locator[:256],),
+        locator_digest=semantic_digest([locator[:256]]),
     )
+
+
+def _group_relations(
+    relations: list[RepositoryDirectRelationV1],
+) -> list[RepositoryDirectRelationV1]:
+    groups: dict[
+        tuple[str, RepositoryRelationKindV1, RepositoryTargetKindV1, str],
+        list[RepositoryDirectRelationV1],
+    ] = {}
+    for relation in relations:
+        key = (
+            relation.source_path,
+            relation.relation_kind,
+            relation.target_kind,
+            relation.target_ref,
+        )
+        groups.setdefault(key, []).append(relation)
+    grouped: list[RepositoryDirectRelationV1] = []
+    for key, occurrences in sorted(groups.items(), key=lambda item: tuple(map(str, item[0]))):
+        if len(occurrences) == 1:
+            grouped.append(occurrences[0])
+            continue
+        representative = tuple(
+            sorted({locator for item in occurrences for locator in item.representative_locators})[
+                :MAX_REPRESENTATIVE_LOCATORS
+            ]
+        )
+        evidence_kinds = "+".join(sorted({item.evidence_kind for item in occurrences}))
+        locator_evidence = sorted(
+            (item.locator_digest, item.occurrence_count) for item in occurrences
+        )
+        grouped.append(
+            RepositoryDirectRelationV1(
+                relation_kind=key[1],
+                source_path=key[0],
+                target_kind=key[2],
+                target_ref=key[3],
+                evidence_kind=evidence_kinds,
+                occurrence_count=sum(item.occurrence_count for item in occurrences),
+                representative_locators=representative,
+                locator_digest=semantic_digest(locator_evidence),
+            )
+        )
+    return grouped
+
+
+def _canonicalize_symbols(
+    symbols: list[RepositoryDeclaredSymbolV1],
+) -> list[RepositoryDeclaredSymbolV1]:
+    canonical: dict[tuple[str, str, str], RepositoryDeclaredSymbolV1] = {}
+    for symbol in symbols:
+        key = (symbol.path, symbol.symbol_kind, symbol.name)
+        current = canonical.get(key)
+        if current is None or symbol.locator < current.locator:
+            canonical[key] = symbol
+    return sorted(canonical.values(), key=lambda item: (item.path, item.symbol_kind, item.name))
 
 
 def _detect(path: str, data: bytes, digest: str):
     symbols: list[RepositoryDeclaredSymbolV1] = []
+    summaries: list[RepositoryDeclaredSymbolSummaryV1] = []
     relations: list[RepositoryDirectRelationV1] = []
+    raw_declaration_count = 0
     suffix = PurePosixPath(path).suffix.lower()
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
-        return symbols, relations, ReferenceCoverageV1.UNSUPPORTED_FILE_KIND
+        return symbols, summaries, relations, ReferenceCoverageV1.UNSUPPORTED_FILE_KIND, 0
     try:
         if suffix == ".py":
             tree = ast.parse(text)
             for node in tree.body:
                 if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                    raw_declaration_count += 1
                     kind = "CLASS" if isinstance(node, ast.ClassDef) else "FUNCTION"
+                    if (
+                        path.startswith("tests/")
+                        and kind == "FUNCTION"
+                        and node.name.startswith("test_")
+                    ):
+                        continue
                     symbols.append(
                         RepositoryDeclaredSymbolV1(path, node.name, kind, f"line:{node.lineno}")
-                    )
-                    relations.append(
-                        _relation(
-                            RepositoryRelationKindV1.DECLARES,
-                            path,
-                            RepositoryTargetKindV1.SYMBOL,
-                            node.name,
-                            "PYTHON_AST",
-                            f"line:{node.lineno}",
-                            digest,
-                        )
                     )
                 elif isinstance(node, (ast.Import, ast.ImportFrom)):
                     names = (
@@ -212,6 +275,26 @@ def _detect(path: str, data: bytes, digest: str):
                                     )
                                 )
             if path.startswith("tests/"):
+                test_identifiers = sorted(
+                    {
+                        node.name
+                        for node in tree.body
+                        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                        and node.name.startswith("test_")
+                    }
+                )
+                if test_identifiers:
+                    summaries.append(
+                        RepositoryDeclaredSymbolSummaryV1(
+                            path=path,
+                            symbol_kind="TEST_FUNCTION",
+                            count=len(test_identifiers),
+                            representative_identifiers=tuple(
+                                test_identifiers[:MAX_REPRESENTATIVE_LOCATORS]
+                            ),
+                            identifier_digest=semantic_digest(test_identifiers),
+                        )
+                    )
                 for item in _LITERAL_PATH.findall(text):
                     relations.append(
                         _relation(
@@ -344,15 +427,21 @@ def _detect(path: str, data: bytes, digest: str):
                         )
                     )
         else:
-            return symbols, relations, ReferenceCoverageV1.NOT_APPLICABLE
+            return symbols, summaries, relations, ReferenceCoverageV1.NOT_APPLICABLE, 0
     except (SyntaxError, ValueError, TypeError, json.JSONDecodeError, tomllib.TOMLDecodeError):
-        return [], [], ReferenceCoverageV1.PARSE_FAILED
-    if len(symbols) > MAX_DECLARED_SYMBOLS_PER_FILE or len(relations) > MAX_REFERENCES_PER_FILE:
-        return [], [], ReferenceCoverageV1.BUDGET_EXCEEDED
+        return [], [], [], ReferenceCoverageV1.PARSE_FAILED, 0
+    symbols = _canonicalize_symbols(symbols)
+    relations = _group_relations(relations)
+    if len(symbols) + len(summaries) > MAX_DECLARED_SYMBOLS_PER_FILE:
+        return symbols, summaries, [], ReferenceCoverageV1.BUDGET_EXCEEDED, raw_declaration_count
+    if len(relations) > MAX_REFERENCES_PER_FILE:
+        return [], [], relations, ReferenceCoverageV1.BUDGET_EXCEEDED, raw_declaration_count
     return (
         symbols,
+        summaries,
         relations,
         ReferenceCoverageV1.COMPLETE if relations else ReferenceCoverageV1.NO_KNOWN_REFERENCE,
+        raw_declaration_count,
     )
 
 
@@ -370,6 +459,8 @@ def _failed(request, state, reason, *, clean=False, counts=None):
         request.knowledge_manifest_digest,
         (),
         (),
+        (),
+        RepositorySymbolCoverageV1.TOP_LEVEL_SOURCE_COMPLETE_TEST_FUNCTIONS_SUMMARIZED,
         (),
         {},
         counts or {},
@@ -434,7 +525,8 @@ def build_repository_inventory(
             "KNOWLEDGE_SOURCE_NOT_TRACKED",
             clean=True,
         )
-    files, symbols, relations = [], [], []
+    files, symbols, symbol_summaries, relations = [], [], [], []
+    raw_declarations = 0
     total = 0
     for path in snapshot.paths:
         resolved = (root / Path(*PurePosixPath(path).parts)).resolve(strict=True)
@@ -464,9 +556,16 @@ def build_repository_inventory(
             artifact is not ArtifactClassificationV1.DECLARED_DISTRIBUTION
             or PurePosixPath(path).name == "SHA256SUMS"
         ):
-            found_symbols, found_relations, coverage = _detect(path, content, content_digest)
+            (
+                found_symbols,
+                found_summaries,
+                found_relations,
+                coverage,
+                file_raw_declarations,
+            ) = _detect(path, content, content_digest)
         else:
-            found_symbols, found_relations, coverage = (
+            found_symbols, found_summaries, found_relations, coverage, file_raw_declarations = (
+                [],
                 [],
                 [],
                 ReferenceCoverageV1.BUDGET_EXCEEDED
@@ -478,14 +577,25 @@ def build_repository_inventory(
                     RepositoryFileKindV1.CONFIG,
                 }
                 else ReferenceCoverageV1.NOT_APPLICABLE,
+                0,
             )
         if coverage is ReferenceCoverageV1.BUDGET_EXCEEDED:
+            reason = (
+                "PER_FILE_DECLARED_SYMBOL_BUDGET_EXCEEDED"
+                if len(found_symbols) + len(found_summaries) > MAX_DECLARED_SYMBOLS_PER_FILE
+                else "PER_FILE_EVIDENCE_BUDGET_EXCEEDED"
+            )
             return _failed(
                 request,
                 RepositoryInventoryStateV1.RELATION_BUDGET_EXCEEDED,
-                "PER_FILE_EVIDENCE_BUDGET_EXCEEDED",
+                reason,
                 clean=True,
-                counts={"tracked_files": len(files) + 1},
+                counts={
+                    "tracked_files": len(files) + 1,
+                    "declared_symbols_in_file": len(found_symbols),
+                    "declared_symbol_summaries_in_file": len(found_summaries),
+                    "relations_in_file": len(found_relations),
+                },
             )
         if owner and RepositoryRelationKindV1.OWNED_BY in request.requested_relation_kinds:
             found_relations.append(
@@ -500,6 +610,8 @@ def build_repository_inventory(
                 )
             )
         symbols.extend(found_symbols)
+        symbol_summaries.extend(found_summaries)
+        raw_declarations += file_raw_declarations
         relations.extend(
             item
             for item in found_relations
@@ -547,16 +659,29 @@ def build_repository_inventory(
                     file_digests[consumer_path],
                 )
             )
-    symbols = sorted(
-        set(symbols), key=lambda item: (item.path, item.name, item.symbol_kind, item.locator)
-    )
-    relations = sorted(set(relations), key=lambda item: tuple(item.payload().values()))
-    if len(symbols) > MAX_DECLARED_SYMBOLS or len(relations) > MAX_RELATIONS:
-        state = RepositoryInventoryStateV1.RELATION_BUDGET_EXCEEDED
+    symbols = _canonicalize_symbols(symbols)
+    symbol_summaries = sorted(set(symbol_summaries), key=lambda item: (item.path, item.symbol_kind))
+    relations = _group_relations(relations)
+    relations = sorted(relations, key=lambda item: tuple(map(str, item.payload().values())))
+    semantic_symbol_records = len(symbols) + len(symbol_summaries)
+    if semantic_symbol_records > MAX_DECLARED_SYMBOLS:
         return _failed(
             request,
-            state,
-            state.value,
+            RepositoryInventoryStateV1.RELATION_BUDGET_EXCEEDED,
+            "DECLARED_SYMBOL_BUDGET_EXCEEDED",
+            clean=True,
+            counts={
+                "declared_symbols": len(symbols),
+                "declared_symbol_summaries": len(symbol_summaries),
+                "semantic_symbol_records": semantic_symbol_records,
+                "relations": len(relations),
+            },
+        )
+    if len(relations) > MAX_RELATIONS:
+        return _failed(
+            request,
+            RepositoryInventoryStateV1.RELATION_BUDGET_EXCEEDED,
+            "RELATION_BUDGET_EXCEEDED",
             clean=True,
             counts={"declared_symbols": len(symbols), "relations": len(relations)},
         )
@@ -567,6 +692,10 @@ def build_repository_inventory(
     counts = {
         "tracked_files": len(files),
         "declared_symbols": len(symbols),
+        "declared_symbol_summaries": len(symbol_summaries),
+        "summarized_test_functions": sum(item.count for item in symbol_summaries),
+        "raw_declarations": raw_declarations,
+        "semantic_symbol_records": semantic_symbol_records,
         "relations": len(relations),
         "total_file_bytes": total,
     }
@@ -583,6 +712,8 @@ def build_repository_inventory(
         request.knowledge_manifest_digest,
         tuple(files),
         tuple(symbols),
+        tuple(symbol_summaries),
+        RepositorySymbolCoverageV1.TOP_LEVEL_SOURCE_COMPLETE_TEST_FUNCTIONS_SUMMARIZED,
         tuple(relations),
         coverage,
         counts,

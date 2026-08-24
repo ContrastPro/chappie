@@ -15,6 +15,7 @@ from app.repository_inventory import (
     RepositoryInventoryRequestV1,
     RepositoryInventoryStateV1,
     RepositoryRelationKindV1,
+    RepositorySymbolCoverageV1,
     build_repository_inventory,
     builder,
     forbidden_tracked_path_category,
@@ -105,17 +106,31 @@ def test_taxonomy_detectors_symbols_and_direct_relations(repository: Path) -> No
     assert kinds["docs/architecture/EXAMPLE.md"] is RepositoryFileKindV1.ARCHITECTURE
     assert kinds["tools/vscode-chappie/src/index.ts"] is RepositoryFileKindV1.EXTENSION
     assert kinds["tools/vscode-chappie/dist/SHA256SUMS"] is RepositoryFileKindV1.DISTRIBUTION
-    assert {item.name for item in result.declared_symbols} >= {"Example", "run", "test_example"}
+    assert {item.name for item in result.declared_symbols} >= {"Example", "run"}
+    test_summary = next(
+        item for item in result.declared_symbol_summaries if item.path == "tests/test_example.py"
+    )
+    assert test_summary.count == 1
+    assert test_summary.representative_identifiers == ("test_example",)
+    assert (
+        result.symbol_coverage
+        is RepositorySymbolCoverageV1.TOP_LEVEL_SOURCE_COMPLETE_TEST_FUNCTIONS_SUMMARIZED
+    )
     relation_kinds = {item.relation_kind for item in result.relations}
     assert {
         RepositoryRelationKindV1.IMPORTS,
-        RepositoryRelationKindV1.DECLARES,
         RepositoryRelationKindV1.BOOTSTRAPS,
         RepositoryRelationKindV1.EXPORTS,
         RepositoryRelationKindV1.DOCUMENTS,
         RepositoryRelationKindV1.CHECKSUMS,
     } <= relation_kinds
-    assert all(item.source_content_digest for item in result.relations)
+    assert RepositoryRelationKindV1.DECLARES not in relation_kinds
+    file_digests = {item.path: item.content_digest for item in result.files}
+    assert all(file_digests[item.source_path] for item in result.relations)
+    assert all(item.representative_locators for item in result.relations)
+    relation_payload = result.relations[0].payload()
+    assert "source_content_digest" not in relation_payload
+    assert "evidence_locator" not in relation_payload
 
 
 def test_ownership_has_no_fallback_or_category(repository: Path) -> None:
@@ -312,6 +327,212 @@ def test_sqlite_fixture_requires_exact_path_and_direct_consumer_evidence(
     subprocess.run(("git", "commit", "-qm", "unreferenced fixture"), cwd=repository, check=True)
     result = build_repository_inventory(_request(repository), repository)
     assert result.reason_code == "FORBIDDEN_TRACKED_PATH"
+
+
+def test_repeated_references_group_with_bounded_deterministic_locators(
+    repository: Path,
+) -> None:
+    target = repository / "app/example/__init__.py"
+    target.write_text("\n".join(["import pathlib"] * 10), encoding="utf-8")
+    subprocess.run(("git", "add", "."), cwd=repository, check=True)
+    subprocess.run(("git", "commit", "-qm", "repeated imports"), cwd=repository, check=True)
+
+    first = build_repository_inventory(_request(repository), repository)
+    second = build_repository_inventory(_request(repository), repository)
+    relation = next(
+        item
+        for item in first.relations
+        if item.source_path == "app/example/__init__.py"
+        and item.relation_kind is RepositoryRelationKindV1.IMPORTS
+        and item.target_ref == "pathlib"
+    )
+    assert relation.occurrence_count == 10
+    assert relation.representative_locators == ("line:1", "line:10", "line:2", "line:3")
+    assert len(relation.representative_locators) == 4
+    assert relation.locator_digest == next(
+        item.locator_digest for item in second.relations if item == relation
+    )
+    assert first.inventory_digest == second.inventory_digest
+
+
+def test_single_relation_uses_minimal_reconstructable_evidence(repository: Path) -> None:
+    result = build_repository_inventory(_request(repository), repository)
+    relation = next(
+        item
+        for item in result.relations
+        if item.source_path == "app/example/__init__.py"
+        and item.relation_kind is RepositoryRelationKindV1.IMPORTS
+        and item.target_ref == "pathlib"
+    )
+    files = {item.path: item for item in result.files}
+    assert relation.occurrence_count == 1
+    assert relation.representative_locators == ("line:1",)
+    assert relation.locator_digest == semantic_digest(["line:1"])
+    assert files[relation.source_path].content_digest
+    assert set(relation.payload()) == {
+        "relation_kind",
+        "source_path",
+        "target_kind",
+        "target_ref",
+        "evidence_kind",
+        "occurrence_count",
+        "representative_locators",
+        "locator_digest",
+    }
+
+
+def test_real_relation_fact_change_changes_semantic_digest(repository: Path) -> None:
+    first = build_repository_inventory(_request(repository), repository)
+    target = repository / "app/example/__init__.py"
+    target.write_text(target.read_text(encoding="utf-8") + "\nimport json\n", encoding="utf-8")
+    subprocess.run(("git", "add", "."), cwd=repository, check=True)
+    subprocess.run(("git", "commit", "-qm", "new semantic relation"), cwd=repository, check=True)
+    second = build_repository_inventory(_request(repository), repository)
+    assert second.state is RepositoryInventoryStateV1.COMPLETE
+    assert first.inventory_digest != second.inventory_digest
+    assert any(item.target_ref == "json" for item in second.relations)
+
+
+def test_distinct_targets_and_relation_kinds_remain_distinct(repository: Path) -> None:
+    target = repository / "tests/test_example.py"
+    target.write_text("import os\nimport pathlib\n", encoding="utf-8")
+    subprocess.run(("git", "add", "."), cwd=repository, check=True)
+    subprocess.run(("git", "commit", "-qm", "distinct imports"), cwd=repository, check=True)
+    result = build_repository_inventory(_request(repository), repository)
+    relevant = {
+        (item.relation_kind, item.target_ref)
+        for item in result.relations
+        if item.source_path == "tests/test_example.py"
+    }
+    assert relevant >= {
+        (RepositoryRelationKindV1.IMPORTS, "os"),
+        (RepositoryRelationKindV1.IMPORTS, "pathlib"),
+        (RepositoryRelationKindV1.TESTS, "os"),
+        (RepositoryRelationKindV1.TESTS, "pathlib"),
+    }
+
+
+def test_declarations_use_symbol_budget_not_reference_budget(repository: Path) -> None:
+    target = repository / "app/example/__init__.py"
+    target.write_text(
+        "import pathlib\n" + "\n".join(f"def function_{index}(): pass" for index in range(60)),
+        encoding="utf-8",
+    )
+    subprocess.run(("git", "add", "."), cwd=repository, check=True)
+    subprocess.run(("git", "commit", "-qm", "many declarations"), cwd=repository, check=True)
+    result = build_repository_inventory(_request(repository), repository)
+    assert result.state is RepositoryInventoryStateV1.COMPLETE
+    assert (
+        len([item for item in result.declared_symbols if item.path == "app/example/__init__.py"])
+        == 60
+    )
+    assert all(
+        item.relation_kind is not RepositoryRelationKindV1.DECLARES for item in result.relations
+    )
+    assert (
+        len([item for item in result.relations if item.source_path == "app/example/__init__.py"])
+        == 2
+    )
+
+
+def test_true_unique_semantic_edge_overflow_remains_fail_closed(
+    repository: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = repository / "app/example/__init__.py"
+    target.write_text("\n".join(f"import module_{index}" for index in range(3)), encoding="utf-8")
+    subprocess.run(("git", "add", "."), cwd=repository, check=True)
+    subprocess.run(("git", "commit", "-qm", "unique imports"), cwd=repository, check=True)
+    monkeypatch.setattr(builder, "MAX_REFERENCES_PER_FILE", 2)
+    result = build_repository_inventory(_request(repository), repository)
+    assert result.state is RepositoryInventoryStateV1.RELATION_BUDGET_EXCEEDED
+    assert result.inventory_digest is None
+
+
+def test_declared_symbol_overflow_has_a_distinct_bounded_reason(
+    repository: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = repository / "app/example/__init__.py"
+    target.write_text(
+        "\n".join(f"def symbol_{index}(): pass" for index in range(3)), encoding="utf-8"
+    )
+    subprocess.run(("git", "add", "."), cwd=repository, check=True)
+    subprocess.run(("git", "commit", "-qm", "symbol overflow"), cwd=repository, check=True)
+    monkeypatch.setattr(builder, "MAX_DECLARED_SYMBOLS_PER_FILE", 2)
+    result = build_repository_inventory(_request(repository), repository)
+    assert result.state is RepositoryInventoryStateV1.RELATION_BUDGET_EXCEEDED
+    assert result.reason_code == "PER_FILE_DECLARED_SYMBOL_BUDGET_EXCEEDED"
+    assert result.counts["declared_symbols_in_file"] == 3
+    assert result.inventory_digest is None
+
+
+def test_global_declared_symbol_overflow_is_distinct_from_relation_overflow(
+    repository: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(builder, "MAX_DECLARED_SYMBOLS", 0)
+    result = build_repository_inventory(_request(repository), repository)
+    assert result.state is RepositoryInventoryStateV1.RELATION_BUDGET_EXCEEDED
+    assert result.reason_code == "DECLARED_SYMBOL_BUDGET_EXCEEDED"
+    assert result.counts["declared_symbols"] > 0
+    assert result.inventory_digest is None
+
+
+def test_symbol_identity_deduplicates_locator_occurrences(repository: Path) -> None:
+    target = repository / "app/example/__init__.py"
+    target.write_text("def duplicate(): pass\ndef duplicate(): pass\n", encoding="utf-8")
+    subprocess.run(("git", "add", "."), cwd=repository, check=True)
+    subprocess.run(("git", "commit", "-qm", "duplicate declaration"), cwd=repository, check=True)
+    first = build_repository_inventory(_request(repository), repository)
+    second = build_repository_inventory(_request(repository), repository)
+    duplicates = [item for item in first.declared_symbols if item.name == "duplicate"]
+    assert len(duplicates) == 1
+    assert duplicates[0].locator == "line:1"
+    assert first.declared_symbols == second.declared_symbols
+    assert first.inventory_digest == second.inventory_digest
+
+
+def test_nested_functions_and_methods_are_explicitly_outside_symbol_coverage(
+    repository: Path,
+) -> None:
+    target = repository / "app/example/__init__.py"
+    target.write_text(
+        "def top_level():\n    def nested(): pass\n\nclass Service:\n    def method(self): pass\n",
+        encoding="utf-8",
+    )
+    subprocess.run(("git", "add", "."), cwd=repository, check=True)
+    subprocess.run(("git", "commit", "-qm", "symbol levels"), cwd=repository, check=True)
+    result = build_repository_inventory(_request(repository), repository)
+    names = {
+        item.name for item in result.declared_symbols if item.path == "app/example/__init__.py"
+    }
+    assert names == {"Service", "top_level"}
+    assert "nested" not in names and "method" not in names
+    assert (
+        result.symbol_coverage
+        is RepositorySymbolCoverageV1.TOP_LEVEL_SOURCE_COMPLETE_TEST_FUNCTIONS_SUMMARIZED
+    )
+
+
+def test_test_functions_have_complete_deterministic_summary(repository: Path) -> None:
+    target = repository / "tests/test_example.py"
+    identifiers = [f"test_case_{index}" for index in range(10)]
+    target.write_text(
+        "def helper(): pass\n" + "\n".join(f"def {name}(): pass" for name in identifiers),
+        encoding="utf-8",
+    )
+    subprocess.run(("git", "add", "."), cwd=repository, check=True)
+    subprocess.run(("git", "commit", "-qm", "test summary"), cwd=repository, check=True)
+    first = build_repository_inventory(_request(repository), repository)
+    second = build_repository_inventory(_request(repository), repository)
+    summary = next(
+        item for item in first.declared_symbol_summaries if item.path == "tests/test_example.py"
+    )
+    assert summary.count == 10
+    assert summary.representative_identifiers == tuple(sorted(identifiers)[:4])
+    assert len(summary.identifier_digest) == 64
+    assert summary == next(
+        item for item in second.declared_symbol_summaries if item.path == summary.path
+    )
+    assert {item.name for item in first.declared_symbols if item.path == summary.path} == {"helper"}
 
 
 def test_parse_failure_and_unsupported_coverage(repository: Path) -> None:
