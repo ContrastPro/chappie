@@ -111,7 +111,7 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
     try {
       if (turn.mode === "DEVELOPMENT") {
         const analysis = await this.dependencies.analyzeDevelopment(turn.question, turn.context, turn.attachments, this.connection.modelRole);
-        if (analysis.state !== "OK") throw new Error(analysis.reason_code ?? "Development analysis did not return a valid result.");
+        if (analysis.state !== "OK" && analysis.outcome === undefined) throw new Error(analysis.reason_code ?? "Development analysis did not return a valid result.");
         if (!this.session.completeDevelopment(turn.turnId, analysis)) throw new Error("Development analysis completed after its Workbench turn was no longer pending.");
       } else {
         const response = await this.dependencies.askProject(turn.question, turn.context, turn.attachments, this.connection.modelRole);

@@ -444,15 +444,9 @@ test("Workbench Development mode is explicit and renders only advisory Codex tas
   assert.match(host, /prepareCodexTask/);
   assert.match(host, /task\.state !== "ADVISORY"/);
   assert.match(host, /turn\.development\.readiness !== "READY_FOR_TASK"/);
-  assert.match(script, /Development analysis/);
-  assert.match(script, /Prepare Codex Task/);
-  assert.match(script, /enrichDevelopmentReasoningV2/);
-  assert.match(script, /CURRENT/);
-  assert.match(script, /PROPOSED/);
-  assert.match(script, /UNKNOWN/);
+  assert.match(script, /Summary/);
   assert.match(script, /Prepare Codex Handoff/);
-  assert.match(script, /Validation:/);
-  assert.match(script, /analysis\.readiness==='READY_FOR_TASK'/);
+  assert.match(script, /presentation\.allowHandoff/);
   assert.match(script, /turn\.codexTask\.approval_status/);
   assert.doesNotMatch(host, /child_process\.exec|Codex invocation/);
 });
@@ -460,20 +454,17 @@ test("Workbench Development mode is explicit and renders only advisory Codex tas
 test("Workbench presents bounded Development outcomes separately from technical diagnostics", () => {
   const script = workbenchRendererScript();
   const host = readFileSync("src/ui/workbench.ts", "utf8");
-  assert.match(script, /enrichDevelopmentOutcomes/);
-  assert.match(script, /Status: '\+outcome\.status/);
-  assert.match(script, /Required context/);
-  assert.match(script, /Suggested next action/);
-  assert.match(script, /renderMarkdown\(answer,analysis\.answer\)/);
-  assert.match(script, /\['Plan',analysis\.plan_items\]/);
-  assert.match(script, /enrichDevelopmentOutcomeInspector/);
-  assert.match(script, /enrichDevelopmentPartialResults/);
-  assert.match(script, /PROPOSED — IMPLEMENTATION NOT AUTHORIZED/);
+  assert.match(script, /presentation\.summary/);
+  assert.match(script, /presentation\.sections/);
+  assert.match(script, /presentation\.nextAction/);
+  assert.match(script, /Status: '\+presentation\.status/);
+  assert.match(script, /developmentInspectorLines/);
   assert.match(script, /Request ID/);
   assert.match(script, /Failed stage/);
-  assert.match(script, /button\[title="Prepare Codex Task"\]/);
+  assert.match(script, /Evidence digest/);
   assert.match(host, /turn\.development\.outcome !== undefined/);
   assert.match(host, /outcome\.status !== "NEEDS_HUMAN_REVIEW"/);
+  assert.doesNotMatch(script, /JSON\.stringify\(turn\.development/);
   assert.doesNotMatch(script, /raw provider payload|chain.of.thought|Knowledge text/i);
 });
 
@@ -501,4 +492,21 @@ test("Workbench development snapshots are detached and task projection requires 
   analysis.facts[0] = "outside mutation";
   assert.equal(session.find(turn.turnId)?.development?.facts[0], "fact");
   assert.equal(session.setCodexTask("missing", { identity: "chappie_codex_handoff/1.0.0" } as never), undefined);
+});
+
+test("typed Development product outcomes remain completed turns and conversation stays usable", () => {
+  const session = new WorkbenchSessionV1();
+  const turn = session.begin("development_failure", "request_failure", "Analyze safely", noContext, 100, [], "DEVELOPMENT");
+  assert.ok(turn);
+  const analysis: DevelopmentAnalysisV1 = {
+    task_intent: null, answer: null, plan_items: [], identity: "chappie_development_analysis/2.0.0", state: "MODEL_UNAVAILABLE", request: "Analyze safely", evidence: null,
+    facts: [], inferences: [], unknowns: [], architecture_owners: [], affected_contracts: [], likely_files: [], risks: [], required_tests: [], non_goals: [], acceptance_criteria: [], confidence: null,
+    validation_status: "INVALID", readiness: null, reason_code: "MODEL_ROLE_UNAVAILABLE", context_map: null, current_evidence_handles: [], proposed_scope: null,
+    outcome: { identity: "chappie_development_outcome/1.1.0", status: "MODEL_UNAVAILABLE", blocker_code: "MODEL_ROLE_UNAVAILABLE", explanation: "The selected model is unavailable.", required_context: null, suggested_next_action: "Retry when it is available.", safe_to_retry: true, request_id: "request_failure", failed_stage: "ROLE_RESOLUTION", reason_code: "MODEL_ROLE_UNAVAILABLE", no_changes_made: true, why_it_blocks: "No fallback is permitted." },
+  };
+  const completed = session.completeDevelopment(turn.turnId, analysis, 200);
+  assert.equal(completed?.status, "complete");
+  assert.equal(completed?.developmentPresentation?.status, "Model unavailable");
+  assert.equal(completed?.developmentPresentation?.allowHandoff, false);
+  assert.ok(session.begin("next", "next_request", "Continue conversation", noContext, 300, [], "DEVELOPMENT"));
 });

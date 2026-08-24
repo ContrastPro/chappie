@@ -1,4 +1,5 @@
 import { CodexTaskV1, ControlPlaneModelV1, DevelopmentAnalysisV1, DevelopmentFailureDiagnosticsV1, DevelopmentModelRoleV1, ProjectQAResponseV1 } from "../api/contracts";
+import { DevelopmentPresentationV1 } from "./development_presentation";
 
 export const WORKBENCH_PROTOCOL_VERSION = "chappie_workbench/1.4.0";
 /** Local editing capacity, intentionally independent of the request capacity. */
@@ -52,7 +53,7 @@ export interface WorkbenchTurnV1 {
   turnId: string; requestId: string; question: string; context: ContextOptionsV1;
   attachments: readonly WorkbenchContextAttachmentV1[];
   status: WorkbenchTurnStatusV1; response?: ProjectQAResponseV1; error?: string;
-  mode: WorkbenchModeV1; development?: DevelopmentAnalysisV1; developmentFailure?: WorkbenchDevelopmentFailureV1; codexTask?: CodexTaskV1;
+  mode: WorkbenchModeV1; development?: DevelopmentAnalysisV1; developmentPresentation?: DevelopmentPresentationV1; developmentFailure?: WorkbenchDevelopmentFailureV1; codexTask?: CodexTaskV1;
   startedAtMs: number; completedAtMs?: number; feedback?: WorkbenchFeedbackV1;
 }
 
