@@ -119,6 +119,12 @@ class ReviewProposalTargetProjectionDiagnosticsV1:
     target_count: int | None = None
     public_id_length: int | None = None
     projected_semantic_size: int | None = None
+    field_counts: tuple[tuple[str, int], ...] = ()
+    kind_counts: tuple[tuple[str, int], ...] = ()
+    concrete_target_count: int | None = None
+    analysis_target_count: int | None = None
+    primary_review_target_count: int | None = None
+    supporting_rationale_count: int | None = None
 
     def payload(self) -> dict[str, object]:
         values = {
@@ -133,6 +139,12 @@ class ReviewProposalTargetProjectionDiagnosticsV1:
             "target_count": self.target_count,
             "public_id_length": self.public_id_length,
             "projected_semantic_size": self.projected_semantic_size,
+            "field_counts": dict(self.field_counts) if self.field_counts else None,
+            "kind_counts": dict(self.kind_counts) if self.kind_counts else None,
+            "concrete_target_count": self.concrete_target_count,
+            "analysis_target_count": self.analysis_target_count,
+            "primary_review_target_count": self.primary_review_target_count,
+            "supporting_rationale_count": self.supporting_rationale_count,
         }
         return {key: value for key, value in values.items() if value is not None}
 
@@ -162,6 +174,14 @@ _SOURCE_FIELDS = (
     ("proposed_behavior", ReviewProposalTargetKindV1.BEHAVIOR),
     ("rationale", ReviewProposalTargetKindV1.RATIONALE),
 )
+_FIELD_DIAGNOSTIC_NAMES = {
+    "proposed_modified_files": "modified_files",
+    "proposed_new_files": "new_files",
+    "proposed_contract_changes": "contract_changes",
+    "proposed_components": "components",
+    "proposed_behavior": "behavior",
+    "rationale": "rationale",
+}
 
 
 def build_review_proposal_target_set(
@@ -201,12 +221,38 @@ def build_review_proposal_target_set(
             identifiers[exact_identifier] = provenance
             pending.append((kind, exact_identifier, source_field, source_index))
     if len(pending) > MAX_REVIEW_PROPOSAL_TARGETS:
+        field_counts = tuple(
+            (
+                _FIELD_DIAGNOSTIC_NAMES[source_field],
+                len(tuple(getattr(proposal.proposed_scope, source_field))),
+            )
+            for source_field, _kind in _SOURCE_FIELDS
+        )
+        field_count_map = dict(field_counts)
+        kind_counts = (
+            ("FILE", field_count_map["modified_files"] + field_count_map["new_files"]),
+            ("CONTRACT", field_count_map["contract_changes"]),
+            ("COMPONENT", field_count_map["components"]),
+            ("BEHAVIOR", field_count_map["behavior"]),
+            ("RATIONALE", field_count_map["rationale"]),
+        )
+        kind_count_map = dict(kind_counts)
+        concrete_count = (
+            kind_count_map["FILE"] + kind_count_map["CONTRACT"] + kind_count_map["COMPONENT"]
+        )
+        analysis_count = kind_count_map["BEHAVIOR"] + kind_count_map["RATIONALE"]
         raise ReviewProposalTargetProjectionError(
             "REVIEW_TARGET_SET_BUDGET_EXCEEDED",
             ReviewProposalTargetProjectionDiagnosticsV1(
                 ReviewProposalTargetConstraintV1.TOTAL_TARGET_COUNT,
                 MAX_REVIEW_PROPOSAL_TARGETS,
                 total_candidate_count=len(pending),
+                field_counts=field_counts,
+                kind_counts=kind_counts,
+                concrete_target_count=concrete_count,
+                analysis_target_count=analysis_count,
+                primary_review_target_count=concrete_count + kind_count_map["BEHAVIOR"],
+                supporting_rationale_count=kind_count_map["RATIONALE"],
             ),
         )
 

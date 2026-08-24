@@ -204,7 +204,73 @@ def test_per_field_and_total_target_budgets_fail_closed() -> None:
         "constraint": "TOTAL_TARGET_COUNT",
         "configured_limit": 32,
         "total_candidate_count": 33,
+        "field_counts": {
+            "modified_files": 16,
+            "new_files": 16,
+            "contract_changes": 1,
+            "components": 0,
+            "behavior": 0,
+            "rationale": 0,
+        },
+        "kind_counts": {
+            "FILE": 32,
+            "CONTRACT": 1,
+            "COMPONENT": 0,
+            "BEHAVIOR": 0,
+            "RATIONALE": 0,
+        },
+        "concrete_target_count": 33,
+        "analysis_target_count": 0,
+        "primary_review_target_count": 33,
+        "supporting_rationale_count": 0,
     }
+
+
+def test_total_overflow_distribution_is_exact_and_content_free() -> None:
+    sentinels = {
+        "file": "PRIVATE_FILE_SENTINEL.py",
+        "contract": "PRIVATE_CONTRACT_SENTINEL",
+        "component": "PRIVATE_COMPONENT_SENTINEL",
+        "behavior": "PRIVATE_BEHAVIOR_SENTINEL",
+        "rationale": "PRIVATE_RATIONALE_SENTINEL",
+    }
+    proposal = _proposal(
+        proposed_modified_files=tuple(f"app/m_{index}_{sentinels['file']}" for index in range(8)),
+        proposed_new_files=tuple(f"app/n_{index}_{sentinels['file']}" for index in range(7)),
+        proposed_contract_changes=tuple(f"{sentinels['contract']}_{index}" for index in range(6)),
+        proposed_components=tuple(f"{sentinels['component']}_{index}" for index in range(5)),
+        proposed_behavior=tuple(f"{sentinels['behavior']}_{index}" for index in range(9)),
+        rationale=tuple(f"{sentinels['rationale']}_{index}" for index in range(6)),
+    )
+    with pytest.raises(ReviewProposalTargetProjectionError) as error:
+        _targets(proposal)
+    payload = error.value.diagnostics.payload()
+    assert payload == {
+        "constraint": "TOTAL_TARGET_COUNT",
+        "configured_limit": 32,
+        "total_candidate_count": 41,
+        "field_counts": {
+            "modified_files": 8,
+            "new_files": 7,
+            "contract_changes": 6,
+            "components": 5,
+            "behavior": 9,
+            "rationale": 6,
+        },
+        "kind_counts": {
+            "FILE": 15,
+            "CONTRACT": 6,
+            "COMPONENT": 5,
+            "BEHAVIOR": 9,
+            "RATIONALE": 6,
+        },
+        "concrete_target_count": 26,
+        "analysis_target_count": 15,
+        "primary_review_target_count": 35,
+        "supporting_rationale_count": 6,
+    }
+    rendered = str(payload)
+    assert all(value not in rendered for value in sentinels.values())
 
 
 def test_identifier_and_serialized_budgets_fail_closed(monkeypatch) -> None:
