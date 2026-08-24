@@ -15,10 +15,12 @@ from app.development_analysis.context import (
 from app.development_analysis.synthesis import (
     PROPOSAL_SCHEMA,
     PROPOSED_SCOPE_FIELDS,
+    REVIEW_OBSERVABLE_CONDITIONS,
     REVIEW_VERIFICATION_ACTIONS,
     DevelopmentProposalV1,
     DevelopmentStageError,
     _grounding_instruction,
+    _observable_condition_category,
     _review_instruction,
     parse_development_grounding,
     parse_development_proposal,
@@ -465,7 +467,7 @@ def test_implementation_review_rejects_unrelated_missing_or_lexical_only_items(
 @pytest.mark.parametrize(
     "test",
     (
-        "Verify direct consumers for each cleanup candidate before removal.",
+        "Verify direct consumers for each cleanup candidate and fail if consumers remain.",
         "Confirm manifest references for each cleanup candidate are present before removal.",
     ),
 )
@@ -545,3 +547,66 @@ def test_review_instruction_matches_proposal_aware_specificity_rules() -> None:
         "validate",
         "verify",
     }
+    for definition in REVIEW_OBSERVABLE_CONDITIONS:
+        assert definition.category in concrete and definition.category in analysis_only
+
+
+@pytest.mark.parametrize(
+    ("condition", "category"),
+    (
+        ("is present", "PRESENCE"),
+        ("is absent", "ABSENCE"),
+        ("equals expected state", "EQUALITY"),
+        ("differs from declared state", "DIFFERENCE"),
+        ("passes", "SUCCESS"),
+        ("succeeds", "SUCCESS"),
+        ("fails", "FAILURE"),
+        ("errors", "FAILURE"),
+        ("reference remains", "REFERENCE_REMAINS"),
+        ("consumer exists", "REFERENCE_REMAINS"),
+        ("reference removed", "REFERENCE_REMOVED"),
+        ("consumer missing", "REFERENCE_REMOVED"),
+    ),
+)
+def test_shared_observable_condition_categories(condition, category) -> None:
+    result = parse_development_review(
+        _review_payload(
+            f"Verify app/development_analysis/diff_review.py {condition}.",
+            "app/development_analysis/diff_review.py remains advisory.",
+        ),
+        _review_proposal(),
+    )
+    assert result.required_tests
+    assert _observable_condition_category(frozenset(condition.casefold().split())) == category
+
+
+@pytest.mark.parametrize(
+    "condition",
+    ("looks good", "works correctly", "seems fine", "quality is acceptable", "everything is okay"),
+)
+def test_vague_observable_conditions_remain_rejected(condition) -> None:
+    with pytest.raises(DevelopmentStageError) as error:
+        parse_development_review(
+            _review_payload(
+                f"Verify app/development_analysis/diff_review.py {condition}.",
+                "app/development_analysis/diff_review.py remains advisory.",
+            ),
+            _review_proposal(),
+        )
+    diagnostics = error.value.review_diagnostics
+    assert diagnostics.bounded_error_category == "MISSING_VERIFICATION_CONDITION"
+    assert diagnostics.condition_category is None
+    assert condition not in str(diagnostics.payload())
+
+
+@pytest.mark.parametrize("subject", ("reference", "consumer"))
+def test_bare_reference_subject_is_not_an_observable_condition(subject) -> None:
+    with pytest.raises(DevelopmentStageError) as error:
+        parse_development_review(
+            _review_payload(
+                f"Inspect app/development_analysis/diff_review.py {subject}.",
+                "app/development_analysis/diff_review.py remains advisory.",
+            ),
+            _review_proposal(),
+        )
+    assert error.value.review_diagnostics.condition_recognized is False

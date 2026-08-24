@@ -298,6 +298,7 @@ class ReviewParseDiagnosticsV1:
     action_recognized: bool
     target_recognized: bool
     condition_recognized: bool
+    condition_category: str | None
 
     def payload(self) -> dict[str, object]:
         return {
@@ -308,6 +309,7 @@ class ReviewParseDiagnosticsV1:
             "action_recognized": self.action_recognized,
             "target_recognized": self.target_recognized,
             "condition_recognized": self.condition_recognized,
+            "condition_category": self.condition_category,
         }
 
 
@@ -660,7 +662,7 @@ def parse_development_review(value: object, proposal: DevelopmentProposalV1) -> 
     if failure := _review_specificity_failure(
         proposal, lists["required_tests"], require_action=True
     ):
-        index, category, action, target, condition = failure
+        index, category, action, target, condition, condition_category = failure
         raise DevelopmentStageError(
             "REVIEW",
             "REVIEW_TESTS_NOT_SPECIFIC",
@@ -672,12 +674,13 @@ def parse_development_review(value: object, proposal: DevelopmentProposalV1) -> 
                 action,
                 target,
                 condition,
+                condition_category,
             ),
         )
     if failure := _review_specificity_failure(
         proposal, lists["acceptance_criteria"], require_action=False
     ):
-        index, category, action, target, condition = failure
+        index, category, action, target, condition, condition_category = failure
         raise DevelopmentStageError(
             "REVIEW",
             "REVIEW_CRITERIA_NOT_SPECIFIC",
@@ -689,6 +692,7 @@ def parse_development_review(value: object, proposal: DevelopmentProposalV1) -> 
                 action,
                 target,
                 condition,
+                condition_category,
             ),
         )
     return DevelopmentReviewV1(**lists, confidence=float(confidence))
@@ -706,32 +710,36 @@ REVIEW_VERIFICATION_ACTIONS = (
     "verify",
 )
 _VERIFICATION_ACTIONS = frozenset(REVIEW_VERIFICATION_ACTIONS)
-_VERIFICATION_CONDITIONS = frozenset(
-    {
-        "absent",
-        "absence",
-        "accounted",
-        "before",
-        "consumer",
-        "consumers",
-        "direct",
-        "exists",
-        "expected",
-        "fail",
-        "fails",
-        "failure",
-        "only",
-        "present",
-        "preserve",
-        "preserves",
-        "reference",
-        "references",
-        "reject",
-        "rejects",
-        "remain",
-        "remains",
-        "unchanged",
-    }
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewObservableConditionV1:
+    category: str
+    markers: tuple[str, ...]
+    subject_markers: tuple[str, ...] = ()
+
+
+REVIEW_OBSERVABLE_CONDITIONS = (
+    ReviewObservableConditionV1("PRESENCE", ("exists", "present")),
+    ReviewObservableConditionV1("ABSENCE", ("absent", "missing", "removed")),
+    ReviewObservableConditionV1(
+        "EQUALITY", ("equal", "equals", "expected", "remain", "remains", "unchanged")
+    ),
+    ReviewObservableConditionV1("DIFFERENCE", ("changed", "differ", "differs", "unexpected")),
+    ReviewObservableConditionV1("SUCCESS", ("pass", "passed", "passes", "succeed", "succeeds")),
+    ReviewObservableConditionV1(
+        "FAILURE", ("error", "errors", "fail", "fails", "failure", "reject", "rejects")
+    ),
+    ReviewObservableConditionV1(
+        "REFERENCE_REMAINS",
+        ("exists", "present", "remain", "remains"),
+        ("consumer", "consumers", "reference", "references"),
+    ),
+    ReviewObservableConditionV1(
+        "REFERENCE_REMOVED",
+        ("absent", "missing", "removed"),
+        ("consumer", "consumers", "reference", "references"),
+    ),
 )
 _TARGET_STOP_WORDS = frozenset(
     {
@@ -755,7 +763,7 @@ def _review_specificity_failure(
     values: tuple[str, ...],
     *,
     require_action: bool,
-) -> tuple[int, str, bool, bool, bool] | None:
+) -> tuple[int, str, bool, bool, bool, str | None] | None:
     scope = proposal.proposed_scope
     concrete_targets = (
         *scope.proposed_modified_files,
@@ -769,13 +777,30 @@ def _review_specificity_failure(
         tokens = _normalized_tokens(value)
         action = not require_action or bool(tokens.intersection(_VERIFICATION_ACTIONS))
         target = bool(target_tokens and tokens.intersection(target_tokens))
-        condition = bool(tokens.intersection(_VERIFICATION_CONDITIONS))
+        condition_category = _observable_condition_category(tokens)
+        condition = condition_category is not None
         if not action:
-            return index, "GENERIC_VERIFICATION", action, target, condition
+            return index, "GENERIC_VERIFICATION", action, target, condition, condition_category
         if not target:
-            return index, "MISSING_PROPOSAL_TARGET", action, target, condition
+            return (
+                index,
+                "MISSING_PROPOSAL_TARGET",
+                action,
+                target,
+                condition,
+                condition_category,
+            )
         if not condition:
-            return index, "MISSING_VERIFICATION_CONDITION", action, target, condition
+            return index, "MISSING_VERIFICATION_CONDITION", action, target, condition, None
+    return None
+
+
+def _observable_condition_category(tokens: frozenset[str]) -> str | None:
+    for definition in reversed(REVIEW_OBSERVABLE_CONDITIONS):
+        if definition.subject_markers and not tokens.intersection(definition.subject_markers):
+            continue
+        if tokens.intersection(definition.markers):
+            return definition.category
     return None
 
 
@@ -1154,12 +1179,18 @@ def _review_instruction(proposal: DevelopmentProposalV1) -> str:
         if concrete
         else "For each required verification, cite an exact proposed behavior or evidence/candidate condition"
     )
+    conditions = "; ".join(
+        f"{item.category}: {', '.join((*item.subject_markers, *item.markers))}"
+        for item in REVIEW_OBSERVABLE_CONDITIONS
+    )
     return (
         "Return only JSON. Critique the supplied proposal with bounded proposal-specific risks, "
         "required tests or verification, non-goals, acceptance criteria, unresolved unknowns, and "
         f"confidence. {mode}. Each item must use one exact action from: "
         f"{', '.join(REVIEW_VERIFICATION_ACTIONS)}; `ensure` is valid only with both a concrete "
-        "target and observable result or failure condition. State the result or failure condition. "
+        "target and observable result or failure condition. Use one observable condition from: "
+        f"{conditions}. Reference/consumer categories require both a reference or consumer subject "
+        "and a listed observable state. "
         "Generic testing or repository-wide verification is invalid. Do not redesign or claim "
         "authority."
     )
