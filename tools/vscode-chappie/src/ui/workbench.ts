@@ -1,7 +1,8 @@
 import * as vscode from "vscode";
 import { CodexTaskV1, DevelopmentAnalysisV1, DevelopmentModelRoleV1, ProjectQAResponseV1 } from "../api/contracts";
+import { ControlPlaneDependencyError, ControlPlaneRequestError } from "../api/client";
 import { workbenchHtml } from "./workbench_html";
-import { ContextOptionsV1, HostMessageV1, parseWebviewMessage, RuntimeTelemetryV1, WorkbenchActionV1, WorkbenchConnectionSnapshotV1, WorkbenchContextAttachmentV1, WorkbenchContextKindV1, WorkbenchModeV1 } from "./workbench_protocol";
+import { ContextOptionsV1, DevelopmentFailureCategoryV1, HostMessageV1, parseWebviewMessage, RuntimeTelemetryV1, WorkbenchActionV1, WorkbenchConnectionSnapshotV1, WorkbenchContextAttachmentV1, WorkbenchContextKindV1, WorkbenchDevelopmentFailureV1, WorkbenchModeV1 } from "./workbench_protocol";
 import { WorkbenchSessionV1 } from "./workbench_state";
 
 export interface WorkbenchDependenciesV1 {
@@ -117,7 +118,14 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
         if (response.state !== "OK" || !(response.answer ?? "").trim()) throw new Error(response.error?.message ?? "Project QA did not return a final answer.");
         if (!this.session.complete(turn.turnId, response)) throw new Error("Project QA completed after its Workbench turn was no longer pending.");
       }
-    } catch (error) { this.session.fail(turn.turnId, this.dependencies.errorMessage(error, turn.mode)); }
+    } catch (error) {
+      this.session.fail(
+        turn.turnId,
+        this.dependencies.errorMessage(error, turn.mode),
+        Date.now(),
+        turn.mode === "DEVELOPMENT" ? developmentFailureFor(error) : undefined,
+      );
+    }
     finally { clearInterval(telemetry); await this.postSession(); }
   }
 
@@ -134,6 +142,38 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
     this.contextPreviewPanel.webview.html = contextPreviewHtml(attachment);
     this.contextPreviewPanel.reveal(vscode.ViewColumn.Beside, true);
   }
+}
+
+function developmentFailureFor(error: unknown): WorkbenchDevelopmentFailureV1 | undefined {
+  const typed = error instanceof ControlPlaneRequestError || error instanceof ControlPlaneDependencyError ? error : undefined;
+  if (!typed) return undefined;
+  const diagnostics = typed.diagnostics;
+  const reasonCode = typed.reasonCode;
+  const failedStage = diagnostics?.failed_stage ?? (reasonCode === "INVALID_REQUEST" ? "TRANSPORT" : null);
+  return {
+    requestId: typed.requestId ?? diagnostics?.request_id ?? null,
+    reasonCode,
+    failedStage,
+    category: developmentFailureCategory(reasonCode, failedStage),
+    completedStages: diagnostics?.completed_stages ?? [],
+    lifecycle: diagnostics?.lifecycle ?? [],
+    requestedRole: diagnostics?.evidence?.requested_role ?? null,
+    effectiveModel: diagnostics?.evidence?.effective_model ?? null,
+    readiness: diagnostics?.readiness ?? null,
+    handoffStatus: diagnostics?.handoff_status ?? "NOT_REACHED",
+  };
+}
+
+function developmentFailureCategory(reasonCode: string, failedStage: string | null): DevelopmentFailureCategoryV1 {
+  if (reasonCode === "AI_PROVIDER_TIMEOUT") return "PROVIDER";
+  if (reasonCode === "AI_UNAVAILABLE" || reasonCode === "MODEL_ROLE_UNAVAILABLE") return "DEPENDENCY";
+  if (reasonCode === "INVALID_REQUEST" || failedStage === "TRANSPORT") return "TRANSPORT";
+  if (failedStage?.startsWith("GROUNDING")) return "GROUNDING";
+  if (failedStage?.startsWith("PROPOSAL")) return "PROPOSAL";
+  if (failedStage?.startsWith("REVIEW")) return "REVIEW";
+  if (reasonCode.includes("SCHEMA") || reasonCode.includes("VALIDATION")) return "VALIDATION";
+  if (reasonCode === "INTERNAL_ERROR") return "INTERNAL";
+  return "UNKNOWN";
 }
 
 function contextPreviewHtml(attachment: WorkbenchContextAttachmentV1): string {

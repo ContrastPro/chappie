@@ -10,7 +10,7 @@ import {
   ControlPlaneStatusV1,
   DevelopmentModelRoleV1,
 } from "./api/contracts";
-import { ChappieControlPlaneClient, ControlPlaneClientError, ControlPlaneDependencyError, ControlPlaneIncompatibleError, ControlPlaneTransportTimeoutError, developmentAnalysisFailureMessage } from "./api/client";
+import { ChappieControlPlaneClient, ControlPlaneClientError, ControlPlaneDependencyError, ControlPlaneIncompatibleError, ControlPlaneRequestError, ControlPlaneTransportTimeoutError, developmentAnalysisFailureMessage } from "./api/client";
 import { appendTurn, ChatTurnV1, renderTurns } from "./ui/chat";
 import { capabilitySummary, contextPreview, humanState, projectChatAvailability, projectQaFailureMessage, setupActionLabel } from "./ui/presentation";
 import { ChappieStatusSidebarV1, StatusRefreshGateV1 } from "./ui/status";
@@ -368,7 +368,13 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
       }
     },
     workspaceName: () => vscode.workspace.workspaceFolders?.find((folder) => folder.uri.fsPath === workspaceRoot())?.name,
-    errorMessage: chatError,
+    errorMessage: (error, domain) => {
+      if (domain === "DEVELOPMENT" && (error instanceof ControlPlaneRequestError || error instanceof ControlPlaneDependencyError)) {
+        const diagnostic = error.diagnostics;
+        output.appendLine(`Development failure request_id=${error.requestId ?? "unavailable"} reason_code=${error.reasonCode} failed_stage=${diagnostic?.failed_stage ?? "TRANSPORT"} lifecycle=${JSON.stringify(diagnostic?.lifecycle ?? [])}`);
+      }
+      return chatError(error, domain);
+    },
   });
   context.subscriptions.push(workbench);
 
@@ -570,6 +576,9 @@ function chatError(error: unknown, domain: "CHAT" | "DEVELOPMENT" = "CHAT"): str
     return domain === "DEVELOPMENT"
       ? developmentAnalysisFailureMessage(error.reasonCode)
       : projectQaFailureMessage(error.reasonCode);
+  }
+  if (error instanceof ControlPlaneRequestError) {
+    return domain === "DEVELOPMENT" ? developmentAnalysisFailureMessage(error.reasonCode) : error.message;
   }
   if (error instanceof ControlPlaneIncompatibleError) { return "Chappie Control Plane version is incompatible."; }
   if (error instanceof ControlPlaneClientError) {

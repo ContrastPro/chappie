@@ -7,6 +7,19 @@ export const LOOPBACK_HOST = "127.0.0.1";
 export type ConnectionState = "DISCONNECTED" | "CONNECTING" | "CONNECTED" | "INCOMPATIBLE" | "ERROR";
 
 export interface TransportErrorV1 { code: string; message: string; }
+export interface DevelopmentFailureDiagnosticsV1 {
+  operation: "DEVELOPMENT_ANALYSIS";
+  request_id: string | null;
+  analysis_request_id: string | null;
+  status: "FAILED";
+  reason_code: string | null;
+  failed_stage: string | null;
+  completed_stages: readonly string[];
+  lifecycle: readonly { stage: string; status: string; elapsed_ms: number; reason_code: string | null; }[];
+  evidence: { source_commit?: string; knowledge_identity?: string; knowledge_manifest_digest?: string; knowledge_context_digest?: string; evidence_digest?: string; requested_role?: string; effective_model?: string; record_ids?: readonly string[]; } | null;
+  readiness: string | null;
+  handoff_status: "NOT_REACHED";
+}
 export interface TransportEnvelopeV1<T> {
   transport_contract: string;
   transport_contract_digest: string;
@@ -16,6 +29,7 @@ export interface TransportEnvelopeV1<T> {
   status: "OK" | "ERROR";
   data: T | null;
   error: TransportErrorV1 | null;
+  diagnostics?: DevelopmentFailureDiagnosticsV1 | null;
 }
 
 export interface HealthV1 { status: "OK"; }

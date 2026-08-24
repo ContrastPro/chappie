@@ -65,13 +65,52 @@ test("Development Analysis has a finite deadline for all three bounded CODE stag
   assert.equal(developmentAnalysisFailureMessage("FORBIDDEN_AUTHORITY_TEXT"), "Chappie Development Analysis claimed authority outside its read-only advisory boundary.");
   assert.equal(developmentAnalysisFailureMessage("MODEL_ROLE_UNAVAILABLE"), "The selected Chappie development model role is unavailable; no fallback was used.");
   assert.equal(developmentAnalysisFailureMessage("KNOWLEDGE_STALE"), "Chappie Knowledge is not ready for Development Analysis.");
-  assert.equal(developmentAnalysisFailureMessage("AI_UNAVAILABLE"), "Chappie Development Analysis is temporarily unavailable.");
+  assert.equal(developmentAnalysisFailureMessage("AI_UNAVAILABLE"), "Chappie AI model is currently unavailable for Development Analysis.");
   assert.equal(developmentAnalysisFailureMessage(undefined), "Chappie Development Analysis is temporarily unavailable.");
   const host = readFileSync("src/extension.ts", "utf8");
   assert.match(host, /domain === "DEVELOPMENT"\s*\? developmentAnalysisFailureMessage\(error\.reasonCode\)/);
   assert.match(host, /domain === "DEVELOPMENT"\s*\? developmentAnalysisFailureMessage\(undefined\)/);
   const workbench = readFileSync("src/ui/workbench.ts", "utf8");
   assert.match(workbench, /this\.dependencies\.errorMessage\(error, turn\.mode\)/);
+});
+
+test("Development typed failures retain only bounded per-request diagnostics", async () => {
+  const cases = [
+    ["INVALID_REQUEST", "TRANSPORT"], ["DEVELOPMENT_SCHEMA_INVALID", "STRUCTURAL_VALIDATION"],
+    ["GROUNDING_SCHEMA_INVALID", "GROUNDING_PARSE"], ["PROPOSAL_SCHEMA_INVALID", "PROPOSAL_PARSE"],
+    ["REVIEW_SCHEMA_INVALID", "REVIEW_PARSE"], ["UNSUPPORTED_KNOWLEDGE_CITATION", "GROUNDING_PARSE"],
+    ["AI_UNAVAILABLE", "ROLE_RESOLUTION"], ["AI_PROVIDER_TIMEOUT", "GROUNDING_SYNTHESIS"], ["INTERNAL_ERROR", "TRANSPORT"],
+  ] as const;
+  for (const [reasonCode, failedStage] of cases) {
+    const response = new Response(JSON.stringify({
+      transport_contract: TRANSPORT_IDENTITY, transport_contract_digest: TRANSPORT_DIGEST,
+      control_plane_contract: CONTROL_PLANE_IDENTITY, control_plane_contract_digest: CONTROL_PLANE_DIGEST,
+      request_id: "a".repeat(32), status: "ERROR", data: null,
+      error: { code: reasonCode, message: "safe failure" },
+      diagnostics: {
+        operation: "DEVELOPMENT_ANALYSIS", request_id: "a".repeat(32), analysis_request_id: "b".repeat(32), status: "FAILED", reason_code: reasonCode, failed_stage: failedStage,
+        completed_stages: ["REQUEST_ACCEPTED"], lifecycle: [{ stage: failedStage, status: "FAILED", elapsed_ms: 1, reason_code: reasonCode }],
+        evidence: { requested_role: "CODE", effective_model: "qwen3-coder:30b", source_commit: "c".repeat(40), raw_knowledge: "must not survive" }, readiness: null, handoff_status: "NOT_REACHED",
+        prompt: "must not survive", answer: "must not survive", provider_payload: "must not survive",
+      },
+    }), { status: reasonCode === "INTERNAL_ERROR" ? 500 : reasonCode === "AI_UNAVAILABLE" || reasonCode === "AI_PROVIDER_TIMEOUT" ? 503 : 400, headers: { "content-type": "application/json" } });
+    await assert.rejects(
+      () => new ChappieControlPlaneClient(8765, async () => response).analyzeDevelopment({ request: "Sensitive request", requested_role: "CODE", workspace_context: null }),
+      (error: unknown) => {
+        const typed = error instanceof ControlPlaneRequestError || error instanceof ControlPlaneDependencyError ? error : undefined;
+        assert.ok(typed);
+        assert.equal(typed.reasonCode, reasonCode);
+        assert.equal(typed.requestId, "a".repeat(32));
+        assert.equal(typed.diagnostics?.failed_stage, failedStage);
+        assert.doesNotMatch(JSON.stringify(typed.diagnostics), /must not survive|Sensitive request/);
+        return true;
+      },
+    );
+  }
+  assert.match(developmentAnalysisFailureMessage("INVALID_REQUEST"), /request is invalid/);
+  assert.match(developmentAnalysisFailureMessage("PROPOSAL_SCHEMA_INVALID"), /valid bounded result/);
+  assert.match(developmentAnalysisFailureMessage("AI_UNAVAILABLE"), /model is currently unavailable/);
+  assert.equal(developmentAnalysisFailureMessage("INTERNAL_ERROR"), "Chappie Development Analysis is temporarily unavailable.");
 });
 
 test("Project QA propagates a selected stable role without changing durable model policy", async () => {

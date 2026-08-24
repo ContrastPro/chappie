@@ -129,6 +129,29 @@ test("Workbench terminal snapshots make completed and failed turns internally co
   assert.match(failed?.error ?? "", /Knowledge is stale/);
 });
 
+test("Development failure diagnostics remain attached to their own Workbench turns", () => {
+  const session = new WorkbenchSessionV1();
+  const first = session.begin("turn_a", "request_a", "Sensitive request A", noContext, 100, [], "DEVELOPMENT");
+  assert.ok(first);
+  const failureA = { requestId: "a".repeat(32), reasonCode: "PROPOSAL_SCHEMA_INVALID", failedStage: "PROPOSAL_PARSE", category: "PROPOSAL" as const, completedStages: ["REQUEST_ACCEPTED", "GROUNDING_PARSE"], lifecycle: [{ stage: "PROPOSAL_PARSE", status: "FAILED", elapsed_ms: 3, reason_code: "PROPOSAL_SCHEMA_INVALID" }], requestedRole: "CODE", effectiveModel: "qwen3-coder:30b", readiness: null, handoffStatus: "NOT_REACHED" as const };
+  session.fail(first.turnId, "Development proposal could not be validated.", 110, failureA);
+  const second = session.begin("turn_b", "request_b", "Sensitive request B", noContext, 120, [], "DEVELOPMENT");
+  assert.ok(second);
+  const failureB = { ...failureA, requestId: "b".repeat(32), reasonCode: "AI_UNAVAILABLE", failedStage: "ROLE_RESOLUTION", category: "DEPENDENCY" as const, lifecycle: [{ stage: "ROLE_RESOLUTION", status: "FAILED", elapsed_ms: 1, reason_code: "AI_UNAVAILABLE" }] };
+  session.fail(second.turnId, "Chappie AI model is currently unavailable for Development Analysis.", 130, failureB);
+
+  const retainedA = session.find(first.turnId)?.developmentFailure;
+  const retainedB = session.find(second.turnId)?.developmentFailure;
+  assert.equal(retainedA?.requestId, "a".repeat(32));
+  assert.equal(retainedA?.reasonCode, "PROPOSAL_SCHEMA_INVALID");
+  assert.equal(retainedA?.failedStage, "PROPOSAL_PARSE");
+  assert.equal(retainedB?.requestId, "b".repeat(32));
+  assert.equal(retainedB?.reasonCode, "AI_UNAVAILABLE");
+  assert.equal(retainedB?.failedStage, "ROLE_RESOLUTION");
+  const diagnostics = JSON.stringify([retainedA, retainedB]);
+  assert.doesNotMatch(diagnostics, /Sensitive request [AB]|prompt|provider payload|raw knowledge/i);
+});
+
 test("Workbench rejects a completed lifecycle snapshot without a final answer", () => {
   const session = new WorkbenchSessionV1();
   const pending = session.begin("turn_1", "request_1", "Question", noContext, 100);
@@ -345,6 +368,7 @@ test("Inspector is closed initially and its header toggle opens it without affec
 
 test("Workbench exposes real retry feedback and bounded Inspector metadata", () => {
   const script = workbenchRendererScript();
+  const host = readFileSync("src/extension.ts", "utf8");
   assert.match(script, /type:'retry'/);
   assert.match(script, /type:'feedback'/);
   assert.match(script, /turn\.response\?\.authority/);
@@ -352,6 +376,15 @@ test("Workbench exposes real retry feedback and bounded Inspector metadata", () 
   assert.match(script, /const renderInspectorFailureAware=/);
   assert.match(script, /FAILED/);
   assert.match(script, /renderInspectorFailureAware\(\)/);
+  assert.match(script, /const developmentFailureLines=/);
+  assert.match(script, /Status: FAILED/);
+  assert.match(script, /Request ID: /);
+  assert.match(script, /Failed stage: /);
+  assert.match(script, /Completed stages: /);
+  assert.match(script, /Handoff: /);
+  assert.match(host, /Development failure request_id=\$\{error\.requestId/);
+  assert.match(host, /reason_code=\$\{error\.reasonCode\}/);
+  assert.match(host, /failed_stage=\$\{diagnostic\?\.failed_stage/);
   assert.match(script, /No supported Chappie–Codex runtime integration is configured/);
   assert.doesNotMatch(script, /chain.of.thought|fake agent|fake market/i);
 });

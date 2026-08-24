@@ -26,6 +26,7 @@ from app.control_plane.transport import (
     PROJECT_QA_MAX_REQUEST_BODY_BYTES,
     ChappieControlPlaneServerV1,
     ControlPlaneTransportErrorV1,
+    _development_diagnostics,
     _log_development_lifecycle,
 )
 from app.development_analysis.models import DevelopmentAnalysisStateV1, DevelopmentAnalysisV1
@@ -290,16 +291,46 @@ def test_development_analysis_transport_round_trip_is_read_only(server) -> None:
     assert status == 200
     assert body["data"]["state"] == "OK"
     assert body["data"]["inferences"] == ["bounded inference"]
+    diagnostic = server.get_development_diagnostic(body["request_id"])
+    assert diagnostic is not None
+    assert diagnostic["status"] == "COMPLETED"
+    assert diagnostic["reason_code"] is None
+    assert diagnostic["failed_stage"] is None
+
+
+def test_invalid_development_request_is_retained_as_a_typed_transport_failure(server) -> None:
+    status, _headers, body = _request(server, "POST", "/v1/development/analyze", "{")
+
+    assert status == 400
+    assert body["error"]["code"] == "INVALID_REQUEST"
+    assert body["diagnostics"] == {
+        "operation": "DEVELOPMENT_ANALYSIS",
+        "request_id": body["request_id"],
+        "analysis_request_id": None,
+        "status": "FAILED",
+        "reason_code": "INVALID_REQUEST",
+        "failed_stage": "TRANSPORT",
+        "completed_stages": [],
+        "lifecycle": [],
+        "evidence": None,
+        "readiness": None,
+        "handoff_status": "NOT_REACHED",
+    }
+    assert server.get_development_diagnostic(body["request_id"]) == body["diagnostics"]
 
 
 @pytest.mark.parametrize(
-    ("state", "reason"),
+    ("state", "reason", "expected_status"),
     (
-        (DevelopmentAnalysisStateV1.TIMEOUT, "AI_PROVIDER_TIMEOUT"),
-        (DevelopmentAnalysisStateV1.ANALYSIS_INVALID, "DEVELOPMENT_SCHEMA_INVALID"),
+        (DevelopmentAnalysisStateV1.TIMEOUT, "AI_PROVIDER_TIMEOUT", 503),
+        (DevelopmentAnalysisStateV1.ANALYSIS_INVALID, "DEVELOPMENT_SCHEMA_INVALID", 503),
+        (DevelopmentAnalysisStateV1.MODEL_UNAVAILABLE, "AI_UNAVAILABLE", 503),
+        (DevelopmentAnalysisStateV1.VALIDATION_ERROR, "INVALID_REQUEST", 400),
     ),
 )
-def test_development_analysis_typed_failure_is_not_an_opaque_500(server, state, reason) -> None:
+def test_development_analysis_typed_failure_is_not_an_opaque_500(
+    server, state, reason, expected_status
+) -> None:
     class TypedFailurePlane(_FakeControlPlane):
         def analyze_development(
             self, request: str, *, requested_role: str, workspace_context: object | None = None
@@ -315,8 +346,11 @@ def test_development_analysis_typed_failure_is_not_an_opaque_500(server, state, 
         json.dumps({"request": "Analyze architecture", "requested_role": "CODE"}),
     )
 
-    assert status == 503
+    assert status == expected_status
     assert body["error"] == {"code": reason, "message": "Development analysis is unavailable"}
+    assert body["diagnostics"]["request_id"] == body["request_id"]
+    assert body["diagnostics"]["reason_code"] == reason
+    assert server.get_development_diagnostic(body["request_id"]) == body["diagnostics"]
 
 
 def test_unexpected_development_exception_remains_fail_closed_500(server, caplog) -> None:
@@ -345,6 +379,8 @@ def test_unexpected_development_exception_remains_fail_closed_500(server, caplog
     assert '"reason_code": "INTERNAL_ERROR"' in caplog.text
     assert "Analyze architecture" not in caplog.text
     assert "secret internal detail" not in caplog.text
+    assert body["diagnostics"] == server.get_development_diagnostic(body["request_id"])
+    assert body["diagnostics"]["failed_stage"] == "TRANSPORT"
 
 
 def test_development_failure_telemetry_survives_completion_without_sensitive_content(
@@ -390,6 +426,127 @@ def test_development_failure_telemetry_survives_completion_without_sensitive_con
     assert "knowledge.record.statement" in caplog.text
     assert "sensitive prompt" not in caplog.text
     assert "sensitive model answer" not in caplog.text
+
+
+_STAGED_FAILURES = (
+    ("ROLE_RESOLUTION", "MODEL_ROLE_UNAVAILABLE"),
+    ("GROUNDING_SYNTHESIS", "AI_PROVIDER_TIMEOUT"),
+    ("GROUNDING_PARSE", "GROUNDING_SCHEMA_INVALID"),
+    ("PROPOSAL_SYNTHESIS", "AI_PROVIDER_TIMEOUT"),
+    ("PROPOSAL_PARSE", "PROPOSAL_SCHEMA_INVALID"),
+    ("REVIEW_SYNTHESIS", "AI_PROVIDER_TIMEOUT"),
+    ("REVIEW_PARSE", "REVIEW_SCHEMA_INVALID"),
+    ("STRUCTURAL_VALIDATION", "DEVELOPMENT_ANALYSIS_INVALID"),
+    ("READINESS_EVALUATION", "SOURCE_ANALYSIS_NOT_READY"),
+)
+_LIFECYCLE_STAGES = (
+    "REQUEST_ACCEPTED",
+    "ROLE_RESOLUTION",
+    "EVIDENCE_BUILD",
+    "GROUNDING_SYNTHESIS",
+    "GROUNDING_PARSE",
+    "PROPOSAL_SYNTHESIS",
+    "PROPOSAL_PARSE",
+    "REVIEW_SYNTHESIS",
+    "REVIEW_PARSE",
+    "STRUCTURAL_VALIDATION",
+    "READINESS_EVALUATION",
+)
+
+
+def _staged_failure_payload(failing_stage: str, reason_code: str) -> dict[str, object]:
+    index = _LIFECYCLE_STAGES.index(failing_stage)
+    events = [
+        {"stage": stage, "status": "COMPLETED", "elapsed_ms": 1, "reason_code": None}
+        for stage in _LIFECYCLE_STAGES[:index]
+    ]
+    events.extend(
+        [
+            {"stage": failing_stage, "status": "STARTED", "elapsed_ms": 0, "reason_code": None},
+            {
+                "stage": failing_stage,
+                "status": "FAILED",
+                "elapsed_ms": 1,
+                "reason_code": reason_code,
+            },
+        ]
+    )
+    return {
+        "state": "ANALYSIS_INVALID",
+        "reason_code": reason_code,
+        "request": "sensitive prompt",
+        "lifecycle": {"request_id": "b" * 32, "events": events},
+        "evidence": {
+            "source_commit": "c" * 40,
+            "knowledge_identity": "chappie_knowledge/1.0.0",
+            "knowledge_manifest_digest": "d" * 64,
+            "knowledge_context_digest": "e" * 64,
+            "evidence_digest": "f" * 64,
+            "requested_role": "CODE",
+            "effective_model": "qwen3-coder:30b",
+            "record_ids": ["record.one"],
+            "raw_knowledge": "must not leak",
+        },
+        "answer": "must not leak",
+        "provider_payload": "must not leak",
+    }
+
+
+@pytest.mark.parametrize(("failing_stage", "reason_code"), _STAGED_FAILURES)
+def test_recent_development_projection_preserves_first_failed_stage_and_prior_stages(
+    failing_stage: str, reason_code: str
+) -> None:
+    diagnostic = _development_diagnostics(
+        _staged_failure_payload(failing_stage, reason_code), request_id="a" * 32
+    )
+
+    assert diagnostic["request_id"] == "a" * 32
+    assert diagnostic["analysis_request_id"] == "b" * 32
+    assert diagnostic["status"] == "FAILED"
+    assert diagnostic["reason_code"] == reason_code
+    assert diagnostic["failed_stage"] == failing_stage
+    assert (
+        diagnostic["completed_stages"]
+        == _LIFECYCLE_STAGES[: _LIFECYCLE_STAGES.index(failing_stage)]
+    )
+    assert diagnostic["lifecycle"][-1] == {
+        "stage": failing_stage,
+        "status": "FAILED",
+        "elapsed_ms": 1,
+        "reason_code": reason_code,
+    }
+    assert diagnostic["handoff_status"] == "NOT_REACHED"
+    rendered = json.dumps(diagnostic, sort_keys=True)
+    assert "sensitive prompt" not in rendered
+    assert "must not leak" not in rendered
+    assert "provider_payload" not in rendered
+
+
+def test_recent_development_projection_retention_lookup_and_deterministic_eviction() -> None:
+    value = ChappieControlPlaneServerV1(
+        _FakeControlPlane(), port=0, development_diagnostics_capacity=2
+    )
+    request_ids = ("a" * 32, "b" * 32, "c" * 32)
+    for request_id in request_ids:
+        value._record_development_diagnostic(
+            request_id,
+            _development_diagnostics(
+                _staged_failure_payload("ROLE_RESOLUTION", "MODEL_ROLE_UNAVAILABLE"),
+                request_id=request_id,
+            ),
+        )
+
+    assert value.get_development_diagnostic(request_ids[0]) is None
+    assert [item["request_id"] for item in value.recent_development_diagnostics()] == list(
+        request_ids[1:]
+    )
+    retained = value.get_development_diagnostic(request_ids[1])
+    assert retained is not None
+    retained["reason_code"] = "MUTATED_BY_CALLER"
+    assert (
+        value.get_development_diagnostic(request_ids[1])["reason_code"] == "MODEL_ROLE_UNAVAILABLE"
+    )
+    assert value.get_development_diagnostic("invalid") is None
 
 
 def test_project_qa_transport_accepts_the_canonical_deep_question_boundary(server) -> None:

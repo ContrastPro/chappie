@@ -10,6 +10,7 @@ import {
   CodexTaskV1,
   DevelopmentAnalysisRequestV1,
   DevelopmentAnalysisV1,
+  DevelopmentFailureDiagnosticsV1,
   HealthV1,
   LOOPBACK_HOST,
   TRANSPORT_DIGEST,
@@ -22,10 +23,10 @@ import { WorkspaceContextV1 } from "../workspace/context";
 export class ControlPlaneClientError extends Error {}
 export class ControlPlaneIncompatibleError extends ControlPlaneClientError {}
 export class ControlPlaneDependencyError extends ControlPlaneClientError {
-  public constructor(public readonly reasonCode: string) { super(reasonCode); }
+  public constructor(public readonly reasonCode: string, public readonly requestId?: string, public readonly diagnostics?: DevelopmentFailureDiagnosticsV1) { super(reasonCode); }
 }
 export class ControlPlaneRequestError extends ControlPlaneClientError {
-  public constructor(public readonly reasonCode: string, message: string) { super(message); }
+  public constructor(public readonly reasonCode: string, message: string, public readonly requestId?: string, public readonly diagnostics?: DevelopmentFailureDiagnosticsV1) { super(message); }
 }
 export class ControlPlaneTransportTimeoutError extends ControlPlaneClientError {
   public constructor(public readonly reasonCode = "CLIENT_TRANSPORT_TIMEOUT") { super("Control Plane request timed out"); }
@@ -113,11 +114,17 @@ export class ChappieControlPlaneClient {
       const value: unknown = await response.json();
       if (!response.ok) {
         const error = isEnvelope(value) ? value.error : null;
+        const envelope = isRecord(value) ? value : {};
+        const requestId = typeof envelope.request_id === "string" ? envelope.request_id : undefined;
+        const diagnostics = parseDevelopmentDiagnostics(envelope.diagnostics);
         if (response.status === 503 && isRecord(error) && typeof error.code === "string") {
-          throw new ControlPlaneDependencyError(error.code);
+          throw new ControlPlaneDependencyError(error.code, requestId, diagnostics);
         }
         if (response.status === 400 && isRecord(error) && typeof error.code === "string" && typeof error.message === "string") {
-          throw new ControlPlaneRequestError(error.code, projectQaRequestFailureMessage(error.code, error.message));
+          throw new ControlPlaneRequestError(error.code, projectQaRequestFailureMessage(error.code, error.message), requestId, diagnostics);
+        }
+        if (response.status === 500 && diagnostics && isRecord(error) && typeof error.code === "string") {
+          throw new ControlPlaneRequestError(error.code, "Development Analysis request failed", requestId, diagnostics);
         }
         throw new ControlPlaneClientError(`Control Plane returned HTTP ${response.status}`);
       }
@@ -144,12 +151,38 @@ function projectQaRequestFailureMessage(code: string, fallback: string): string 
 
 export function developmentAnalysisFailureMessage(code: string | undefined): string {
   if (code === "AI_PROVIDER_TIMEOUT") return "Chappie Development Analysis timed out during local model inference.";
+  if (code === "INVALID_REQUEST") return "Chappie Development Analysis request is invalid. Review the request and try again.";
   if (code === "ANALYSIS_INVALID" || code === "DEVELOPMENT_ANALYSIS_INVALID" || code === "DEVELOPMENT_SCHEMA_INVALID") return "Chappie Development Analysis returned an invalid bounded result.";
+  if (code === "GROUNDING_SCHEMA_INVALID" || code === "PROPOSAL_SCHEMA_INVALID" || code === "REVIEW_SCHEMA_INVALID") return "Chappie Development Analysis could not produce a valid bounded result.";
   if (code === "UNSUPPORTED_KNOWLEDGE_CITATION") return "Chappie Development Analysis cited material outside the supplied canonical Knowledge evidence.";
   if (code === "FORBIDDEN_AUTHORITY_TEXT") return "Chappie Development Analysis claimed authority outside its read-only advisory boundary.";
   if (code === "MODEL_ROLE_UNAVAILABLE") return "The selected Chappie development model role is unavailable; no fallback was used.";
   if (code === "KNOWLEDGE_STALE" || code === "KNOWLEDGE_UNAVAILABLE" || code === "NO_RELEVANT_KNOWLEDGE") return "Chappie Knowledge is not ready for Development Analysis.";
+  if (code === "AI_UNAVAILABLE") return "Chappie AI model is currently unavailable for Development Analysis.";
+  if (code === "INTERNAL_ERROR") return "Chappie Development Analysis is temporarily unavailable.";
+  if (code) return `Chappie Development Analysis was rejected: ${code}.`;
   return "Chappie Development Analysis is temporarily unavailable.";
+}
+
+function parseDevelopmentDiagnostics(value: unknown): DevelopmentFailureDiagnosticsV1 | undefined {
+  if (!isRecord(value) || value.operation !== "DEVELOPMENT_ANALYSIS" || value.status !== "FAILED" || !Array.isArray(value.lifecycle)) return undefined;
+  const lifecycle = value.lifecycle.flatMap((item) => isRecord(item) && typeof item.stage === "string" && typeof item.status === "string" && typeof item.elapsed_ms === "number" && (item.reason_code === null || typeof item.reason_code === "string") ? [{ stage: item.stage, status: item.status, elapsed_ms: item.elapsed_ms, reason_code: item.reason_code }] : []);
+  if (lifecycle.length !== value.lifecycle.length) return undefined;
+  const evidenceValue = isRecord(value.evidence) ? value.evidence : undefined;
+  const evidence = evidenceValue ? Object.fromEntries(["source_commit", "knowledge_identity", "knowledge_manifest_digest", "knowledge_context_digest", "evidence_digest", "requested_role", "effective_model"].flatMap((key) => typeof evidenceValue[key] === "string" ? [[key, evidenceValue[key]]] : [])) : null;
+  return {
+    operation: "DEVELOPMENT_ANALYSIS",
+    request_id: typeof value.request_id === "string" ? value.request_id : null,
+    analysis_request_id: typeof value.analysis_request_id === "string" ? value.analysis_request_id : null,
+    status: "FAILED",
+    reason_code: typeof value.reason_code === "string" ? value.reason_code : null,
+    failed_stage: typeof value.failed_stage === "string" ? value.failed_stage : null,
+    completed_stages: Array.isArray(value.completed_stages) && value.completed_stages.every((item) => typeof item === "string") ? [...value.completed_stages] : [],
+    lifecycle,
+    evidence,
+    readiness: typeof value.readiness === "string" ? value.readiness : null,
+    handoff_status: "NOT_REACHED",
+  };
 }
 
 function parseProjectQA(value: unknown): ProjectQAResponseV1 {

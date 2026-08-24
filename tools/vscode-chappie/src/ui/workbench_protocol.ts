@@ -1,4 +1,4 @@
-import { CodexTaskV1, ControlPlaneModelV1, DevelopmentAnalysisV1, DevelopmentModelRoleV1, ProjectQAResponseV1 } from "../api/contracts";
+import { CodexTaskV1, ControlPlaneModelV1, DevelopmentAnalysisV1, DevelopmentFailureDiagnosticsV1, DevelopmentModelRoleV1, ProjectQAResponseV1 } from "../api/contracts";
 
 export const WORKBENCH_PROTOCOL_VERSION = "chappie_workbench/1.4.0";
 /** Local editing capacity, intentionally independent of the request capacity. */
@@ -35,11 +35,24 @@ export type WorkbenchActionV1 = "setup" | "repair" | "reconnect" | "diagnostics"
 export type WorkbenchModeV1 = "CHAT" | "DEVELOPMENT";
 export type WorkbenchTurnStatusV1 = "pending" | "complete" | "failed";
 export type WorkbenchFeedbackV1 = "good" | "bad" | null;
+export type DevelopmentFailureCategoryV1 = "VALIDATION" | "GROUNDING" | "PROPOSAL" | "REVIEW" | "PROVIDER" | "DEPENDENCY" | "INTERNAL" | "TRANSPORT" | "UNKNOWN";
+export interface WorkbenchDevelopmentFailureV1 {
+  requestId: string | null;
+  reasonCode: string | null;
+  failedStage: string | null;
+  category: DevelopmentFailureCategoryV1;
+  completedStages: readonly string[];
+  lifecycle: DevelopmentFailureDiagnosticsV1["lifecycle"];
+  requestedRole: string | null;
+  effectiveModel: string | null;
+  readiness: string | null;
+  handoffStatus: "NOT_REACHED";
+}
 export interface WorkbenchTurnV1 {
   turnId: string; requestId: string; question: string; context: ContextOptionsV1;
   attachments: readonly WorkbenchContextAttachmentV1[];
   status: WorkbenchTurnStatusV1; response?: ProjectQAResponseV1; error?: string;
-  mode: WorkbenchModeV1; development?: DevelopmentAnalysisV1; codexTask?: CodexTaskV1;
+  mode: WorkbenchModeV1; development?: DevelopmentAnalysisV1; developmentFailure?: WorkbenchDevelopmentFailureV1; codexTask?: CodexTaskV1;
   startedAtMs: number; completedAtMs?: number; feedback?: WorkbenchFeedbackV1;
 }
 

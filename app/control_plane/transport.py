@@ -7,7 +7,9 @@ import json
 import logging
 import socket
 import uuid
+from collections import OrderedDict
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from threading import Lock
 from typing import Any
 
 from app.ai.schemas import canonical_json, digest
@@ -22,6 +24,7 @@ DEFAULT_CONTROL_PLANE_PORT = 8765
 # covers the 12k-character question and the independently bounded optional
 # workspace context without making either value silently shorter at transport.
 PROJECT_QA_MAX_REQUEST_BODY_BYTES = 128 * 1024
+MAX_RECENT_DEVELOPMENT_DIAGNOSTICS = 32
 CONTROL_PLANE_TRANSPORT_DIGEST = digest(
     {
         "identity": CONTROL_PLANE_TRANSPORT_IDENTITY,
@@ -50,6 +53,45 @@ class ControlPlaneTransportErrorV1(Exception):
         self.message = message
 
 
+class _RecentDevelopmentDiagnosticsV1:
+    """Bounded, in-memory operator projection for completed Development requests.
+
+    This deliberately retains structural lifecycle metadata only.  It is not an
+    evidence store and never retains a request, model output, source content, or
+    provider payload.
+    """
+
+    def __init__(self, capacity: int = MAX_RECENT_DEVELOPMENT_DIAGNOSTICS) -> None:
+        if isinstance(capacity, bool) or not isinstance(capacity, int) or capacity < 1:
+            raise ValueError("development diagnostics capacity must be positive")
+        self._capacity = capacity
+        self._items: OrderedDict[str, dict[str, object]] = OrderedDict()
+        self._lock = Lock()
+
+    def record(self, request_id: str, diagnostic: dict[str, object]) -> dict[str, object]:
+        if not _is_request_id(request_id):
+            raise ValueError("development diagnostic request id is invalid")
+        item = _copy_safe_diagnostic({**diagnostic, "request_id": request_id})
+        with self._lock:
+            self._items[request_id] = item
+            self._items.move_to_end(request_id)
+            while len(self._items) > self._capacity:
+                self._items.popitem(last=False)
+        return item
+
+    def get(self, request_id: str) -> dict[str, object] | None:
+        if not _is_request_id(request_id):
+            return None
+        with self._lock:
+            item = self._items.get(request_id)
+        return _copy_safe_diagnostic(item) if item is not None else None
+
+    def recent(self) -> tuple[dict[str, object], ...]:
+        with self._lock:
+            items = tuple(self._items.values())
+        return tuple(_copy_safe_diagnostic(item) for item in items)
+
+
 class _ExclusiveLoopbackHTTPServer(ThreadingHTTPServer):
     """Prevent a second listener from sharing a Control Plane address on Windows."""
 
@@ -66,6 +108,7 @@ def _envelope(
     request_id: str,
     data: object | None = None,
     error: ControlPlaneTransportErrorV1 | None = None,
+    diagnostics: object | None = None,
 ) -> dict[str, object]:
     return {
         "transport_contract": CONTROL_PLANE_TRANSPORT_IDENTITY,
@@ -76,6 +119,7 @@ def _envelope(
         "status": "ERROR" if error else "OK",
         "data": data if error is None else None,
         "error": {"code": error.code, "message": error.message} if error else None,
+        "diagnostics": diagnostics if error else None,
     }
 
 
@@ -88,6 +132,7 @@ class ChappieControlPlaneServerV1:
         *,
         host: str = LOOPBACK_HOST,
         port: int = DEFAULT_CONTROL_PLANE_PORT,
+        development_diagnostics_capacity: int = MAX_RECENT_DEVELOPMENT_DIAGNOSTICS,
     ) -> None:
         if host != LOOPBACK_HOST:
             raise ValueError("Control Plane transport must bind only to 127.0.0.1")
@@ -97,6 +142,9 @@ class ChappieControlPlaneServerV1:
         self.host = host
         self.port = port
         self._httpd: ThreadingHTTPServer | None = None
+        self._recent_development_diagnostics = _RecentDevelopmentDiagnosticsV1(
+            development_diagnostics_capacity
+        )
 
     @property
     def endpoint(self) -> str:
@@ -156,6 +204,21 @@ class ChappieControlPlaneServerV1:
             "control_plane_contract_digest": CONTROL_PLANE_CONTRACT_DIGEST,
             "endpoint": self.endpoint,
         }
+
+    def get_development_diagnostic(self, request_id: str) -> dict[str, object] | None:
+        """Return one bounded operator diagnostic without exposing request content."""
+        return self._recent_development_diagnostics.get(request_id)
+
+    def recent_development_diagnostics(self) -> tuple[dict[str, object], ...]:
+        """Return retained diagnostics in deterministic oldest-to-newest completion order."""
+        return self._recent_development_diagnostics.recent()
+
+    def _record_development_diagnostic(
+        self, request_id: str, diagnostic: dict[str, object]
+    ) -> dict[str, object]:
+        item = self._recent_development_diagnostics.record(request_id, diagnostic)
+        _log_development_diagnostic(item)
+        return item
 
     def _handle_get(self, handler: BaseHTTPRequestHandler) -> None:
         request_id = uuid.uuid4().hex
@@ -234,6 +297,8 @@ class ChappieControlPlaneServerV1:
 
     def _handle_post(self, handler: BaseHTTPRequestHandler) -> None:
         request_id = uuid.uuid4().hex
+        development = handler.path == "/v1/development/analyze"
+        task = handler.path == "/v1/development/task"
         if handler.path not in {
             "/v1/project/qa",
             "/v1/development/analyze",
@@ -244,6 +309,13 @@ class ChappieControlPlaneServerV1:
         try:
             content_length = int(handler.headers.get("Content-Length", ""))
         except ValueError:
+            diagnostics = (
+                self._record_development_diagnostic(
+                    request_id, _development_transport_diagnostics(request_id, "INVALID_REQUEST")
+                )
+                if development
+                else None
+            )
             self._write(
                 handler,
                 400,
@@ -252,6 +324,7 @@ class ChappieControlPlaneServerV1:
                     error=ControlPlaneTransportErrorV1(
                         "INVALID_REQUEST", "Project QA request must contain one bounded question"
                     ),
+                    diagnostics=diagnostics,
                 ),
             )
             return
@@ -261,6 +334,14 @@ class ChappieControlPlaneServerV1:
             # buffer an arbitrarily claimed body length.
             if content_length <= PROJECT_QA_MAX_REQUEST_BODY_BYTES * 2:
                 handler.rfile.read(content_length)
+            diagnostics = (
+                self._record_development_diagnostic(
+                    request_id,
+                    _development_transport_diagnostics(request_id, "REQUEST_BODY_TOO_LARGE"),
+                )
+                if development
+                else None
+            )
             self._write(
                 handler,
                 400,
@@ -270,13 +351,12 @@ class ChappieControlPlaneServerV1:
                         "REQUEST_BODY_TOO_LARGE",
                         "Project QA request exceeds the Control Plane transport budget",
                     ),
+                    diagnostics=diagnostics,
                 ),
             )
             return
         try:
             value = json.loads(handler.rfile.read(content_length))
-            development = handler.path == "/v1/development/analyze"
-            task = handler.path == "/v1/development/task"
             allowed = (
                 {"request", "requested_role", "workspace_context"}
                 if development
@@ -321,6 +401,13 @@ class ChappieControlPlaneServerV1:
                         raise TypeError
                     requested_model_role = DevelopmentModelRoleV1(requested_model_role).value
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            diagnostics = (
+                self._record_development_diagnostic(
+                    request_id, _development_transport_diagnostics(request_id, "INVALID_REQUEST")
+                )
+                if development
+                else None
+            )
             self._write(
                 handler,
                 400,
@@ -329,6 +416,7 @@ class ChappieControlPlaneServerV1:
                     error=ControlPlaneTransportErrorV1(
                         "INVALID_REQUEST", "Project QA request must contain one bounded question"
                     ),
+                    diagnostics=diagnostics,
                 ),
             )
             return
@@ -357,7 +445,9 @@ class ChappieControlPlaneServerV1:
                     workspace_context=value.get("workspace_context"),
                 )
                 payload = response.payload()
-                _log_development_lifecycle(payload.get("lifecycle"))
+                diagnostics = self._record_development_diagnostic(
+                    request_id, _development_diagnostics(payload, request_id=request_id)
+                )
                 if response.state.value != "OK":
                     self._write(
                         handler,
@@ -368,6 +458,7 @@ class ChappieControlPlaneServerV1:
                                 response.reason_code or "DEVELOPMENT_ANALYSIS_UNAVAILABLE",
                                 "Development analysis is unavailable",
                             ),
+                            diagnostics=diagnostics,
                         ),
                     )
                     return
@@ -402,7 +493,11 @@ class ChappieControlPlaneServerV1:
             self._write(handler, 200, _envelope(request_id=request_id, data=payload))
         except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
             if development:
-                _log_development_internal_failure(request_id)
+                diagnostics = self._record_development_diagnostic(
+                    request_id, _development_transport_diagnostics(request_id, "INTERNAL_ERROR")
+                )
+            else:
+                diagnostics = None
             self._write(
                 handler,
                 500,
@@ -416,6 +511,7 @@ class ChappieControlPlaneServerV1:
                             else "Project QA request could not be completed"
                         ),
                     ),
+                    diagnostics=diagnostics,
                 ),
             )
 
@@ -455,6 +551,88 @@ def _log_development_lifecycle(payload: object) -> None:
     # Warning is deliberately used: the standard local service configuration emits it to
     # the Chappie Output channel, unlike INFO, while the payload contains no request or model text.
     LOGGER.warning("Development Analysis lifecycle=%s", json.dumps(safe, sort_keys=True))
+
+
+def _development_transport_diagnostics(request_id: str, reason_code: str) -> dict[str, object]:
+    return {
+        "operation": "DEVELOPMENT_ANALYSIS",
+        "request_id": request_id,
+        "analysis_request_id": None,
+        "status": "FAILED",
+        "reason_code": reason_code,
+        "failed_stage": "TRANSPORT",
+        "completed_stages": (),
+        "lifecycle": (),
+        "evidence": None,
+        "readiness": None,
+        "handoff_status": "NOT_REACHED",
+    }
+
+
+def _development_diagnostics(payload: object, *, request_id: str) -> dict[str, object]:
+    if not isinstance(payload, dict):
+        return _development_transport_diagnostics(request_id, "DEVELOPMENT_ANALYSIS_UNAVAILABLE")
+    lifecycle = payload.get("lifecycle")
+    events = lifecycle.get("events") if isinstance(lifecycle, dict) else ()
+    safe_events = [
+        {key: item.get(key) for key in ("stage", "status", "elapsed_ms", "reason_code")}
+        for item in events
+        if isinstance(item, dict)
+    ]
+    failed = next(
+        (item.get("stage") for item in safe_events if item.get("status") == "FAILED"),
+        None,
+    )
+    completed_stages = tuple(
+        item["stage"] for item in safe_events if item.get("status") == "COMPLETED"
+    )
+    state = payload.get("state")
+    completed = state == "OK"
+    evidence = payload.get("evidence")
+    safe_evidence = (
+        {
+            key: evidence.get(key)
+            for key in (
+                "source_commit",
+                "knowledge_identity",
+                "knowledge_manifest_digest",
+                "knowledge_context_digest",
+                "evidence_digest",
+                "requested_role",
+                "effective_model",
+                "record_ids",
+            )
+        }
+        if isinstance(evidence, dict)
+        else None
+    )
+    return {
+        "operation": "DEVELOPMENT_ANALYSIS",
+        "request_id": request_id,
+        "analysis_request_id": lifecycle.get("request_id") if isinstance(lifecycle, dict) else None,
+        "status": "COMPLETED" if completed else "FAILED",
+        "reason_code": None if completed else payload.get("reason_code"),
+        "failed_stage": None if completed else failed,
+        "completed_stages": completed_stages,
+        "lifecycle": safe_events,
+        "evidence": safe_evidence,
+        "readiness": payload.get("readiness"),
+        "handoff_status": "NOT_REACHED",
+    }
+
+
+def _is_request_id(value: object) -> bool:
+    return isinstance(value, str) and len(value) == 32 and value.isascii() and value.isalnum()
+
+
+def _copy_safe_diagnostic(value: dict[str, object]) -> dict[str, object]:
+    """Make diagnostics immutable to callers through a deterministic JSON projection."""
+    return json.loads(canonical_json(value))
+
+
+def _log_development_diagnostic(diagnostic: dict[str, object]) -> None:
+    """Emit only the retained bounded operator projection."""
+    LOGGER.warning("Development Analysis diagnostic=%s", json.dumps(diagnostic, sort_keys=True))
 
 
 def _log_development_internal_failure(request_id: str) -> None:
