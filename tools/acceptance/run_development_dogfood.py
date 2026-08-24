@@ -30,6 +30,10 @@ from app.knowledge import KNOWLEDGE_IDENTITY, read_store
 from app.knowledge.store import committed_snapshot
 from app.platform.bootstrap import ChappiePaths, collect_status, load_local_config
 from app.platform.ollama.model_state import LocalOllamaModelStateAdapterV1
+from tools.acceptance.development_authorization_pair import (
+    AUTHORIZATION_PAIR_FILENAME,
+    persist_authorization_pair,
+)
 
 EVIDENCE_SCHEMA = "chappie_development_dogfood/1.2.0"
 OUTPUT_BASE_RELATIVE = Path("data/acceptance/development_dogfood")
@@ -351,6 +355,20 @@ def run_dogfood(
         result["stages"]["HANDOFF"] = _stage(
             "PASS" if handoff.validation_status == "VALID" else "FAIL", 0, handoff.reason_code
         )
+        if handoff.validation_status == "VALID":
+            try:
+                pair = persist_authorization_pair(
+                    destination / AUTHORIZATION_PAIR_FILENAME, analysis, handoff
+                )
+                result["authorization_pair"] = {
+                    "identity": "chappie_development_authorization_pair/1.0.0",
+                    "authorization_digest": pair.authorization_digest,
+                }
+            except (OSError, ValueError, FileExistsError):
+                result.update(status="FAILED", reason_code="AUTHORIZATION_PAIR_PERSIST_FAILED")
+                _checkpoint(result, destination)
+                _write_report(result, destination / "report.md")
+                return result
     else:
         result["stages"]["HANDOFF"] = _stage(
             "NOT_REACHED", 0, getattr(analysis, "reason_code", None)

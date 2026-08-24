@@ -152,10 +152,34 @@ reachable Ollama, the selected installed model, and durable default `qwen3:4b`.
 
 Ignored evidence is atomically checkpointed under
 `data/acceptance/development_dogfood/<model>/<run-id>/result.json`, plus a concise `report.md`.
-Schema `chappie_development_dogfood/1.1.0` records PASS/FAIL/NOT_REACHED timing and bounded reason
+Schema `chappie_development_dogfood/1.2.0` records PASS/FAIL/NOT_REACHED timing and bounded reason
 codes for PREFLIGHT, CONTEXT_MAP, EVIDENCE_HANDLES, the three GROUNDING/PROPOSAL/REVIEW synthesis
 and parse stages, STRUCTURAL_VALIDATION, READINESS, and HANDOFF. Historical 1.0.0 evidence is not
 rewritten. It captures
 only public synthesis DTO fields, safe provenance and handle metadata, and provider timing when
 available; prompts, hidden reasoning, raw Knowledge bodies, credentials, and provider payloads
 are not persisted. Existing evidence is never overwritten implicitly.
+
+### Authorization-pair replay evidence
+
+When a Development Analysis is `VALID` and `READY_FOR_TASK` and its
+`CodexHandoffV1` is valid, the dogfood harness additionally writes an immutable
+local `authorization_pair.json` beside its result artifact.  Its schema is
+`chappie_development_authorization_pair/1.0.0`.  It preserves the exact bounded
+public `DevelopmentAnalysisV1.payload()` and `CodexHandoffV1.payload()`, their
+source/Knowledge/evidence/context bindings, `HUMAN_APPROVAL_REQUIRED`, and a
+deterministic authorization-pair digest.
+
+This is the only supported source for later deterministic DiffReview replay:
+
+```text
+Development Analysis (VALID / READY_FOR_TASK)
+  -> CodexHandoffV1
+  -> AuthorizationPairV1
+  -> approved implementation evidence
+  -> DevelopmentDiffReviewV1 replay
+```
+
+The artifact is acceptance-only and does not persist provider prompts, hidden
+reasoning, raw provider payloads, raw Knowledge documents, source bodies, or
+secrets.  Failed or non-ready analyses never create an authorization pair.
