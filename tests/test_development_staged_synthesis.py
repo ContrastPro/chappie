@@ -15,6 +15,7 @@ from app.development_analysis.context import (
 from app.development_analysis.synthesis import (
     PROPOSAL_SCHEMA,
     PROPOSED_SCOPE_FIELDS,
+    REVIEW_VERIFICATION_ACTIONS,
     DevelopmentProposalV1,
     DevelopmentStageError,
     _grounding_instruction,
@@ -413,16 +414,36 @@ def test_implementation_review_accepts_exact_target_and_condition_without_reques
     assert result.confidence == 0.5
 
 
+@pytest.mark.parametrize("action", REVIEW_VERIFICATION_ACTIONS)
+def test_shared_review_actions_require_and_accept_target_and_condition(action) -> None:
+    result = parse_development_review(
+        _review_payload(
+            f"{action.title()} app/development_analysis/diff_review.py rejects invalid input.",
+            "app/development_analysis/diff_review.py remains advisory.",
+        ),
+        _review_proposal(),
+    )
+    assert result.required_tests[0].casefold().startswith(action)
+
+
 @pytest.mark.parametrize(
-    ("test", "category"),
+    ("test", "category", "recognized"),
     (
-        ("Verify app/unrelated.py rejects invalid input.", "MISSING_PROPOSAL_TARGET"),
-        ("Verify app/development_analysis/diff_review.py.", "MISSING_VERIFICATION_CONDITION"),
-        ("Review repository hygiene tests.", "GENERIC_VERIFICATION"),
+        (
+            "Verify app/unrelated.py rejects invalid input.",
+            "MISSING_PROPOSAL_TARGET",
+            (True, False, True),
+        ),
+        (
+            "Verify app/development_analysis/diff_review.py.",
+            "MISSING_VERIFICATION_CONDITION",
+            (True, True, False),
+        ),
+        ("Review repository hygiene tests.", "GENERIC_VERIFICATION", (False, False, False)),
     ),
 )
 def test_implementation_review_rejects_unrelated_missing_or_lexical_only_items(
-    test, category
+    test, category, recognized
 ) -> None:
     with pytest.raises(DevelopmentStageError) as error:
         parse_development_review(
@@ -433,6 +454,11 @@ def test_implementation_review_rejects_unrelated_missing_or_lexical_only_items(
     assert diagnostics is not None
     assert diagnostics.bounded_error_path == "$.required_tests[0]"
     assert diagnostics.bounded_error_category == category
+    assert (
+        diagnostics.action_recognized,
+        diagnostics.target_recognized,
+        diagnostics.condition_recognized,
+    ) == recognized
     assert test not in str(diagnostics.payload())
 
 
@@ -444,6 +470,22 @@ def test_implementation_review_rejects_unrelated_missing_or_lexical_only_items(
     ),
 )
 def test_analysis_only_review_accepts_candidate_specific_verification(test) -> None:
+    result = parse_development_review(
+        _review_payload(test, "Cleanup candidates remain evidence-bound before removal."),
+        _review_proposal(analysis_only=True),
+    )
+    assert result.required_tests == (test,)
+
+
+@pytest.mark.parametrize(
+    "test",
+    (
+        "Inspect direct consumers for each cleanup candidate and fail if consumers remain.",
+        "Compare manifest references for each cleanup candidate against the expected absence state.",
+        "Ensure cleanup candidate references are absent before removal.",
+    ),
+)
+def test_analysis_only_observable_action_vocabulary(test) -> None:
     result = parse_development_review(
         _review_payload(test, "Cleanup candidates remain evidence-bound before removal."),
         _review_proposal(analysis_only=True),
@@ -464,10 +506,42 @@ def test_analysis_only_review_rejects_generic_verification(test) -> None:
     }
 
 
+@pytest.mark.parametrize(
+    "test",
+    (
+        "Review repository.",
+        "Consider cleanup candidate consumers remain.",
+        "Look at cleanup candidate references remain.",
+        "Ensure quality.",
+        "Ensure correctness.",
+        "Run tests.",
+    ),
+)
+def test_vague_or_unsupported_actions_remain_rejected(test) -> None:
+    with pytest.raises(DevelopmentStageError):
+        parse_development_review(
+            _review_payload(test, "Cleanup candidates remain evidence-bound before removal."),
+            _review_proposal(analysis_only=True),
+        )
+
+
 def test_review_instruction_matches_proposal_aware_specificity_rules() -> None:
     concrete = _review_instruction(_review_proposal())
     assert "exact proposed file, contract, or component target" in concrete
-    assert "verification action" in concrete and "result or failure condition" in concrete
+    assert "exact action from" in concrete and "result or failure condition" in concrete
     analysis_only = _review_instruction(_review_proposal(analysis_only=True))
     assert "exact proposed behavior or evidence/candidate condition" in analysis_only
     assert "repeat" not in analysis_only.casefold()
+    vocabulary = ", ".join(REVIEW_VERIFICATION_ACTIONS)
+    assert vocabulary in concrete and vocabulary in analysis_only
+    assert set(REVIEW_VERIFICATION_ACTIONS) == {
+        "assert",
+        "check",
+        "compare",
+        "confirm",
+        "ensure",
+        "inspect",
+        "test",
+        "validate",
+        "verify",
+    }

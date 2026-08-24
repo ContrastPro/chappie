@@ -295,13 +295,19 @@ class ReviewParseDiagnosticsV1:
     reason_code: str
     bounded_error_path: str
     bounded_error_category: str
+    action_recognized: bool
+    target_recognized: bool
+    condition_recognized: bool
 
-    def payload(self) -> dict[str, str]:
+    def payload(self) -> dict[str, object]:
         return {
             "parser_stage": self.parser_stage,
             "reason_code": self.reason_code,
             "bounded_error_path": self.bounded_error_path,
             "bounded_error_category": self.bounded_error_category,
+            "action_recognized": self.action_recognized,
+            "target_recognized": self.target_recognized,
+            "condition_recognized": self.condition_recognized,
         }
 
 
@@ -654,7 +660,7 @@ def parse_development_review(value: object, proposal: DevelopmentProposalV1) -> 
     if failure := _review_specificity_failure(
         proposal, lists["required_tests"], require_action=True
     ):
-        index, category = failure
+        index, category, action, target, condition = failure
         raise DevelopmentStageError(
             "REVIEW",
             "REVIEW_TESTS_NOT_SPECIFIC",
@@ -663,12 +669,15 @@ def parse_development_review(value: object, proposal: DevelopmentProposalV1) -> 
                 "REVIEW_TESTS_NOT_SPECIFIC",
                 f"$.required_tests[{index}]",
                 category,
+                action,
+                target,
+                condition,
             ),
         )
     if failure := _review_specificity_failure(
         proposal, lists["acceptance_criteria"], require_action=False
     ):
-        index, category = failure
+        index, category, action, target, condition = failure
         raise DevelopmentStageError(
             "REVIEW",
             "REVIEW_CRITERIA_NOT_SPECIFIC",
@@ -677,20 +686,37 @@ def parse_development_review(value: object, proposal: DevelopmentProposalV1) -> 
                 "REVIEW_CRITERIA_NOT_SPECIFIC",
                 f"$.acceptance_criteria[{index}]",
                 category,
+                action,
+                target,
+                condition,
             ),
         )
     return DevelopmentReviewV1(**lists, confidence=float(confidence))
 
 
-_VERIFICATION_ACTIONS = frozenset({"assert", "check", "confirm", "test", "validate", "verify"})
+REVIEW_VERIFICATION_ACTIONS = (
+    "assert",
+    "check",
+    "compare",
+    "confirm",
+    "ensure",
+    "inspect",
+    "test",
+    "validate",
+    "verify",
+)
+_VERIFICATION_ACTIONS = frozenset(REVIEW_VERIFICATION_ACTIONS)
 _VERIFICATION_CONDITIONS = frozenset(
     {
         "absent",
+        "absence",
+        "accounted",
         "before",
         "consumer",
         "consumers",
         "direct",
         "exists",
+        "expected",
         "fail",
         "fails",
         "failure",
@@ -729,7 +755,7 @@ def _review_specificity_failure(
     values: tuple[str, ...],
     *,
     require_action: bool,
-) -> tuple[int, str] | None:
+) -> tuple[int, str, bool, bool, bool] | None:
     scope = proposal.proposed_scope
     concrete_targets = (
         *scope.proposed_modified_files,
@@ -741,12 +767,15 @@ def _review_specificity_failure(
     target_tokens = _target_tokens(concrete_targets or analysis_targets)
     for index, value in enumerate(values):
         tokens = _normalized_tokens(value)
-        if require_action and not tokens.intersection(_VERIFICATION_ACTIONS):
-            return index, "GENERIC_VERIFICATION"
-        if not target_tokens or not tokens.intersection(target_tokens):
-            return index, "MISSING_PROPOSAL_TARGET"
-        if not tokens.intersection(_VERIFICATION_CONDITIONS):
-            return index, "MISSING_VERIFICATION_CONDITION"
+        action = not require_action or bool(tokens.intersection(_VERIFICATION_ACTIONS))
+        target = bool(target_tokens and tokens.intersection(target_tokens))
+        condition = bool(tokens.intersection(_VERIFICATION_CONDITIONS))
+        if not action:
+            return index, "GENERIC_VERIFICATION", action, target, condition
+        if not target:
+            return index, "MISSING_PROPOSAL_TARGET", action, target, condition
+        if not condition:
+            return index, "MISSING_VERIFICATION_CONDITION", action, target, condition
     return None
 
 
@@ -1128,9 +1157,11 @@ def _review_instruction(proposal: DevelopmentProposalV1) -> str:
     return (
         "Return only JSON. Critique the supplied proposal with bounded proposal-specific risks, "
         "required tests or verification, non-goals, acceptance criteria, unresolved unknowns, and "
-        f"confidence. {mode}, state the verification action, and state the result or failure "
-        "condition. Generic testing or repository-wide verification is invalid. Do not redesign "
-        "or claim authority."
+        f"confidence. {mode}. Each item must use one exact action from: "
+        f"{', '.join(REVIEW_VERIFICATION_ACTIONS)}; `ensure` is valid only with both a concrete "
+        "target and observable result or failure condition. State the result or failure condition. "
+        "Generic testing or repository-wide verification is invalid. Do not redesign or claim "
+        "authority."
     )
 
 
