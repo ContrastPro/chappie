@@ -207,6 +207,8 @@ class DevelopmentAnalysisServiceV1:
         except DevelopmentStageError as error:
             if error.grounding_diagnostics is not None and self._diagnostics_sink is not None:
                 self._diagnostics_sink(error.grounding_diagnostics)
+            if error.review_diagnostics is not None and self._diagnostics_sink is not None:
+                self._diagnostics_sink(error.review_diagnostics)
             if error.proposal_diagnostics is not None and self._diagnostics_sink is not None:
                 self._diagnostics_sink(error.proposal_diagnostics)
             _record_completed_staged_lifecycle(lifecycle, error.stage_elapsed_ms, error.stage)

@@ -15,8 +15,10 @@ from app.development_analysis.context import (
 from app.development_analysis.synthesis import (
     PROPOSAL_SCHEMA,
     PROPOSED_SCOPE_FIELDS,
+    DevelopmentProposalV1,
     DevelopmentStageError,
     _grounding_instruction,
+    _review_instruction,
     parse_development_grounding,
     parse_development_proposal,
     parse_development_review,
@@ -344,18 +346,36 @@ def test_proposal_schema_failures_expose_only_bounded_structure(value, path, cat
     assert "statement" not in str(diagnostics.payload())
 
 
+def _review_proposal(*, analysis_only: bool = False) -> DevelopmentProposalV1:
+    scope = _scope()
+    if analysis_only:
+        scope.update(
+            {
+                "proposed_modified_files": [],
+                "proposed_new_files": [],
+                "proposed_contract_changes": [],
+                "proposed_components": [],
+                "proposed_behavior": ["Classify cleanup candidates from bounded evidence."],
+                "rationale": ["Candidate evidence must be verified before removal."],
+            }
+        )
+    return parse_development_proposal(
+        {"proposed_scope": scope, "proposal_unknowns": []}, _context_map()
+    )
+
+
 @pytest.mark.parametrize(
     ("tests", "criteria", "code"),
     (
-        (["Run focused tests."], ["Diff review works."], "REVIEW_TESTS_NOT_SPECIFIC"),
+        (["Run tests."], ["DevelopmentDiffReviewV1 remains valid."], "REVIEW_TESTS_NOT_SPECIFIC"),
         (
-            ["Review DevelopmentAnalysisV1 regression."],
-            ["The result is valid."],
+            ["Verify app/development_analysis/diff_review.py rejects invalid input."],
+            ["The result remains valid."],
             "REVIEW_CRITERIA_NOT_SPECIFIC",
         ),
     ),
 )
-def test_review_requires_task_specific_tests_and_criteria(tests, criteria, code) -> None:
+def test_review_requires_proposal_specific_tests_and_criteria(tests, criteria, code) -> None:
     with pytest.raises(DevelopmentStageError) as error:
         parse_development_review(
             {
@@ -366,6 +386,88 @@ def test_review_requires_task_specific_tests_and_criteria(tests, criteria, code)
                 "unresolved_unknowns": ["Unknown."],
                 "confidence": 0.5,
             },
-            "Review DevelopmentAnalysisV1 diff review.",
+            _review_proposal(),
         )
     assert error.value.code == code
+
+
+def _review_payload(test: str, criterion: str) -> dict[str, object]:
+    return {
+        "risks": ["Scope drift."],
+        "required_tests": [test],
+        "non_goals": ["No mutation."],
+        "acceptance_criteria": [criterion],
+        "unresolved_unknowns": [],
+        "confidence": 0.5,
+    }
+
+
+def test_implementation_review_accepts_exact_target_and_condition_without_request_tokens() -> None:
+    result = parse_development_review(
+        _review_payload(
+            "Verify app/development_analysis/diff_review.py rejects invalid input.",
+            "app/development_analysis/diff_review.py remains advisory.",
+        ),
+        _review_proposal(),
+    )
+    assert result.confidence == 0.5
+
+
+@pytest.mark.parametrize(
+    ("test", "category"),
+    (
+        ("Verify app/unrelated.py rejects invalid input.", "MISSING_PROPOSAL_TARGET"),
+        ("Verify app/development_analysis/diff_review.py.", "MISSING_VERIFICATION_CONDITION"),
+        ("Review repository hygiene tests.", "GENERIC_VERIFICATION"),
+    ),
+)
+def test_implementation_review_rejects_unrelated_missing_or_lexical_only_items(
+    test, category
+) -> None:
+    with pytest.raises(DevelopmentStageError) as error:
+        parse_development_review(
+            _review_payload(test, "DevelopmentDiffReviewV1 remains advisory."),
+            _review_proposal(),
+        )
+    diagnostics = error.value.review_diagnostics
+    assert diagnostics is not None
+    assert diagnostics.bounded_error_path == "$.required_tests[0]"
+    assert diagnostics.bounded_error_category == category
+    assert test not in str(diagnostics.payload())
+
+
+@pytest.mark.parametrize(
+    "test",
+    (
+        "Verify direct consumers for each cleanup candidate before removal.",
+        "Confirm manifest references for each cleanup candidate are present before removal.",
+    ),
+)
+def test_analysis_only_review_accepts_candidate_specific_verification(test) -> None:
+    result = parse_development_review(
+        _review_payload(test, "Cleanup candidates remain evidence-bound before removal."),
+        _review_proposal(analysis_only=True),
+    )
+    assert result.required_tests == (test,)
+
+
+@pytest.mark.parametrize("test", ("Validate repository.", "Check everything."))
+def test_analysis_only_review_rejects_generic_verification(test) -> None:
+    with pytest.raises(DevelopmentStageError) as error:
+        parse_development_review(
+            _review_payload(test, "Cleanup candidates remain evidence-bound before removal."),
+            _review_proposal(analysis_only=True),
+        )
+    assert error.value.review_diagnostics.bounded_error_category in {
+        "MISSING_PROPOSAL_TARGET",
+        "MISSING_VERIFICATION_CONDITION",
+    }
+
+
+def test_review_instruction_matches_proposal_aware_specificity_rules() -> None:
+    concrete = _review_instruction(_review_proposal())
+    assert "exact proposed file, contract, or component target" in concrete
+    assert "verification action" in concrete and "result or failure condition" in concrete
+    analysis_only = _review_instruction(_review_proposal(analysis_only=True))
+    assert "exact proposed behavior or evidence/candidate condition" in analysis_only
+    assert "repeat" not in analysis_only.casefold()

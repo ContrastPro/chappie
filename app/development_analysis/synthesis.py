@@ -259,17 +259,37 @@ class DevelopmentStageError(AIValidationError):
         stage_elapsed_ms: tuple[tuple[str, int], ...] = (),
         proposal_diagnostics: ProposalParseDiagnosticsV1 | None = None,
         grounding_diagnostics: GroundingParseDiagnosticsV1 | None = None,
+        review_diagnostics: ReviewParseDiagnosticsV1 | None = None,
     ) -> None:
         super().__init__("development staged synthesis failed", code=code)
         self.stage = stage
         self.stage_elapsed_ms = stage_elapsed_ms
         self.proposal_diagnostics = proposal_diagnostics
         self.grounding_diagnostics = grounding_diagnostics
+        self.review_diagnostics = review_diagnostics
 
 
 @dataclass(frozen=True, slots=True)
 class GroundingParseDiagnosticsV1:
     """Bounded structural metadata for an unsupported public evidence handle."""
+
+    parser_stage: str
+    reason_code: str
+    bounded_error_path: str
+    bounded_error_category: str
+
+    def payload(self) -> dict[str, str]:
+        return {
+            "parser_stage": self.parser_stage,
+            "reason_code": self.reason_code,
+            "bounded_error_path": self.bounded_error_path,
+            "bounded_error_category": self.bounded_error_category,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class ReviewParseDiagnosticsV1:
+    """Content-free structural metadata for Review specificity failures."""
 
     parser_stage: str
     reason_code: str
@@ -607,7 +627,7 @@ def _proposal_parse_diagnostics(
     )
 
 
-def parse_development_review(value: object, request: str) -> DevelopmentReviewV1:
+def parse_development_review(value: object, proposal: DevelopmentProposalV1) -> DevelopmentReviewV1:
     if not isinstance(value, dict) or set(value) != set(REVIEW_SCHEMA["required"]):
         raise DevelopmentStageError("REVIEW", "REVIEW_SCHEMA_INVALID")
     lists = {}
@@ -631,21 +651,120 @@ def parse_development_review(value: object, request: str) -> DevelopmentReviewV1
         or not 0 <= confidence <= 1
     ):
         raise DevelopmentStageError("REVIEW", "REVIEW_SCHEMA_INVALID")
-    if not _task_specific_text(request, lists["required_tests"]):
-        raise DevelopmentStageError("REVIEW", "REVIEW_TESTS_NOT_SPECIFIC")
-    if not _task_specific_text(request, lists["acceptance_criteria"]):
-        raise DevelopmentStageError("REVIEW", "REVIEW_CRITERIA_NOT_SPECIFIC")
+    if failure := _review_specificity_failure(
+        proposal, lists["required_tests"], require_action=True
+    ):
+        index, category = failure
+        raise DevelopmentStageError(
+            "REVIEW",
+            "REVIEW_TESTS_NOT_SPECIFIC",
+            review_diagnostics=ReviewParseDiagnosticsV1(
+                "REVIEW_PARSE",
+                "REVIEW_TESTS_NOT_SPECIFIC",
+                f"$.required_tests[{index}]",
+                category,
+            ),
+        )
+    if failure := _review_specificity_failure(
+        proposal, lists["acceptance_criteria"], require_action=False
+    ):
+        index, category = failure
+        raise DevelopmentStageError(
+            "REVIEW",
+            "REVIEW_CRITERIA_NOT_SPECIFIC",
+            review_diagnostics=ReviewParseDiagnosticsV1(
+                "REVIEW_PARSE",
+                "REVIEW_CRITERIA_NOT_SPECIFIC",
+                f"$.acceptance_criteria[{index}]",
+                category,
+            ),
+        )
     return DevelopmentReviewV1(**lists, confidence=float(confidence))
 
 
-def _task_specific_text(request: str, values: tuple[str, ...]) -> bool:
-    request_tokens = {
-        item.casefold().strip(".,:;()[]") for item in request.split() if len(item) > 2
+_VERIFICATION_ACTIONS = frozenset({"assert", "check", "confirm", "test", "validate", "verify"})
+_VERIFICATION_CONDITIONS = frozenset(
+    {
+        "absent",
+        "before",
+        "consumer",
+        "consumers",
+        "direct",
+        "exists",
+        "fail",
+        "fails",
+        "failure",
+        "only",
+        "present",
+        "preserve",
+        "preserves",
+        "reference",
+        "references",
+        "reject",
+        "rejects",
+        "remain",
+        "remains",
+        "unchanged",
     }
-    output_tokens = {
-        item.casefold().strip(".,:;()[]") for value in values for item in value.split()
+)
+_TARGET_STOP_WORDS = frozenset(
+    {
+        "add",
+        "analysis",
+        "bounded",
+        "capability",
+        "change",
+        "changes",
+        "component",
+        "implementation",
+        "proposed",
+        "review",
+        "workflow",
     }
-    return bool(request_tokens.intersection(output_tokens))
+)
+
+
+def _review_specificity_failure(
+    proposal: DevelopmentProposalV1,
+    values: tuple[str, ...],
+    *,
+    require_action: bool,
+) -> tuple[int, str] | None:
+    scope = proposal.proposed_scope
+    concrete_targets = (
+        *scope.proposed_modified_files,
+        *scope.proposed_new_files,
+        *scope.proposed_contract_changes,
+        *scope.proposed_components,
+    )
+    analysis_targets = (*scope.proposed_behavior, *scope.rationale)
+    target_tokens = _target_tokens(concrete_targets or analysis_targets)
+    for index, value in enumerate(values):
+        tokens = _normalized_tokens(value)
+        if require_action and not tokens.intersection(_VERIFICATION_ACTIONS):
+            return index, "GENERIC_VERIFICATION"
+        if not target_tokens or not tokens.intersection(target_tokens):
+            return index, "MISSING_PROPOSAL_TARGET"
+        if not tokens.intersection(_VERIFICATION_CONDITIONS):
+            return index, "MISSING_VERIFICATION_CONDITION"
+    return None
+
+
+def _target_tokens(values: tuple[str, ...]) -> frozenset[str]:
+    return frozenset(
+        token
+        for value in values
+        for token in _normalized_tokens(value)
+        if len(token) > 3 and token not in _TARGET_STOP_WORDS
+    )
+
+
+def _normalized_tokens(value: str) -> frozenset[str]:
+    return frozenset(
+        token
+        for item in value.casefold().replace("\\", "/").replace("/", " ").split()
+        if (token := item.strip(".,:;()[]`'\""))
+    )
 
 
 def _proposed_scope_payload(value: DevelopmentProposedScopeV1) -> dict[str, object]:
@@ -942,7 +1061,7 @@ def synthesize_development(
     review_result = call(
         "REVIEW",
         DEVELOPMENT_REVIEW_IDENTITY,
-        "Return only JSON. Critique the supplied proposal: task-specific risks, tests, non-goals, acceptance criteria, unresolved unknowns, and confidence. Do not redesign or claim authority.",
+        _review_instruction(proposal),
         REVIEW_SCHEMA,
         _with_repository_inventory(
             {
@@ -955,7 +1074,7 @@ def synthesize_development(
         ),
     )
     try:
-        review = parse_development_review(review_result.structured_output, request.request)
+        review = parse_development_review(review_result.structured_output, proposal)
     except DevelopmentStageError as error:
         error.stage_elapsed_ms = (
             ("GROUNDING_SYNTHESIS", grounding_result.latency_ms),
@@ -990,6 +1109,28 @@ def _grounding_instruction(public_handles: tuple[str, ...]) -> str:
         "evidence. RI-handles are verified grouped RepositoryInventory structural evidence. "
         f"For this request, relevant_evidence_handles may contain only: {handles}. "
         "Never invent or normalize a handle, and never propose files, contracts, or authority."
+    )
+
+
+def _review_instruction(proposal: DevelopmentProposalV1) -> str:
+    scope = proposal.proposed_scope
+    concrete = (
+        *scope.proposed_modified_files,
+        *scope.proposed_new_files,
+        *scope.proposed_contract_changes,
+        *scope.proposed_components,
+    )
+    mode = (
+        "For each required test, cite an exact proposed file, contract, or component target"
+        if concrete
+        else "For each required verification, cite an exact proposed behavior or evidence/candidate condition"
+    )
+    return (
+        "Return only JSON. Critique the supplied proposal with bounded proposal-specific risks, "
+        "required tests or verification, non-goals, acceptance criteria, unresolved unknowns, and "
+        f"confidence. {mode}, state the verification action, and state the result or failure "
+        "condition. Generic testing or repository-wide verification is invalid. Do not redesign "
+        "or claim authority."
     )
 
 

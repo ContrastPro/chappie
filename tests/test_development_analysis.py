@@ -277,9 +277,13 @@ def test_development_synthesis_input_binds_the_exact_explicit_fact_allowlist() -
             else:
                 payload = {
                     "risks": ["Analyze must preserve the advisory boundary."],
-                    "required_tests": ["Analyze diff review validation."],
+                    "required_tests": [
+                        "Verify app/development_analysis/diff_review.py rejects invalid evidence."
+                    ],
                     "non_goals": ["No mutation."],
-                    "acceptance_criteria": ["Analyze remains evidence-bound."],
+                    "acceptance_criteria": [
+                        "app/development_analysis/diff_review.py remains evidence-bound."
+                    ],
                     "unresolved_unknowns": ["Exact endpoint shape remains unknown."],
                     "confidence": 0.5,
                 }
