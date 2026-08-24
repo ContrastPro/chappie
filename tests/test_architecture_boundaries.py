@@ -293,6 +293,10 @@ PACKAGE_OWNERSHIP = {
         "responsibility": "Consumer-neutral immutable implementation-context contracts",
         "allowed": frozenset({"app.implementation_context"}),
     },
+    "app.repository_inventory": {
+        "responsibility": "Consumer-neutral bounded facts for a tracked repository snapshot",
+        "allowed": frozenset({"app.repository_inventory"}),
+    },
     "app.targeted_context": {
         "responsibility": "Bounded read-only exact repository inspection for implementation-context gaps",
         "allowed": frozenset(
