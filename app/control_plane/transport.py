@@ -358,7 +358,7 @@ class ChappieControlPlaneServerV1:
         try:
             value = json.loads(handler.rfile.read(content_length))
             allowed = (
-                {"request", "requested_role", "workspace_context"}
+                {"request", "requested_role", "requested_intent", "workspace_context"}
                 if development
                 else {"analysis"}
                 if task
@@ -439,11 +439,13 @@ class ChappieControlPlaneServerV1:
                 self._write(handler, 200, _envelope(request_id=request_id, data=response.payload()))
                 return
             if development:
-                response = self._control_plane.analyze_development(
-                    question,
-                    requested_role=requested_role,
-                    workspace_context=value.get("workspace_context"),
-                )
+                development_kwargs = {
+                    "requested_role": requested_role,
+                    "workspace_context": value.get("workspace_context"),
+                }
+                if value.get("requested_intent") is not None:
+                    development_kwargs["requested_intent"] = value["requested_intent"]
+                response = self._control_plane.analyze_development(question, **development_kwargs)
                 payload = response.payload()
                 from app.development_analysis.outcome import project_development_outcome
 

@@ -251,10 +251,59 @@ class DevelopmentAnalysisRequestV1:
     requested_role: DevelopmentModelRoleV1
     workspace_context: object | None = None
     repository_inventory_attachment: object | None = None
+    requested_intent: DevelopmentTaskIntentKindV1 | None = None
 
     def __post_init__(self) -> None:
         if not self.request.strip() or len(self.request) > MAX_DEVELOPMENT_REQUEST_CHARACTERS:
             raise ValueError("development request is invalid")
+        if self.requested_intent is not None and not isinstance(
+            self.requested_intent, DevelopmentTaskIntentKindV1
+        ):
+            raise ValueError("development requested intent is invalid")
+
+
+DEVELOPMENT_TASK_INTENT_IDENTITY = "chappie_development_task_intent/1.0.0"
+
+
+class DevelopmentTaskIntentKindV1(StrEnum):
+    QUESTION = "QUESTION"
+    ANALYSIS = "ANALYSIS"
+    PLAN = "PLAN"
+    IMPLEMENTATION = "IMPLEMENTATION"
+    UNKNOWN = "UNKNOWN"
+
+
+class DevelopmentTaskIntentSourceV1(StrEnum):
+    EXPLICIT = "EXPLICIT"
+    DETERMINISTIC_RULE = "DETERMINISTIC_RULE"
+
+
+@dataclass(frozen=True, slots=True)
+class DevelopmentTaskIntentV1:
+    intent: DevelopmentTaskIntentKindV1
+    source: DevelopmentTaskIntentSourceV1
+    rule_id: str
+    requesting_evidence_digest: str
+    requesting_context_digest: str
+    identity: str = DEVELOPMENT_TASK_INTENT_IDENTITY
+
+    def __post_init__(self) -> None:
+        if self.identity != DEVELOPMENT_TASK_INTENT_IDENTITY:
+            raise ValueError("development task intent identity is invalid")
+        if not self.rule_id or len(self.rule_id) > 64:
+            raise ValueError("development task intent rule is invalid")
+        if len(self.requesting_evidence_digest) != 64 or len(self.requesting_context_digest) != 64:
+            raise ValueError("development task intent binding is invalid")
+
+    def payload(self) -> dict[str, str]:
+        return {
+            "identity": self.identity,
+            "intent": self.intent.value,
+            "source": self.source.value,
+            "rule_id": self.rule_id,
+            "requesting_evidence_digest": self.requesting_evidence_digest,
+            "requesting_context_digest": self.requesting_context_digest,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -344,6 +393,25 @@ class DevelopmentAnalysisV1:
     current_evidence_handles: tuple[str, ...] = ()
     proposed_scope: DevelopmentProposedScopeV1 | None = None
     staged_results: dict[str, object] | None = None
+    task_intent: DevelopmentTaskIntentV1 | None = None
+    answer: str | None = None
+    plan_items: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.answer is not None and (not self.answer.strip() or len(self.answer) > 8_000):
+            raise ValueError("development answer is invalid")
+        if len(self.plan_items) > MAX_ANALYSIS_ITEMS or any(
+            not item.strip() or len(item) > 1_000 for item in self.plan_items
+        ):
+            raise ValueError("development plan items are invalid")
+        if self.task_intent is not None:
+            if self.evidence is None or self.context_map is None:
+                raise ValueError("development task intent binding is incomplete")
+            if (
+                self.task_intent.requesting_evidence_digest != self.evidence.evidence_digest
+                or self.task_intent.requesting_context_digest != self.context_map.context_digest
+            ):
+                raise ValueError("development task intent binding is invalid")
 
     def payload(self) -> dict[str, object]:
         return {
@@ -371,6 +439,9 @@ class DevelopmentAnalysisV1:
             "current_evidence_handles": list(self.current_evidence_handles),
             "proposed_scope": _proposed_scope_payload(self.proposed_scope),
             "staged_results": self.staged_results,
+            "task_intent": self.task_intent.payload() if self.task_intent else None,
+            "answer": self.answer,
+            "plan_items": list(self.plan_items),
         }
 
 
@@ -550,6 +621,31 @@ def development_analysis_from_payload(value: object) -> DevelopmentAnalysisV1:
         context_map=context_map,
         current_evidence_handles=tuple(_strings(value.get("current_evidence_handles"))),
         proposed_scope=proposed_scope,
+        task_intent=_task_intent_from_payload(value.get("task_intent")),
+        answer=_optional_string(value.get("answer")),
+        plan_items=tuple(_strings(value.get("plan_items", []))),
+    )
+
+
+def _task_intent_from_payload(value: object) -> DevelopmentTaskIntentV1 | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) != {
+        "identity",
+        "intent",
+        "source",
+        "rule_id",
+        "requesting_evidence_digest",
+        "requesting_context_digest",
+    }:
+        raise ValueError("development task intent payload is invalid")
+    return DevelopmentTaskIntentV1(
+        DevelopmentTaskIntentKindV1(value["intent"]),
+        DevelopmentTaskIntentSourceV1(value["source"]),
+        str(value["rule_id"]),
+        str(value["requesting_evidence_digest"]),
+        str(value["requesting_context_digest"]),
+        str(value["identity"]),
     )
 
 

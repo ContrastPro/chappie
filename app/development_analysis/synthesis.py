@@ -20,6 +20,7 @@ from app.development_analysis.models import (
     DevelopmentCitationRejectionV1,
     DevelopmentEvidencePackV1,
     DevelopmentProposedScopeV1,
+    DevelopmentTaskIntentKindV1,
 )
 from app.development_analysis.review_targets import (
     ReviewProposalTargetProjectionDiagnosticsV1,
@@ -124,6 +125,46 @@ REVIEW_SCHEMA: dict[str, Any] = {
         "acceptance_criteria": {"type": "array", "items": {"type": "string"}},
         "unresolved_unknowns": {"type": "array", "items": {"type": "string"}},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    },
+}
+
+_INTENT_COMMON_PROPERTIES = {
+    "relevant_evidence_handles": {"type": "array", "items": {"type": "string"}},
+    "answer": {"type": "string"},
+    "unknowns": {"type": "array", "items": {"type": "string"}},
+}
+QUESTION_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["relevant_evidence_handles", "answer", "unknowns"],
+    "properties": _INTENT_COMMON_PROPERTIES,
+}
+ANALYSIS_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["relevant_evidence_handles", "answer", "inferences", "unknowns", "risks"],
+    "properties": {
+        **_INTENT_COMMON_PROPERTIES,
+        "inferences": {"type": "array", "items": {"type": "string"}},
+        "risks": {"type": "array", "items": {"type": "string"}},
+    },
+}
+PLAN_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": [
+        "relevant_evidence_handles",
+        "answer",
+        "plan_items",
+        "unknowns",
+        "risks",
+        "non_goals",
+    ],
+    "properties": {
+        **_INTENT_COMMON_PROPERTIES,
+        "plan_items": {"type": "array", "items": {"type": "string"}},
+        "risks": {"type": "array", "items": {"type": "string"}},
+        "non_goals": {"type": "array", "items": {"type": "string"}},
     },
 }
 
@@ -421,6 +462,77 @@ class DevelopmentStagedSynthesisOutputV1:
     proposal: DevelopmentProposalV1
     review: DevelopmentReviewV1
     stage_elapsed_ms: tuple[tuple[str, int], ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class DevelopmentIntentSynthesisOutputV1:
+    intent: DevelopmentTaskIntentKindV1
+    relevant_evidence_handles: tuple[str, ...]
+    answer: str
+    unknowns: tuple[str, ...]
+    inferences: tuple[str, ...] = ()
+    risks: tuple[str, ...] = ()
+    plan_items: tuple[str, ...] = ()
+    non_goals: tuple[str, ...] = ()
+    elapsed_ms: int = 0
+
+
+def parse_development_intent_synthesis(
+    value: object,
+    intent: DevelopmentTaskIntentKindV1,
+    context_map: DevelopmentContextMapV1,
+    repository_inventory_attachment: object | None = None,
+) -> DevelopmentIntentSynthesisOutputV1:
+    schemas = {
+        DevelopmentTaskIntentKindV1.QUESTION: QUESTION_SCHEMA,
+        DevelopmentTaskIntentKindV1.ANALYSIS: ANALYSIS_SCHEMA,
+        DevelopmentTaskIntentKindV1.PLAN: PLAN_SCHEMA,
+    }
+    schema = schemas.get(intent)
+    if schema is None or not isinstance(value, dict) or set(value) != set(schema["required"]):
+        raise AIValidationError(
+            "development intent synthesis is invalid", code="DEVELOPMENT_SCHEMA_INVALID"
+        )
+
+    def strings(key: str, *, required: bool = True) -> tuple[str, ...]:
+        raw = value.get(key, [])
+        if not isinstance(raw, list) or any(
+            not isinstance(item, str) or not item.strip() for item in raw
+        ):
+            raise AIValidationError(
+                "development intent synthesis is invalid", code="DEVELOPMENT_SCHEMA_INVALID"
+            )
+        if required and not raw:
+            raise AIValidationError(
+                "development intent synthesis is invalid", code="DEVELOPMENT_SCHEMA_INVALID"
+            )
+        if len(raw) > 16:
+            raise AIValidationError(
+                "development intent synthesis is invalid", code="DEVELOPMENT_SCHEMA_INVALID"
+            )
+        return tuple(raw)
+
+    answer = value.get("answer")
+    if not isinstance(answer, str) or not answer.strip() or len(answer) > 8000:
+        raise AIValidationError(
+            "development intent synthesis is invalid", code="DEVELOPMENT_SCHEMA_INVALID"
+        )
+    handles = strings("relevant_evidence_handles")
+    allowed = set(public_grounding_evidence_handles(context_map, repository_inventory_attachment))
+    if any(handle not in allowed for handle in handles):
+        raise AIValidationError(
+            "development intent evidence is invalid", code="UNSUPPORTED_KNOWLEDGE_CITATION"
+        )
+    return DevelopmentIntentSynthesisOutputV1(
+        intent,
+        tuple(dict.fromkeys(handles)),
+        answer.strip(),
+        strings("unknowns", required=False),
+        strings("inferences", required=False),
+        strings("risks", required=False),
+        strings("plan_items", required=False),
+        strings("non_goals", required=False),
+    )
 
 
 def parse_development_grounding(
@@ -1038,7 +1150,7 @@ def synthesize_development(
     request: object,
     context: KnowledgeContextV1,
     evidence: DevelopmentEvidencePackV1,
-) -> DevelopmentStagedSynthesisOutputV1:
+) -> DevelopmentStagedSynthesisOutputV1 | DevelopmentIntentSynthesisOutputV1:
     """Run three small, fail-closed Development reasoning stages using one selected model."""
     now = datetime.now(tz=UTC)
     facts = knowledge_facts(context, now)
@@ -1049,6 +1161,73 @@ def synthesize_development(
         )
     context_map = build_development_context_map(context, evidence)
     provider = ai.router.provider_for(ai.config.profile)
+
+    intent = getattr(request, "requested_intent", None)
+    if intent in {
+        DevelopmentTaskIntentKindV1.QUESTION,
+        DevelopmentTaskIntentKindV1.ANALYSIS,
+        DevelopmentTaskIntentKindV1.PLAN,
+    }:
+        schemas = {
+            DevelopmentTaskIntentKindV1.QUESTION: QUESTION_SCHEMA,
+            DevelopmentTaskIntentKindV1.ANALYSIS: ANALYSIS_SCHEMA,
+            DevelopmentTaskIntentKindV1.PLAN: PLAN_SCHEMA,
+        }
+        try:
+            result = provider.generate(
+                ModelRequest(
+                    uuid.uuid4().hex,
+                    AITask.DEVELOPMENT_ANALYSIS_V1,
+                    ai.config.profile,
+                    _intent_instruction(
+                        intent,
+                        public_grounding_evidence_handles(
+                            context_map, getattr(request, "repository_inventory_attachment", None)
+                        ),
+                    ),
+                    f"chappie_development_{intent.value.casefold()}_synthesis/1.0.0",
+                    (),
+                    _with_repository_inventory(
+                        {
+                            "request": request.request,
+                            "development_context_map": context_map.payload(),
+                        },
+                        request,
+                    ),
+                    schemas[intent],
+                    ai.config.temperature,
+                    ai.config.timeout_seconds,
+                    now,
+                    digest(
+                        {
+                            "intent": intent.value,
+                            "request": request.request,
+                            "context": context.context_digest,
+                        }
+                    ),
+                )
+            )
+        except (AIProviderError, AIProviderTimeoutError, AIValidationError):
+            raise
+        except Exception as error:
+            raise RuntimeError("development intent provider failed") from error
+        parsed = parse_development_intent_synthesis(
+            result.structured_output,
+            intent,
+            context_map,
+            getattr(request, "repository_inventory_attachment", None),
+        )
+        return DevelopmentIntentSynthesisOutputV1(
+            parsed.intent,
+            parsed.relevant_evidence_handles,
+            parsed.answer,
+            parsed.unknowns,
+            parsed.inferences,
+            parsed.risks,
+            parsed.plan_items,
+            parsed.non_goals,
+            result.latency_ms,
+        )
 
     def call(
         stage: str,
@@ -1170,6 +1349,21 @@ def synthesize_development(
             ("PROPOSAL_SYNTHESIS", proposal_result.latency_ms),
             ("REVIEW_SYNTHESIS", review_result.latency_ms),
         ),
+    )
+
+
+def _intent_instruction(intent: DevelopmentTaskIntentKindV1, handles: tuple[str, ...]) -> str:
+    route = {
+        DevelopmentTaskIntentKindV1.QUESTION: "Answer the question directly and ground it in supplied evidence.",
+        DevelopmentTaskIntentKindV1.ANALYSIS: "Provide bounded analysis, separating inference, risk, and unknowns.",
+        DevelopmentTaskIntentKindV1.PLAN: "Provide an advisory ordered plan; every item is PROPOSED, not authorized implementation scope.",
+    }[intent]
+    return (
+        "Return only the exact JSON schema. "
+        + route
+        + " Cite only exact relevant_evidence_handles from: "
+        + ", ".join(handles)
+        + ". Preserve unknowns. Do not claim file, shell, Git, Knowledge, trading, Risk, or execution authority."
     )
 
 

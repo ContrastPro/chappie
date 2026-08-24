@@ -530,6 +530,7 @@ class ChappieControlPlaneV1:
         request: str,
         *,
         requested_role: str,
+        requested_intent: str | None = None,
         workspace_context: object | None = None,
         acceptance_diagnostics_sink: Callable[[object], None] | None = None,
     ):
@@ -539,12 +540,18 @@ class ChappieControlPlaneV1:
         from app.development_analysis import (
             DevelopmentAnalysisRequestV1,
             DevelopmentAnalysisServiceV1,
+            DevelopmentTaskIntentKindV1,
         )
 
         try:
             role = DevelopmentModelRoleV1(requested_role)
             context = parse_workspace_context(workspace_context) if workspace_context else None
-            value = DevelopmentAnalysisRequestV1(request, role, context)
+            intent = (
+                DevelopmentTaskIntentKindV1(requested_intent)
+                if requested_intent is not None
+                else None
+            )
+            value = DevelopmentAnalysisRequestV1(request, role, context, requested_intent=intent)
         except (TypeError, ValueError):
             from app.development_analysis import DevelopmentAnalysisStateV1, DevelopmentAnalysisV1
 

@@ -3,6 +3,7 @@
 from app.development_analysis.models import (
     DEVELOPMENT_ANALYSIS_IDENTITY,
     DEVELOPMENT_DIFF_REVIEW_IDENTITY,
+    DEVELOPMENT_TASK_INTENT_IDENTITY,
     DevelopmentAnalysisReadinessV1,
     DevelopmentAnalysisRequestV1,
     DevelopmentAnalysisStateV1,
@@ -17,6 +18,9 @@ from app.development_analysis.models import (
     DevelopmentDiffReviewStatusV1,
     DevelopmentDiffReviewV1,
     DevelopmentDiffTestEvidenceV1,
+    DevelopmentTaskIntentKindV1,
+    DevelopmentTaskIntentSourceV1,
+    DevelopmentTaskIntentV1,
     development_analysis_from_payload,
 )
 from app.development_analysis.outcome import (
@@ -50,6 +54,7 @@ from app.development_analysis.review_targets import (
 from app.development_analysis.service import DevelopmentAnalysisServiceV1
 from app.development_analysis.synthesis import (
     DevelopmentGroundingV1,
+    DevelopmentIntentSynthesisOutputV1,
     DevelopmentProposalV1,
     DevelopmentReviewV1,
     DevelopmentStagedSynthesisOutputV1,
@@ -71,6 +76,7 @@ __all__ = (
     "DEVELOPMENT_CONTEXT_REQUIREMENT_IDENTITY",
     "DEVELOPMENT_DIFF_REVIEW_IDENTITY",
     "DEVELOPMENT_OUTCOME_IDENTITY",
+    "DEVELOPMENT_TASK_INTENT_IDENTITY",
     "REPOSITORY_INVENTORY_ATTACHMENT_IDENTITY",
     "REVIEW_PROPOSAL_TARGETS_IDENTITY",
     "CodexHandoffV1",
@@ -96,12 +102,16 @@ __all__ = (
     "DevelopmentDiffTestEvidenceV1",
     "DevelopmentEvidenceGapCodeV1",
     "DevelopmentGroundingV1",
+    "DevelopmentIntentSynthesisOutputV1",
     "DevelopmentOutcomeStatusV1",
     "DevelopmentOutcomeV1",
     "DevelopmentProposalV1",
     "DevelopmentRepositoryInventoryAttachmentV1",
     "DevelopmentReviewV1",
     "DevelopmentStagedSynthesisOutputV1",
+    "DevelopmentTaskIntentKindV1",
+    "DevelopmentTaskIntentSourceV1",
+    "DevelopmentTaskIntentV1",
     "RepositoryInventoryIntegrationError",
     "ReviewProposalTargetConstraintV1",
     "ReviewProposalTargetKindV1",

@@ -13,6 +13,7 @@ from app.development_analysis.models import (
     DevelopmentCitationKindV1,
     DevelopmentCitationRejectionV1,
     DevelopmentProposedScopeV1,
+    DevelopmentTaskIntentKindV1,
     assess_development_analysis_readiness,
     development_readiness,
     validate_development_analysis,
@@ -88,6 +89,7 @@ def test_analysis_builds_evidence_before_stubbed_inference(tmp_path, monkeypatch
         DevelopmentAnalysisRequestV1(
             "Design a bounded post-implementation diff review workflow using DevelopmentAnalysisV1 and CodexTaskV1.",
             role,
+            requested_intent=DevelopmentTaskIntentKindV1.IMPLEMENTATION,
         )
     )
 
@@ -161,7 +163,13 @@ def test_provider_timeout_is_a_typed_development_analysis_failure(tmp_path, monk
         paths=_paths(tmp_path),
         runner=lambda *_args: (_ for _ in ()).throw(AIProviderTimeoutError("timed out")),
         role_available=lambda _role: True,
-    ).analyze(DevelopmentAnalysisRequestV1("Understand architecture", DevelopmentModelRoleV1.CODE))
+    ).analyze(
+        DevelopmentAnalysisRequestV1(
+            "Understand architecture",
+            DevelopmentModelRoleV1.CODE,
+            requested_intent=DevelopmentTaskIntentKindV1.IMPLEMENTATION,
+        )
+    )
 
     assert result.state == DevelopmentAnalysisStateV1.TIMEOUT
     assert result.reason_code == "AI_PROVIDER_TIMEOUT"
@@ -185,7 +193,13 @@ def test_model_validation_failure_is_a_typed_development_analysis_failure(
         paths=_paths(tmp_path),
         runner=lambda *_args: (_ for _ in ()).throw(AIValidationError("invalid model output")),
         role_available=lambda _role: True,
-    ).analyze(DevelopmentAnalysisRequestV1("Understand architecture", DevelopmentModelRoleV1.CODE))
+    ).analyze(
+        DevelopmentAnalysisRequestV1(
+            "Understand architecture",
+            DevelopmentModelRoleV1.CODE,
+            requested_intent=DevelopmentTaskIntentKindV1.IMPLEMENTATION,
+        )
+    )
 
     assert result.state == DevelopmentAnalysisStateV1.ANALYSIS_INVALID
     assert result.reason_code == "DEVELOPMENT_SCHEMA_INVALID"
@@ -392,6 +406,75 @@ def test_staged_synthesis_stops_before_proposal_when_grounding_is_invalid() -> N
     assert error.value.code == "GROUNDING_UNSUPPORTED_EVIDENCE"
     assert calls == ["chappie_development_grounding/1.0.0"]
     assert error.value.stage_elapsed_ms == (("GROUNDING_SYNTHESIS", 1),)
+
+
+@pytest.mark.parametrize(
+    ("intent", "payload"),
+    (
+        (
+            DevelopmentTaskIntentKindV1.QUESTION,
+            {"relevant_evidence_handles": ["E1"], "answer": "Grounded answer.", "unknowns": []},
+        ),
+        (
+            DevelopmentTaskIntentKindV1.ANALYSIS,
+            {
+                "relevant_evidence_handles": ["E1"],
+                "answer": "Grounded analysis.",
+                "inferences": ["Bounded inference."],
+                "unknowns": [],
+                "risks": ["Bounded risk."],
+            },
+        ),
+        (
+            DevelopmentTaskIntentKindV1.PLAN,
+            {
+                "relevant_evidence_handles": ["E1"],
+                "answer": "Advisory plan.",
+                "plan_items": ["Verify the proposed step."],
+                "unknowns": [],
+                "risks": ["Bounded risk."],
+                "non_goals": ["No mutation."],
+            },
+        ),
+    ),
+)
+def test_non_implementation_synthesis_uses_exactly_one_provider_call(intent, payload) -> None:
+    _request, records = _development_context()
+    context = type("Context", (), {"records": records, "context_digest": "digest"})()
+    calls = []
+
+    class Provider:
+        def generate(self, request):
+            calls.append(request.prompt_version)
+            return type("Result", (), {"structured_output": payload, "latency_ms": 7})()
+
+    class AI:
+        config = type("Config", (), {"profile": "LOCAL", "temperature": 0, "timeout_seconds": 1})()
+        router = type("Router", (), {"provider_for": lambda _self, _profile: Provider()})()
+
+    evidence = type(
+        "Evidence",
+        (),
+        {
+            "allowed_fact_ids": development_allowed_fact_ids(context),
+            "source_commit": "a" * 40,
+            "knowledge_identity": "chappie_knowledge/1.0.0",
+            "knowledge_manifest_digest": "b" * 64,
+            "knowledge_context_digest": "digest",
+            "evidence_digest": "c" * 64,
+            "requested_role": DevelopmentModelRoleV1.CODE,
+            "effective_model": "qwen3-coder:30b",
+        },
+    )()
+    output = synthesize_development(
+        AI(),
+        type("Request", (), {"request": "Bounded request", "requested_intent": intent})(),
+        context,
+        evidence,
+    )
+    assert calls == [f"chappie_development_{intent.value.casefold()}_synthesis/1.0.0"]
+    assert output.intent == intent
+    assert output.elapsed_ms == 7
 
 
 def test_stage_parse_failure_keeps_completed_provider_stage_telemetry(
@@ -625,7 +708,13 @@ def test_citation_failure_survives_analysis_completion_without_request_or_model_
         runner=runner,
         role_available=lambda _role: True,
         request_id_factory=lambda: "a" * 32,
-    ).analyze(DevelopmentAnalysisRequestV1("sensitive request", DevelopmentModelRoleV1.CODE))
+    ).analyze(
+        DevelopmentAnalysisRequestV1(
+            "sensitive request",
+            DevelopmentModelRoleV1.CODE,
+            requested_intent=DevelopmentTaskIntentKindV1.IMPLEMENTATION,
+        )
+    )
 
     assert result.reason_code == "UNSUPPORTED_KNOWLEDGE_CITATION"
     assert result.citation_failure is not None
@@ -949,6 +1038,7 @@ def test_forbidden_authority_output_is_a_typed_invalid_result(tmp_path, monkeypa
         DevelopmentAnalysisRequestV1(
             "Design a bounded post-implementation diff review workflow using DevelopmentAnalysisV1 and CodexTaskV1.",
             DevelopmentModelRoleV1.CODE,
+            requested_intent=DevelopmentTaskIntentKindV1.IMPLEMENTATION,
         )
     )
 

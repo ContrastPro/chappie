@@ -19,11 +19,13 @@ from app.development_analysis.models import (
     DevelopmentLifecycleStageV1,
     DevelopmentLifecycleStatusV1,
     DevelopmentLifecycleV1,
+    DevelopmentTaskIntentKindV1,
     development_readiness,
     evidence_digest,
     validate_development_analysis,
 )
 from app.development_analysis.synthesis import (
+    DevelopmentIntentSynthesisOutputV1,
     DevelopmentStagedSynthesisOutputV1,
     DevelopmentStageError,
 )
@@ -172,9 +174,49 @@ class DevelopmentAnalysisServiceV1:
             evidence_digest=evidence_digest(payload),
         )
         context_map = build_development_context_map(context, evidence)
+        from app.development_analysis.intent import resolve_development_task_intent
+
+        task_intent = resolve_development_task_intent(request, evidence, context_map.context_digest)
         lifecycle.complete()
+        if task_intent.intent == DevelopmentTaskIntentKindV1.UNKNOWN:
+            lifecycle.begin(DevelopmentLifecycleStageV1.COMPLETE)
+            return DevelopmentAnalysisV1(
+                DevelopmentAnalysisStateV1.OK,
+                request.request,
+                evidence,
+                validation_status="VALID",
+                lifecycle=lifecycle.complete(),
+                context_map=context_map,
+                task_intent=task_intent,
+                answer=(
+                    "I'm not certain whether you want an explanation, analysis, plan, or an "
+                    "implementation-ready change. Choose the task intent before I prepare "
+                    "implementation scope."
+                ),
+            )
+        routed_request = replace(request, requested_intent=task_intent.intent)
         try:
-            output = self._runner(request, context, evidence)
+            output = self._runner(routed_request, context, evidence)
+            if isinstance(output, DevelopmentIntentSynthesisOutputV1):
+                if task_intent.intent == DevelopmentTaskIntentKindV1.IMPLEMENTATION:
+                    raise AIValidationError(
+                        "development synthesis route is invalid",
+                        code="DEVELOPMENT_SCHEMA_INVALID",
+                    )
+                lifecycle.begin(DevelopmentLifecycleStageV1.SYNTHESIS)
+                lifecycle.complete(elapsed_ms=output.elapsed_ms)
+                lifecycle.begin(DevelopmentLifecycleStageV1.COMPLETE)
+                return replace(
+                    _analysis_from_intent_output(
+                        request, context_map, evidence, task_intent, output
+                    ),
+                    lifecycle=lifecycle.complete(),
+                )
+            if task_intent.intent != DevelopmentTaskIntentKindV1.IMPLEMENTATION:
+                raise AIValidationError(
+                    "development synthesis route is invalid",
+                    code="DEVELOPMENT_SCHEMA_INVALID",
+                )
             if isinstance(output, DevelopmentStagedSynthesisOutputV1):
                 _record_staged_lifecycle(lifecycle, output)
             else:
@@ -190,6 +232,7 @@ class DevelopmentAnalysisServiceV1:
             lifecycle.begin(DevelopmentLifecycleStageV1.COMPLETE)
             return replace(
                 analysis,
+                task_intent=task_intent,
                 readiness=readiness,
                 reason_code=reason_code,
                 lifecycle=lifecycle.complete(),
@@ -203,6 +246,7 @@ class DevelopmentAnalysisServiceV1:
                 evidence,
                 lifecycle.failed("AI_PROVIDER_TIMEOUT"),
                 context_map=context_map,
+                task_intent=task_intent,
             )
         except DevelopmentStageError as error:
             if error.grounding_diagnostics is not None and self._diagnostics_sink is not None:
@@ -222,6 +266,7 @@ class DevelopmentAnalysisServiceV1:
                 evidence,
                 lifecycle.failed(error.code),
                 context_map=context_map,
+                task_intent=task_intent,
             )
         except DevelopmentCitationValidationError as error:
             lifecycle.begin(DevelopmentLifecycleStageV1.SYNTHESIS)
@@ -233,6 +278,7 @@ class DevelopmentAnalysisServiceV1:
                 lifecycle.failed(error.code),
                 citation_failure=error.failure,
                 context_map=context_map,
+                task_intent=task_intent,
             )
         except AIValidationError as error:
             lifecycle.begin(DevelopmentLifecycleStageV1.SYNTHESIS)
@@ -245,6 +291,7 @@ class DevelopmentAnalysisServiceV1:
                     error.code if error.code != "VALIDATION_ERROR" else "DEVELOPMENT_SCHEMA_INVALID"
                 ),
                 context_map=context_map,
+                task_intent=task_intent,
             )
         except ValueError as error:
             lifecycle.begin(DevelopmentLifecycleStageV1.SYNTHESIS)
@@ -255,6 +302,7 @@ class DevelopmentAnalysisServiceV1:
                 evidence,
                 lifecycle.failed(_validation_reason(error)),
                 context_map=context_map,
+                task_intent=task_intent,
             )
         except (AIProviderError, OSError, RuntimeError, TypeError):
             lifecycle.begin(DevelopmentLifecycleStageV1.SYNTHESIS)
@@ -265,6 +313,7 @@ class DevelopmentAnalysisServiceV1:
                 evidence,
                 lifecycle.failed("AI_UNAVAILABLE"),
                 context_map=context_map,
+                task_intent=task_intent,
             )
 
 
@@ -348,6 +397,36 @@ def _analysis_from_output(request, context, evidence, output) -> DevelopmentAnal
         context_map=context_map,
         current_evidence_handles=requested_handles,
         proposed_scope=output.proposed_scope,
+    )
+
+
+def _analysis_from_intent_output(
+    request, context_map, evidence, task_intent, output: DevelopmentIntentSynthesisOutputV1
+) -> DevelopmentAnalysisV1:
+    if output.intent != task_intent.intent:
+        raise ValueError("development intent synthesis route is invalid")
+    selected = tuple(
+        item
+        for item in context_map.evidence_handles
+        if item.handle in output.relevant_evidence_handles
+    )
+    return DevelopmentAnalysisV1(
+        DevelopmentAnalysisStateV1.OK,
+        request.request,
+        evidence,
+        facts=tuple(item.statement for item in selected),
+        inferences=output.inferences,
+        unknowns=output.unknowns,
+        architecture_owners=context_map.owner_candidates,
+        affected_contracts=context_map.existing_contracts,
+        risks=output.risks,
+        non_goals=output.non_goals,
+        validation_status="VALID",
+        context_map=context_map,
+        current_evidence_handles=output.relevant_evidence_handles,
+        task_intent=task_intent,
+        answer=output.answer,
+        plan_items=output.plan_items,
     )
 
 
@@ -447,6 +526,7 @@ def _failure(
     lifecycle=None,
     citation_failure: DevelopmentCitationFailureV1 | None = None,
     context_map=None,
+    task_intent=None,
 ) -> DevelopmentAnalysisV1:
     return DevelopmentAnalysisV1(
         state,
@@ -459,6 +539,7 @@ def _failure(
         lifecycle=lifecycle,
         citation_failure=citation_failure,
         context_map=context_map,
+        task_intent=task_intent,
     )
 
 

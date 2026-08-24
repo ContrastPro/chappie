@@ -333,6 +333,40 @@ def test_invalid_development_request_is_retained_as_a_typed_transport_failure(se
     assert server.get_development_diagnostic(body["request_id"]) == body["diagnostics"]
 
 
+def test_development_transport_propagates_explicit_task_intent(server) -> None:
+    observed = []
+
+    class IntentPlane(_FakeControlPlane):
+        def analyze_development(
+            self,
+            request: str,
+            *,
+            requested_role: str,
+            requested_intent: str | None = None,
+            workspace_context: object | None = None,
+        ) -> DevelopmentAnalysisV1:
+            observed.append((requested_role, requested_intent, workspace_context))
+            return DevelopmentAnalysisV1(
+                DevelopmentAnalysisStateV1.OK, request, validation_status="VALID"
+            )
+
+    server._control_plane = IntentPlane()
+    status, _headers, _body = _request(
+        server,
+        "POST",
+        "/v1/development/analyze",
+        json.dumps(
+            {
+                "request": "Implement the approved bounded change.",
+                "requested_role": "CODE",
+                "requested_intent": "IMPLEMENTATION",
+            }
+        ),
+    )
+    assert status == 200
+    assert observed == [("CODE", "IMPLEMENTATION", None)]
+
+
 @pytest.mark.parametrize(
     ("state", "reason", "expected_status"),
     (
