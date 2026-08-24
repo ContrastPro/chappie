@@ -40,7 +40,9 @@ from app.development_analysis.repository_inventory import (
 )
 from app.development_analysis.review_targets import (
     REVIEW_PROPOSAL_TARGETS_IDENTITY,
+    ReviewProposalTargetConstraintV1,
     ReviewProposalTargetKindV1,
+    ReviewProposalTargetProjectionDiagnosticsV1,
     ReviewProposalTargetSetV1,
     ReviewProposalTargetV1,
     build_review_proposal_target_set,
@@ -101,7 +103,9 @@ __all__ = (
     "DevelopmentReviewV1",
     "DevelopmentStagedSynthesisOutputV1",
     "RepositoryInventoryIntegrationError",
+    "ReviewProposalTargetConstraintV1",
     "ReviewProposalTargetKindV1",
+    "ReviewProposalTargetProjectionDiagnosticsV1",
     "ReviewProposalTargetSetV1",
     "ReviewProposalTargetV1",
     "analyze_development_with_repository_inventory",

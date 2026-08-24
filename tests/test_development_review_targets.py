@@ -8,6 +8,7 @@ from app.ai.schemas import digest
 from app.development_analysis.models import DevelopmentProposedScopeV1
 from app.development_analysis.review_targets import (
     REVIEW_PROPOSAL_TARGETS_IDENTITY,
+    ReviewProposalTargetConstraintV1,
     ReviewProposalTargetKindV1,
     ReviewProposalTargetProjectionError,
     build_review_proposal_target_set,
@@ -180,6 +181,12 @@ def test_per_field_and_total_target_budgets_fail_closed() -> None:
             )
         )
     assert error.value.code == "REVIEW_TARGET_SET_BUDGET_EXCEEDED"
+    assert error.value.diagnostics.payload() == {
+        "constraint": "TARGETS_PER_SOURCE_FIELD",
+        "configured_limit": 16,
+        "source_field": "proposed_modified_files",
+        "field_count": 17,
+    }
 
     with pytest.raises(ReviewProposalTargetProjectionError) as error:
         _targets(
@@ -193,12 +200,28 @@ def test_per_field_and_total_target_budgets_fail_closed() -> None:
             )
         )
     assert error.value.code == "REVIEW_TARGET_SET_BUDGET_EXCEEDED"
+    assert error.value.diagnostics.payload() == {
+        "constraint": "TOTAL_TARGET_COUNT",
+        "configured_limit": 32,
+        "total_candidate_count": 33,
+    }
 
 
 def test_identifier_and_serialized_budgets_fail_closed(monkeypatch) -> None:
+    sentinel = "SECRET_PROPOSAL_SENTINEL_"
     with pytest.raises(ReviewProposalTargetProjectionError) as error:
-        _targets(_proposal(proposed_behavior=("x" * 257,)))
+        _targets(_proposal(proposed_behavior=(sentinel + "x" * 257,)))
     assert error.value.code == "REVIEW_TARGET_SET_BUDGET_EXCEEDED"
+    assert error.value.diagnostics.constraint is ReviewProposalTargetConstraintV1.IDENTIFIER_LENGTH
+    assert error.value.diagnostics.payload() == {
+        "constraint": "IDENTIFIER_LENGTH",
+        "configured_limit": 256,
+        "source_field": "proposed_behavior",
+        "source_index": 0,
+        "identifier_length": len(sentinel) + 257,
+    }
+    assert sentinel not in str(error.value)
+    assert sentinel not in str(error.value.diagnostics.payload())
 
     monkeypatch.setattr(
         "app.development_analysis.review_targets.MAX_REVIEW_TARGET_SET_SERIALIZED_CHARS", 10
@@ -206,6 +229,37 @@ def test_identifier_and_serialized_budgets_fail_closed(monkeypatch) -> None:
     with pytest.raises(ReviewProposalTargetProjectionError) as error:
         _targets(_proposal())
     assert error.value.code == "REVIEW_TARGET_SET_BUDGET_EXCEEDED"
+    assert error.value.diagnostics.constraint is ReviewProposalTargetConstraintV1.SERIALIZED_SIZE
+    assert error.value.diagnostics.payload()["projected_semantic_size"] > 10
+    assert error.value.diagnostics.payload()["configured_limit"] == 10
+
+
+def test_public_id_budget_reports_only_bounded_structure(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.development_analysis.review_targets.MAX_REVIEW_TARGET_PUBLIC_ID_CHARS", 2
+    )
+    with pytest.raises(ReviewProposalTargetProjectionError) as error:
+        _targets(_proposal())
+    assert error.value.code == "REVIEW_TARGET_SET_BUDGET_EXCEEDED"
+    assert error.value.diagnostics.payload() == {
+        "constraint": "PUBLIC_ID_LENGTH",
+        "configured_limit": 2,
+        "source_index": 0,
+        "target_count": 6,
+        "public_id_length": 3,
+    }
+
+
+def test_projection_diagnostics_flow_through_stage_error_without_content() -> None:
+    sentinel = "PRIVATE_MODEL_OUTPUT_SENTINEL_" + "x" * 256
+    proposal = _proposal(proposed_behavior=(sentinel,))
+    with pytest.raises(DevelopmentStageError) as error:
+        parse_development_review(_review("Verify RT1 fails."), proposal)
+    assert error.value.code == "REVIEW_TARGET_SET_BUDGET_EXCEEDED"
+    diagnostics = error.value.review_target_diagnostics
+    assert diagnostics.constraint is ReviewProposalTargetConstraintV1.IDENTIFIER_LENGTH
+    assert sentinel not in str(error.value)
+    assert sentinel not in str(diagnostics.payload())
 
 
 def test_display_summary_is_bounded_and_not_in_semantic_digest() -> None:

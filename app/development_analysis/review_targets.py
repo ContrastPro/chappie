@@ -27,6 +27,14 @@ class ReviewProposalTargetKindV1(StrEnum):
     RATIONALE = "RATIONALE"
 
 
+class ReviewProposalTargetConstraintV1(StrEnum):
+    TARGETS_PER_SOURCE_FIELD = "TARGETS_PER_SOURCE_FIELD"
+    IDENTIFIER_LENGTH = "IDENTIFIER_LENGTH"
+    TOTAL_TARGET_COUNT = "TOTAL_TARGET_COUNT"
+    PUBLIC_ID_LENGTH = "PUBLIC_ID_LENGTH"
+    SERIALIZED_SIZE = "SERIALIZED_SIZE"
+
+
 _PUBLIC_ID = re.compile(r"RT[1-9][0-9]*")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 
@@ -98,10 +106,46 @@ class ReviewProposalTargetSetV1:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class ReviewProposalTargetProjectionDiagnosticsV1:
+    constraint: ReviewProposalTargetConstraintV1
+    configured_limit: int
+    source_field: str | None = None
+    source_index: int | None = None
+    field_count: int | None = None
+    total_candidate_count: int | None = None
+    identifier_length: int | None = None
+    maximum_identifier_length: int | None = None
+    target_count: int | None = None
+    public_id_length: int | None = None
+    projected_semantic_size: int | None = None
+
+    def payload(self) -> dict[str, object]:
+        values = {
+            "constraint": self.constraint.value,
+            "configured_limit": self.configured_limit,
+            "source_field": self.source_field,
+            "source_index": self.source_index,
+            "field_count": self.field_count,
+            "total_candidate_count": self.total_candidate_count,
+            "identifier_length": self.identifier_length,
+            "maximum_identifier_length": self.maximum_identifier_length,
+            "target_count": self.target_count,
+            "public_id_length": self.public_id_length,
+            "projected_semantic_size": self.projected_semantic_size,
+        }
+        return {key: value for key, value in values.items() if value is not None}
+
+
 class ReviewProposalTargetProjectionError(ValueError):
-    def __init__(self, code: str) -> None:
+    def __init__(
+        self,
+        code: str,
+        diagnostics: ReviewProposalTargetProjectionDiagnosticsV1 | None = None,
+    ) -> None:
         super().__init__(code)
         self.code = code
+        self.diagnostics = diagnostics
 
 
 class _ProposalV1(Protocol):
@@ -129,10 +173,27 @@ def build_review_proposal_target_set(
     for source_field, kind in _SOURCE_FIELDS:
         values = tuple(getattr(proposal.proposed_scope, source_field))
         if len(values) > MAX_TARGETS_PER_SOURCE_FIELD:
-            raise ReviewProposalTargetProjectionError("REVIEW_TARGET_SET_BUDGET_EXCEEDED")
+            raise ReviewProposalTargetProjectionError(
+                "REVIEW_TARGET_SET_BUDGET_EXCEEDED",
+                ReviewProposalTargetProjectionDiagnosticsV1(
+                    ReviewProposalTargetConstraintV1.TARGETS_PER_SOURCE_FIELD,
+                    MAX_TARGETS_PER_SOURCE_FIELD,
+                    source_field=source_field,
+                    field_count=len(values),
+                ),
+            )
         for source_index, exact_identifier in enumerate(values):
             if not exact_identifier or len(exact_identifier) > MAX_REVIEW_TARGET_IDENTIFIER_CHARS:
-                raise ReviewProposalTargetProjectionError("REVIEW_TARGET_SET_BUDGET_EXCEEDED")
+                raise ReviewProposalTargetProjectionError(
+                    "REVIEW_TARGET_SET_BUDGET_EXCEEDED",
+                    ReviewProposalTargetProjectionDiagnosticsV1(
+                        ReviewProposalTargetConstraintV1.IDENTIFIER_LENGTH,
+                        MAX_REVIEW_TARGET_IDENTIFIER_CHARS,
+                        source_field=source_field,
+                        source_index=source_index,
+                        identifier_length=len(exact_identifier),
+                    ),
+                )
             provenance = (kind, source_field, source_index)
             if exact_identifier in identifiers:
                 # Repeated semantic identifiers have contradictory source provenance.
@@ -140,21 +201,40 @@ def build_review_proposal_target_set(
             identifiers[exact_identifier] = provenance
             pending.append((kind, exact_identifier, source_field, source_index))
     if len(pending) > MAX_REVIEW_PROPOSAL_TARGETS:
-        raise ReviewProposalTargetProjectionError("REVIEW_TARGET_SET_BUDGET_EXCEEDED")
-
-    targets = tuple(
-        ReviewProposalTargetV1(
-            public_id=f"RT{index}",
-            kind=kind,
-            exact_identifier=identifier,
-            display_summary=_display_summary(identifier),
-            source_field=source_field,
-            source_index=source_index,
+        raise ReviewProposalTargetProjectionError(
+            "REVIEW_TARGET_SET_BUDGET_EXCEEDED",
+            ReviewProposalTargetProjectionDiagnosticsV1(
+                ReviewProposalTargetConstraintV1.TOTAL_TARGET_COUNT,
+                MAX_REVIEW_PROPOSAL_TARGETS,
+                total_candidate_count=len(pending),
+            ),
         )
-        for index, (kind, identifier, source_field, source_index) in enumerate(pending, start=1)
-    )
-    if any(len(target.public_id) > MAX_REVIEW_TARGET_PUBLIC_ID_CHARS for target in targets):
-        raise ReviewProposalTargetProjectionError("REVIEW_TARGET_SET_BUDGET_EXCEEDED")
+
+    target_values: list[ReviewProposalTargetV1] = []
+    for target_index, (kind, identifier, source_field, source_index) in enumerate(pending, start=1):
+        public_id = f"RT{target_index}"
+        if len(public_id) > MAX_REVIEW_TARGET_PUBLIC_ID_CHARS:
+            raise ReviewProposalTargetProjectionError(
+                "REVIEW_TARGET_SET_BUDGET_EXCEEDED",
+                ReviewProposalTargetProjectionDiagnosticsV1(
+                    ReviewProposalTargetConstraintV1.PUBLIC_ID_LENGTH,
+                    MAX_REVIEW_TARGET_PUBLIC_ID_CHARS,
+                    source_index=target_index - 1,
+                    target_count=len(pending),
+                    public_id_length=len(public_id),
+                ),
+            )
+        target_values.append(
+            ReviewProposalTargetV1(
+                public_id=public_id,
+                kind=kind,
+                exact_identifier=identifier,
+                display_summary=_display_summary(identifier),
+                source_field=source_field,
+                source_index=source_index,
+            )
+        )
+    targets = tuple(target_values)
 
     proposal_payload = proposal.payload()
     proposal_semantic_digest = digest(proposal_payload)
@@ -164,8 +244,16 @@ def build_review_proposal_target_set(
         "proposal_digest": proposal_semantic_digest,
         "targets": [target.semantic_payload() for target in targets],
     }
-    if len(canonical_json(semantic_payload)) > MAX_REVIEW_TARGET_SET_SERIALIZED_CHARS:
-        raise ReviewProposalTargetProjectionError("REVIEW_TARGET_SET_BUDGET_EXCEEDED")
+    semantic_size = len(canonical_json(semantic_payload))
+    if semantic_size > MAX_REVIEW_TARGET_SET_SERIALIZED_CHARS:
+        raise ReviewProposalTargetProjectionError(
+            "REVIEW_TARGET_SET_BUDGET_EXCEEDED",
+            ReviewProposalTargetProjectionDiagnosticsV1(
+                ReviewProposalTargetConstraintV1.SERIALIZED_SIZE,
+                MAX_REVIEW_TARGET_SET_SERIALIZED_CHARS,
+                projected_semantic_size=semantic_size,
+            ),
+        )
     return ReviewProposalTargetSetV1(
         proposal_identity=proposal_identity,
         proposal_digest=proposal_semantic_digest,

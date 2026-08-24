@@ -17,6 +17,10 @@ from app.development_analysis.models import (
     development_readiness,
     validate_development_analysis,
 )
+from app.development_analysis.review_targets import (
+    ReviewProposalTargetConstraintV1,
+    ReviewProposalTargetProjectionDiagnosticsV1,
+)
 from app.development_analysis.service import (
     DevelopmentAnalysisServiceV1,
     _development_retrieval_request,
@@ -426,6 +430,51 @@ def test_stage_parse_failure_keeps_completed_provider_stage_telemetry(
     assert result.lifecycle.events[-3].elapsed_ms == 22
     assert result.lifecycle.events[-1].stage.value == "PROPOSAL_PARSE"
     assert result.lifecycle.events[-1].status.value == "FAILED"
+
+
+def test_review_target_budget_diagnostics_reach_bounded_operator_sink(
+    tmp_path, monkeypatch
+) -> None:
+    from app.development_analysis import service
+
+    snapshot = RepositorySnapshotV1("a" * 40, True)
+    records = initial_records(snapshot=snapshot)
+    monkeypatch.setattr(service, "committed_snapshot", lambda _root: snapshot)
+    monkeypatch.setattr(service, "read_store", lambda _path: (records, manifest(records, snapshot)))
+    diagnostic = ReviewProposalTargetProjectionDiagnosticsV1(
+        ReviewProposalTargetConstraintV1.IDENTIFIER_LENGTH,
+        256,
+        source_field="proposed_behavior",
+        source_index=0,
+        identifier_length=300,
+    )
+
+    def runner(*_args):
+        raise DevelopmentStageError(
+            "REVIEW",
+            "REVIEW_TARGET_SET_BUDGET_EXCEEDED",
+            review_target_diagnostics=diagnostic,
+        )
+
+    captured = []
+    result = DevelopmentAnalysisServiceV1(
+        paths=_paths(tmp_path),
+        runner=runner,
+        role_available=lambda _role: True,
+        diagnostics_sink=captured.append,
+    ).analyze(
+        DevelopmentAnalysisRequestV1("Analyze DevelopmentAnalysisV1", DevelopmentModelRoleV1.CODE)
+    )
+
+    assert result.reason_code == "REVIEW_TARGET_SET_BUDGET_EXCEEDED"
+    assert captured == [diagnostic]
+    assert captured[0].payload() == {
+        "constraint": "IDENTIFIER_LENGTH",
+        "configured_limit": 256,
+        "source_field": "proposed_behavior",
+        "source_index": 0,
+        "identifier_length": 300,
+    }
 
 
 @pytest.mark.parametrize(

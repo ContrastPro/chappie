@@ -211,6 +211,8 @@ class DevelopmentAnalysisServiceV1:
                 self._diagnostics_sink(error.review_diagnostics)
             if error.proposal_diagnostics is not None and self._diagnostics_sink is not None:
                 self._diagnostics_sink(error.proposal_diagnostics)
+            if error.review_target_diagnostics is not None and self._diagnostics_sink is not None:
+                self._diagnostics_sink(error.review_target_diagnostics)
             _record_completed_staged_lifecycle(lifecycle, error.stage_elapsed_ms, error.stage)
             lifecycle.begin(_stage_failure_lifecycle_stage(error))
             return _failure(

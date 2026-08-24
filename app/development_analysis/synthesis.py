@@ -22,6 +22,7 @@ from app.development_analysis.models import (
     DevelopmentProposedScopeV1,
 )
 from app.development_analysis.review_targets import (
+    ReviewProposalTargetProjectionDiagnosticsV1,
     ReviewProposalTargetProjectionError,
     ReviewProposalTargetSetV1,
     build_review_proposal_target_set,
@@ -266,6 +267,7 @@ class DevelopmentStageError(AIValidationError):
         proposal_diagnostics: ProposalParseDiagnosticsV1 | None = None,
         grounding_diagnostics: GroundingParseDiagnosticsV1 | None = None,
         review_diagnostics: ReviewParseDiagnosticsV1 | None = None,
+        review_target_diagnostics: ReviewProposalTargetProjectionDiagnosticsV1 | None = None,
     ) -> None:
         super().__init__("development staged synthesis failed", code=code)
         self.stage = stage
@@ -273,6 +275,7 @@ class DevelopmentStageError(AIValidationError):
         self.proposal_diagnostics = proposal_diagnostics
         self.grounding_diagnostics = grounding_diagnostics
         self.review_diagnostics = review_diagnostics
+        self.review_target_diagnostics = review_target_diagnostics
 
 
 @dataclass(frozen=True, slots=True)
@@ -1222,7 +1225,9 @@ def _review_target_set(proposal: DevelopmentProposalV1) -> ReviewProposalTargetS
             proposal, proposal_identity=DEVELOPMENT_PROPOSAL_IDENTITY
         )
     except ReviewProposalTargetProjectionError as error:
-        raise DevelopmentStageError("REVIEW", error.code) from error
+        raise DevelopmentStageError(
+            "REVIEW", error.code, review_target_diagnostics=error.diagnostics
+        ) from error
 
 
 def _provider_response_length(result: object) -> int | None:
