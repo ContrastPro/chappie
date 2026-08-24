@@ -144,6 +144,42 @@ def test_bounded_documentation_review_is_projected_deterministically() -> None:
     assert all("RT" not in item for item in review.required_tests)
 
 
+def test_documentation_review_uses_grounding_evidence_not_contract_titles() -> None:
+    context_map = replace(_low_risk_context_map(), existing_contracts=())
+    context_map = replace(context_map, context_digest=build_context_digest(context_map))
+
+    review = project_deterministic_low_risk_review(
+        DevelopmentGroundingV1(("E1",), "Update bounded documentation.", ()),
+        _low_risk_proposal(),
+        context_map,
+        _low_risk_evidence(context_map),
+    )
+
+    assert review is not None
+    assert "supplied Grounding evidence" in review.required_tests[2]
+
+
+@pytest.mark.parametrize(
+    "grounding",
+    [
+        DevelopmentGroundingV1((), "Update bounded documentation.", ()),
+        DevelopmentGroundingV1(("E999",), "Update bounded documentation.", ()),
+    ],
+)
+def test_documentation_review_requires_exact_grounding_evidence(grounding) -> None:
+    context_map = _low_risk_context_map()
+
+    assert (
+        project_deterministic_low_risk_review(
+            grounding,
+            _low_risk_proposal(),
+            context_map,
+            _low_risk_evidence(context_map),
+        )
+        is None
+    )
+
+
 def test_bounded_existing_test_review_is_projected_deterministically() -> None:
     path = "tests/test_architecture_documentation.py"
     context_map = _low_risk_context_map(path)
@@ -203,6 +239,11 @@ def test_configuration_scope_is_not_assumed_low_risk() -> None:
         ),
         (_low_risk_proposal(), _low_risk_context_map(), False),
         (_low_risk_proposal("../unsafe.md"), _low_risk_context_map("../unsafe.md"), True),
+        (
+            _low_risk_proposal("docs/architecture/MISSING.md"),
+            _low_risk_context_map(),
+            True,
+        ),
     ],
 )
 def test_ineligible_scope_does_not_receive_deterministic_review(
@@ -322,6 +363,70 @@ def test_documentation_implementation_uses_two_provider_calls(monkeypatch) -> No
     ]
     assert output.review_mode is DevelopmentReviewModeV1.DETERMINISTIC_LOW_RISK
     assert output.stage_elapsed_ms[-1] == ("REVIEW_DETERMINISTIC", 0)
+
+
+def test_ineligible_documentation_scope_keeps_model_review_path(monkeypatch) -> None:
+    from app.development_analysis import synthesis
+
+    context_map = _low_risk_context_map()
+    monkeypatch.setattr(synthesis, "build_development_context_map", lambda *_args: context_map)
+    calls = []
+
+    class Provider:
+        def generate(self, request):
+            calls.append(request.prompt_version)
+            payload = (
+                {
+                    "relevant_evidence_handles": ["E1"],
+                    "task_interpretation": "Update bounded architecture documentation.",
+                    "unknowns": [],
+                }
+                if len(calls) == 1
+                else {
+                    "proposed_scope": {
+                        "proposed_owner": "app.development_analysis",
+                        "proposed_modified_files": ["docs/architecture/ARCHITECTURE.md"],
+                        "proposed_new_files": [],
+                        "proposed_contract_changes": [],
+                        "proposed_components": [],
+                        "proposed_behavior": ["Update bounded architecture documentation."],
+                        "rationale": ["The bounded change requires review."],
+                    },
+                    "proposal_unknowns": ["Scope requires review."],
+                }
+                if len(calls) == 2
+                else {
+                    "risks": ["Scope drift."],
+                    "required_tests": ["Verify RT1 remains present."],
+                    "non_goals": ["No mutation."],
+                    "acceptance_criteria": ["Confirm RT1 remains present."],
+                    "unresolved_unknowns": [],
+                    "confidence": 0.5,
+                }
+            )
+            return SimpleNamespace(structured_output=payload, latency_ms=1)
+
+    ai = SimpleNamespace(
+        config=SimpleNamespace(profile="LOCAL", temperature=0, timeout_seconds=1),
+        router=SimpleNamespace(provider_for=lambda _profile: Provider()),
+    )
+    request = SimpleNamespace(
+        request="Update bounded architecture documentation.",
+        requested_intent=DevelopmentTaskIntentKindV1.IMPLEMENTATION,
+    )
+    output = synthesize_development(
+        ai,
+        request,
+        SimpleNamespace(records=(), context_digest=context_map.knowledge_context_digest),
+        _low_risk_evidence(context_map),
+    )
+
+    assert calls == [
+        "chappie_development_grounding/1.0.0",
+        "chappie_development_proposal/1.0.0",
+        "chappie_development_review/1.0.0",
+    ]
+    assert output.review_mode is DevelopmentReviewModeV1.MODEL_REVIEW
 
 
 def test_deterministic_review_lifecycle_proves_no_review_synthesis() -> None:

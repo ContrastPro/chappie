@@ -494,6 +494,7 @@ def project_deterministic_low_risk_review(
     """Project Review evidence only for an exact, proven non-production scope."""
     scope = proposal.proposed_scope
     files = scope.proposed_modified_files
+    allowed_evidence_handles = {item.handle for item in context_map.evidence_handles}
     if not (
         getattr(evidence, "repository_clean", False)
         and evidence.source_commit == context_map.source_commit
@@ -512,7 +513,7 @@ def project_deterministic_low_risk_review(
         and not grounding.unknowns
         and not proposal.proposal_unknowns
         and grounding.relevant_evidence_handles
-        and context_map.existing_contracts
+        and set(grounding.relevant_evidence_handles).issubset(allowed_evidence_handles)
         and scope.proposed_behavior
         and scope.rationale
     ):
@@ -536,7 +537,7 @@ def project_deterministic_low_risk_review(
         required_tests=(
             f"Verify only the approved {label} paths change: {joined}.",
             "Verify production source remains unchanged and repository static checks pass.",
-            "Verify referenced runtime contracts or symbols exist in the supplied bounded evidence.",
+            "Verify the documentation remains consistent with the exact supplied Grounding evidence.",
             "Verify the resulting diff remains inside the approved Proposal scope.",
         ),
         non_goals=(
