@@ -19,6 +19,13 @@ from app.development_analysis.models import (
     DevelopmentDiffTestEvidenceV1,
     development_analysis_from_payload,
 )
+from app.development_analysis.outcome import (
+    DEVELOPMENT_OUTCOME_IDENTITY,
+    DevelopmentOutcomeStatusV1,
+    DevelopmentOutcomeV1,
+    deduplicate_development_unknowns,
+    project_development_outcome,
+)
 from app.development_analysis.service import DevelopmentAnalysisServiceV1
 from app.development_analysis.synthesis import (
     DevelopmentGroundingV1,
@@ -41,6 +48,7 @@ __all__ = (
     "CODEX_TASK_IDENTITY",
     "DEVELOPMENT_ANALYSIS_IDENTITY",
     "DEVELOPMENT_DIFF_REVIEW_IDENTITY",
+    "DEVELOPMENT_OUTCOME_IDENTITY",
     "CodexHandoffV1",
     "CodexTaskPreparationRequestV1",
     "CodexTaskStateV1",
@@ -61,11 +69,15 @@ __all__ = (
     "DevelopmentDiffReviewV1",
     "DevelopmentDiffTestEvidenceV1",
     "DevelopmentGroundingV1",
+    "DevelopmentOutcomeStatusV1",
+    "DevelopmentOutcomeV1",
     "DevelopmentProposalV1",
     "DevelopmentReviewV1",
     "DevelopmentStagedSynthesisOutputV1",
+    "deduplicate_development_unknowns",
     "development_analysis_from_payload",
     "prepare_codex_handoff",
     "prepare_codex_task",
+    "project_development_outcome",
     "review_development_diff",
 )

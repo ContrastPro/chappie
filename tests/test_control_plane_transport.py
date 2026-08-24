@@ -291,6 +291,20 @@ def test_development_analysis_transport_round_trip_is_read_only(server) -> None:
     assert status == 200
     assert body["data"]["state"] == "OK"
     assert body["data"]["inferences"] == ["bounded inference"]
+    assert body["data"]["outcome"] == {
+        "identity": "chappie_development_outcome/1.0.0",
+        "status": "COMPLETED",
+        "blocker_code": None,
+        "explanation": "Development analysis completed with sufficient bounded evidence.",
+        "required_context": None,
+        "suggested_next_action": "Review the advisory analysis and obtain human approval before implementation.",
+        "safe_to_retry": False,
+        "request_id": None,
+        "failed_stage": None,
+        "reason_code": None,
+        "no_changes_made": True,
+        "why_it_blocks": "",
+    }
     diagnostic = server.get_development_diagnostic(body["request_id"])
     assert diagnostic is not None
     assert diagnostic["status"] == "COMPLETED"

@@ -445,6 +445,11 @@ class ChappieControlPlaneServerV1:
                     workspace_context=value.get("workspace_context"),
                 )
                 payload = response.payload()
+                from app.development_analysis.outcome import project_development_outcome
+
+                outcome = project_development_outcome(response)
+                payload["outcome"] = outcome.payload()
+                payload["unknowns"] = list(outcome.unknowns)
                 diagnostics = self._record_development_diagnostic(
                     request_id, _development_diagnostics(payload, request_id=request_id)
                 )

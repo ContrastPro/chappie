@@ -193,13 +193,17 @@ function parseProjectQA(value: unknown): ProjectQAResponseV1 {
 }
 
 function parseDevelopmentAnalysis(value: unknown): DevelopmentAnalysisV1 {
-  if (!isRecord(value) || value.identity !== "chappie_development_analysis/2.0.0" || typeof value.state !== "string" || typeof value.request !== "string" || !isStringArray(value.facts) || !isStringArray(value.inferences) || !isStringArray(value.unknowns) || !isStringArray(value.architecture_owners) || !isStringArray(value.affected_contracts) || !isStringArray(value.likely_files) || !isStringArray(value.risks) || !isStringArray(value.required_tests) || !isStringArray(value.non_goals) || !isStringArray(value.acceptance_criteria) || !isStringArray(value.current_evidence_handles) || (value.context_map !== null && !isRecord(value.context_map)) || (value.proposed_scope !== null && !isRecord(value.proposed_scope)) || typeof value.validation_status !== "string" || (value.readiness !== null && value.readiness !== "READY_FOR_TASK" && value.readiness !== "INSUFFICIENT_EVIDENCE" && value.readiness !== "NEEDS_REVIEW") || (value.reason_code !== null && typeof value.reason_code !== "string")) {
+  if (!isRecord(value) || value.identity !== "chappie_development_analysis/2.0.0" || typeof value.state !== "string" || typeof value.request !== "string" || !isStringArray(value.facts) || !isStringArray(value.inferences) || !isStringArray(value.unknowns) || !isStringArray(value.architecture_owners) || !isStringArray(value.affected_contracts) || !isStringArray(value.likely_files) || !isStringArray(value.risks) || !isStringArray(value.required_tests) || !isStringArray(value.non_goals) || !isStringArray(value.acceptance_criteria) || !isStringArray(value.current_evidence_handles) || (value.context_map !== null && !isRecord(value.context_map)) || (value.proposed_scope !== null && !isRecord(value.proposed_scope)) || typeof value.validation_status !== "string" || (value.readiness !== null && value.readiness !== "READY_FOR_TASK" && value.readiness !== "INSUFFICIENT_EVIDENCE" && value.readiness !== "NEEDS_REVIEW") || (value.reason_code !== null && typeof value.reason_code !== "string") || (value.outcome !== undefined && !isDevelopmentOutcome(value.outcome))) {
     throw new ControlPlaneClientError("Control Plane returned an invalid Development Analysis response");
   }
   if (value.lifecycle !== undefined && value.lifecycle !== null && !isDevelopmentLifecycle(value.lifecycle)) {
     throw new ControlPlaneClientError("Control Plane returned invalid Development lifecycle telemetry");
   }
   return value as unknown as DevelopmentAnalysisV1;
+}
+
+function isDevelopmentOutcome(value: unknown): boolean {
+  return isRecord(value) && value.identity === "chappie_development_outcome/1.0.0" && ["COMPLETED", "NEEDS_CONTEXT", "NEEDS_HUMAN_REVIEW", "UNSUPPORTED_WITH_CURRENT_CAPABILITIES", "SYSTEM_FAILURE"].includes(String(value.status)) && (value.blocker_code === null || typeof value.blocker_code === "string") && typeof value.explanation === "string" && (value.required_context === null || typeof value.required_context === "string") && typeof value.suggested_next_action === "string" && typeof value.safe_to_retry === "boolean" && (value.request_id === null || typeof value.request_id === "string") && (value.failed_stage === null || typeof value.failed_stage === "string") && (value.reason_code === null || typeof value.reason_code === "string") && typeof value.no_changes_made === "boolean" && typeof value.why_it_blocks === "string";
 }
 
 function isDevelopmentLifecycle(value: unknown): boolean {

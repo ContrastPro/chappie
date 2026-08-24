@@ -20,6 +20,10 @@ from app.development_analysis.models import (
     DevelopmentAnalysisV1,
     development_analysis_from_payload,
 )
+from app.development_analysis.outcome import (
+    DevelopmentOutcomeStatusV1,
+    project_development_outcome,
+)
 from app.development_analysis.task import (
     CODEX_TASK_IDENTITY,
     CodexTaskStateV1,
@@ -165,6 +169,8 @@ def persist_authorization_pair(
     path: Path, analysis: DevelopmentAnalysisV1, handoff: CodexTaskV1
 ) -> AuthorizationPairV1:
     """Atomically persist a new immutable local acceptance artifact."""
+    if project_development_outcome(analysis).status is not DevelopmentOutcomeStatusV1.COMPLETED:
+        raise ValueError("development analysis outcome is not implementation-authorizable")
     if path.exists():
         raise FileExistsError("authorization pair artifact already exists")
     payload = authorization_pair_payload(analysis, handoff)

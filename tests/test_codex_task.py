@@ -247,3 +247,11 @@ def test_non_ready_analysis_cannot_prepare_codex_task(readiness) -> None:
     task = prepare_codex_task(CodexTaskPreparationRequestV1(_analysis(readiness=readiness)))
     assert task.state == CodexTaskStateV1.VALIDATION_ERROR
     assert task.reason_code == "SOURCE_ANALYSIS_NOT_READY"
+
+
+def test_ready_analysis_with_blocking_repository_context_cannot_prepare_codex_task() -> None:
+    analysis = _analysis(unknowns=("Full repository file inventory unavailable.",))
+    task = prepare_codex_task(CodexTaskPreparationRequestV1(analysis))
+    assert task.state == CodexTaskStateV1.VALIDATION_ERROR
+    assert task.reason_code == "SOURCE_ANALYSIS_OUTCOME_NOT_AUTHORIZABLE"
+    assert task.task_id == ""

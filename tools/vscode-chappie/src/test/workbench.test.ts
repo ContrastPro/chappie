@@ -457,6 +457,22 @@ test("Workbench Development mode is explicit and renders only advisory Codex tas
   assert.doesNotMatch(host, /child_process\.exec|Codex invocation/);
 });
 
+test("Workbench presents bounded Development outcomes separately from technical diagnostics", () => {
+  const script = workbenchRendererScript();
+  const host = readFileSync("src/ui/workbench.ts", "utf8");
+  assert.match(script, /enrichDevelopmentOutcomes/);
+  assert.match(script, /Status: '\+outcome\.status/);
+  assert.match(script, /Required context/);
+  assert.match(script, /Suggested next action/);
+  assert.match(script, /enrichDevelopmentOutcomeInspector/);
+  assert.match(script, /Request ID/);
+  assert.match(script, /Failed stage/);
+  assert.match(script, /button\[title="Prepare Codex Task"\]/);
+  assert.match(host, /turn\.development\.outcome !== undefined/);
+  assert.match(host, /outcome\.status !== "COMPLETED"/);
+  assert.doesNotMatch(script, /raw provider payload|chain.of.thought|Knowledge text/i);
+});
+
 test("Workbench Webview renderer remains executable with current controls", () => {
   const script = workbenchRendererScript();
   assert.doesNotThrow(() => new Function(script));

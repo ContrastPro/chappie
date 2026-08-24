@@ -28,6 +28,10 @@ from app.development_analysis.models import (
     DevelopmentProposedScopeV1,
     validate_development_analysis,
 )
+from app.development_analysis.outcome import (
+    DevelopmentOutcomeStatusV1,
+    project_development_outcome,
+)
 
 
 def review_development_diff(request: DevelopmentDiffReviewRequestV1) -> DevelopmentDiffReviewV1:
@@ -664,6 +668,8 @@ def prepare_codex_task(request: CodexTaskPreparationRequestV1) -> CodexTaskV1:
         validate_development_analysis(analysis)
         if analysis.readiness != DevelopmentAnalysisReadinessV1.READY_FOR_TASK:
             raise ValueError("SOURCE_ANALYSIS_NOT_READY")
+        if project_development_outcome(analysis).status is not DevelopmentOutcomeStatusV1.COMPLETED:
+            raise ValueError("SOURCE_ANALYSIS_OUTCOME_NOT_AUTHORIZABLE")
     except ValueError as error:
         return _invalid(analysis, str(error))
     task_id = digest(
