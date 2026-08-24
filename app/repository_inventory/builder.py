@@ -11,6 +11,12 @@ from pathlib import Path, PurePosixPath
 
 from app.repository_inventory.git_source import GitSourceError, read_tracked_snapshot
 from app.repository_inventory.models import (
+    APPROVED_TRACKED_FIXTURE_EVIDENCE,
+    FORBIDDEN_CREDENTIAL_PARTS,
+    FORBIDDEN_LOCAL_STATE_ROOTS,
+    FORBIDDEN_LOCAL_STATE_SUFFIXES,
+    FORBIDDEN_PRIVATE_KEY_NAMES,
+    FORBIDDEN_PRIVATE_KEY_SUFFIXES,
     MAX_DECLARED_SYMBOLS,
     MAX_DECLARED_SYMBOLS_PER_FILE,
     MAX_PARSEABLE_FILE_BYTES,
@@ -21,6 +27,7 @@ from app.repository_inventory.models import (
     MAX_TOTAL_FILE_BYTES,
     MAX_TRACKED_FILES,
     POLICY_DIGEST,
+    SAFE_ENV_TEMPLATE_NAMES,
     ArtifactClassificationV1,
     KnowledgeSourceMetadataV1,
     ReferenceCoverageV1,
@@ -38,7 +45,6 @@ from app.repository_inventory.models import (
     semantic_digest,
 )
 
-_SECRET_PARTS = {".env", ".venv", "credentials", "secrets", "logs", "cache", "runtime"}
 _SOURCE_SUFFIXES = {".py", ".ts", ".tsx", ".js", ".jsx"}
 _DOC_SUFFIXES = {".md", ".rst", ".txt"}
 _CONFIG_NAMES = {
@@ -55,6 +61,55 @@ _STATIC_IMPORT = re.compile(
 )
 _MD_LINK = re.compile(r"\[[^\]]*\]\(([^)#]+)(?:#[^)]+)?\)")
 _LITERAL_PATH = re.compile(r"[\"']((?:app|tests|docs|tools)/[^\"']+)[\"']")
+
+
+def forbidden_tracked_path_category(path: str, *, proven_test_fixture: bool = False) -> str | None:
+    """Classify unsafe tracked paths using exact repository-relative semantics."""
+
+    normalized = PurePosixPath(path)
+    parts = tuple(part.casefold() for part in normalized.parts)
+    name = normalized.name.casefold()
+    suffix = normalized.suffix.casefold()
+    if name in SAFE_ENV_TEMPLATE_NAMES:
+        return None
+    if name == ".env" or name.startswith(".env."):
+        return "SECRET_ENV_FILE"
+    if parts and parts[0] in FORBIDDEN_LOCAL_STATE_ROOTS:
+        return "LOCAL_STATE_ROOT"
+    if suffix in FORBIDDEN_LOCAL_STATE_SUFFIXES:
+        if proven_test_fixture and len(parts) == 3 and parts[:2] == ("tests", "fixtures"):
+            return None
+        return "LOCAL_STATE_FILE"
+    if any(part in FORBIDDEN_CREDENTIAL_PARTS for part in parts):
+        return "CREDENTIAL_PATH"
+    stem = normalized.stem.casefold()
+    if (
+        suffix in FORBIDDEN_PRIVATE_KEY_SUFFIXES
+        or name in FORBIDDEN_PRIVATE_KEY_NAMES
+        or stem in {"credentials", "credential", "secrets", "secret", "tokens", "token"}
+        or stem.endswith(("_credentials", "_credential", "_private_key", "_api_key"))
+    ):
+        return "CREDENTIAL_FILE"
+    return None
+
+
+def _verified_test_fixture_evidence(root: Path, tracked: set[str]) -> dict[str, str]:
+    verified: dict[str, str] = {}
+    for fixture_path, consumer_path in APPROVED_TRACKED_FIXTURE_EVIDENCE:
+        if fixture_path not in tracked or consumer_path not in tracked:
+            continue
+        consumer = (root / Path(*PurePosixPath(consumer_path).parts)).resolve(strict=True)
+        if consumer != root and root not in consumer.parents:
+            continue
+        if consumer.stat().st_size > MAX_PARSEABLE_FILE_BYTES:
+            continue
+        try:
+            text = consumer.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        if PurePosixPath(fixture_path).name in text:
+            verified[fixture_path] = consumer_path
+    return verified
 
 
 def _taxonomy(path: str) -> tuple[RepositoryFileKindV1, ArtifactClassificationV1]:
@@ -332,6 +387,7 @@ def build_repository_inventory(
     knowledge_sources: tuple[KnowledgeSourceMetadataV1, ...] = (),
 ) -> RepositoryInventoryV1:
     try:
+        root = repository_root.resolve(strict=True)
         snapshot = read_tracked_snapshot(repository_root)
     except (GitSourceError, OSError, ValueError, TimeoutError):
         return _failed(
@@ -359,9 +415,12 @@ def build_repository_inventory(
             counts={"tracked_files": len(snapshot.paths)},
         )
     tracked = set(snapshot.paths)
+    fixture_evidence = _verified_test_fixture_evidence(root, tracked)
     for path in snapshot.paths:
-        parts = {part.lower() for part in PurePosixPath(path).parts}
-        if parts & _SECRET_PARTS or PurePosixPath(path).name.lower().startswith(".env"):
+        if (
+            forbidden_tracked_path_category(path, proven_test_fixture=path in fixture_evidence)
+            is not None
+        ):
             return _failed(
                 request,
                 RepositoryInventoryStateV1.INVALID_REPOSITORY_METADATA,
@@ -375,7 +434,6 @@ def build_repository_inventory(
             "KNOWLEDGE_SOURCE_NOT_TRACKED",
             clean=True,
         )
-    root = repository_root.resolve(strict=True)
     files, symbols, relations = [], [], []
     total = 0
     for path in snapshot.paths:
@@ -473,6 +531,20 @@ def build_repository_inventory(
                     "KNOWLEDGE_METADATA",
                     "source",
                     digest,
+                )
+            )
+    if RepositoryRelationKindV1.USES_FIXTURE in request.requested_relation_kinds:
+        file_digests = {item.path: item.content_digest for item in files}
+        for fixture_path, consumer_path in sorted(fixture_evidence.items()):
+            relations.append(
+                _relation(
+                    RepositoryRelationKindV1.USES_FIXTURE,
+                    consumer_path,
+                    RepositoryTargetKindV1.FILE,
+                    fixture_path,
+                    "TRACKED_TEST_FIXTURE",
+                    f"literal:{PurePosixPath(fixture_path).name}",
+                    file_digests[consumer_path],
                 )
             )
     symbols = sorted(

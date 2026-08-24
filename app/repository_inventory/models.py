@@ -11,7 +11,20 @@ from pathlib import PurePosixPath
 
 REPOSITORY_INVENTORY_IDENTITY = "chappie_repository_inventory/1.0.0"
 REPOSITORY_INVENTORY_REQUEST_IDENTITY = "chappie_repository_inventory_request/1.0.0"
-REPOSITORY_INVENTORY_POLICY_IDENTITY = "chappie_repository_inventory_policy/1.0.0"
+REPOSITORY_INVENTORY_POLICY_IDENTITY = "chappie_repository_inventory_policy/1.0.2"
+
+SAFE_ENV_TEMPLATE_NAMES = (".env.example", ".env.sample", ".env.template")
+FORBIDDEN_LOCAL_STATE_ROOTS = ("cache", "data", "logs", "runtime", "tmp", "var")
+FORBIDDEN_LOCAL_STATE_SUFFIXES = (".db", ".log", ".sqlite", ".sqlite3")
+FORBIDDEN_CREDENTIAL_PARTS = ("credentials", "secrets", "tokens")
+FORBIDDEN_PRIVATE_KEY_SUFFIXES = (".key", ".p12", ".pem", ".pfx")
+FORBIDDEN_PRIVATE_KEY_NAMES = ("id_dsa", "id_ecdsa", "id_ed25519", "id_rsa")
+APPROVED_TRACKED_FIXTURE_EVIDENCE = (
+    (
+        "tests/fixtures/m4_10_recovery_proof_v6.sqlite3",
+        "tests/test_m410_recovery_proof.py",
+    ),
+)
 
 MAX_TRACKED_FILES = 2048
 MAX_RELATIONS = 8192
@@ -349,8 +362,8 @@ class RepositoryInventoryV1:
         return value
 
 
-POLICY_DIGEST = semantic_digest(
-    {
+def repository_inventory_policy_payload() -> dict[str, object]:
+    return {
         "identity": REPOSITORY_INVENTORY_POLICY_IDENTITY,
         "limits": {
             name: value
@@ -359,5 +372,18 @@ POLICY_DIGEST = semantic_digest(
         },
         "scope": "TRACKED_FILES",
         "relations": [item.value for item in RepositoryRelationKindV1],
+        "path_policy": {
+            "safe_env_templates": SAFE_ENV_TEMPLATE_NAMES,
+            "forbidden_local_state_roots": FORBIDDEN_LOCAL_STATE_ROOTS,
+            "forbidden_local_state_suffixes": FORBIDDEN_LOCAL_STATE_SUFFIXES,
+            "forbidden_credential_parts": FORBIDDEN_CREDENTIAL_PARTS,
+            "forbidden_private_key_suffixes": FORBIDDEN_PRIVATE_KEY_SUFFIXES,
+            "forbidden_private_key_names": FORBIDDEN_PRIVATE_KEY_NAMES,
+            "approved_tracked_fixture_evidence": APPROVED_TRACKED_FIXTURE_EVIDENCE,
+            "env_rule": "EXACT_TEMPLATE_ALLOWLIST_OTHER_ENV_NAMES_FORBIDDEN",
+            "root_rule": "REPOSITORY_ROOT_ONLY",
+        },
     }
-)
+
+
+POLICY_DIGEST = semantic_digest(repository_inventory_policy_payload())

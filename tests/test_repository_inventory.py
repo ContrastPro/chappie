@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from app.repository_inventory import (
+    POLICY_DIGEST,
     REPOSITORY_INVENTORY_IDENTITY,
     KnowledgeSourceMetadataV1,
     ReferenceCoverageV1,
@@ -16,8 +17,11 @@ from app.repository_inventory import (
     RepositoryRelationKindV1,
     build_repository_inventory,
     builder,
+    forbidden_tracked_path_category,
     git_source,
+    repository_inventory_policy_payload,
 )
+from app.repository_inventory.models import semantic_digest
 
 ALL_RELATIONS = tuple(RepositoryRelationKindV1)
 
@@ -193,6 +197,121 @@ def test_safe_path_validation_rejects_traversal() -> None:
     source = KnowledgeSourceMetadataV1("record-1", "3" * 64, "app/example/__init__.py")
     with pytest.raises(ValueError):
         replace(source, source_path="../outside")
+
+
+@pytest.mark.parametrize(
+    "path",
+    (
+        ".env.example",
+        ".env.sample",
+        ".env.template",
+        "app/runtime/__init__.py",
+        "app/runtime/service.py",
+        "app/research/runtime_adapter.py",
+        "app/research/data_loader.py",
+        "app/research/log_parser.py",
+    ),
+)
+def test_safe_templates_and_source_names_are_allowed(path: str) -> None:
+    assert forbidden_tracked_path_category(path) is None
+
+
+@pytest.mark.parametrize(
+    ("path", "category"),
+    (
+        (".env", "SECRET_ENV_FILE"),
+        (".env.local", "SECRET_ENV_FILE"),
+        (".env.production", "SECRET_ENV_FILE"),
+        (".env.development", "SECRET_ENV_FILE"),
+        (".env.production.local", "SECRET_ENV_FILE"),
+        ("credentials.json", "CREDENTIAL_FILE"),
+        ("config/private_key.pem", "CREDENTIAL_FILE"),
+        ("state.db", "LOCAL_STATE_FILE"),
+        ("state.sqlite", "LOCAL_STATE_FILE"),
+        ("state.sqlite3", "LOCAL_STATE_FILE"),
+        ("service.log", "LOCAL_STATE_FILE"),
+        ("cache/state.json", "LOCAL_STATE_ROOT"),
+        ("runtime/status.json", "LOCAL_STATE_ROOT"),
+    ),
+)
+def test_secret_and_local_state_paths_are_rejected(path: str, category: str) -> None:
+    assert forbidden_tracked_path_category(path) == category
+
+
+def test_forbidden_path_is_classified_before_content_read(
+    repository: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = repository / ".env.local"
+    target.write_text("NEVER_READ", encoding="utf-8")
+    subprocess.run(("git", "add", "-f", ".env.local"), cwd=repository, check=True)
+    subprocess.run(("git", "commit", "-qm", "tracked local env"), cwd=repository, check=True)
+
+    def forbidden_read(_self: Path) -> bytes:
+        raise AssertionError("tracked secret content must not be read")
+
+    monkeypatch.setattr(Path, "read_bytes", forbidden_read)
+    result = build_repository_inventory(_request(repository), repository)
+    assert result.reason_code == "FORBIDDEN_TRACKED_PATH"
+
+
+def test_policy_digest_is_deterministic_and_semantics_bound() -> None:
+    payload = repository_inventory_policy_payload()
+    assert POLICY_DIGEST == semantic_digest(payload)
+    assert POLICY_DIGEST == semantic_digest(repository_inventory_policy_payload())
+    changed = {**payload, "env_rule": "different"}
+    assert semantic_digest(changed) != POLICY_DIGEST
+
+
+def test_exact_proven_sqlite_fixture_is_allowed_and_classified_as_test(
+    repository: Path,
+) -> None:
+    fixture_path = "tests/fixtures/m4_10_recovery_proof_v6.sqlite3"
+    fixture = repository / fixture_path
+    fixture.parent.mkdir(parents=True, exist_ok=True)
+    fixture.write_bytes(b"deterministic fixture")
+    consumer = repository / "tests/test_m410_recovery_proof.py"
+    consumer.write_text('FIXTURE = "m4_10_recovery_proof_v6.sqlite3"\n', encoding="utf-8")
+    subprocess.run(("git", "add", "."), cwd=repository, check=True)
+    subprocess.run(("git", "commit", "-qm", "fixture evidence"), cwd=repository, check=True)
+
+    result = build_repository_inventory(_request(repository), repository)
+
+    assert result.state is RepositoryInventoryStateV1.COMPLETE
+    record = next(item for item in result.files if item.path == fixture_path)
+    assert record.file_kind is RepositoryFileKindV1.TEST
+    assert any(
+        item.relation_kind is RepositoryRelationKindV1.USES_FIXTURE
+        and item.source_path == "tests/test_m410_recovery_proof.py"
+        and item.target_ref == fixture_path
+        for item in result.relations
+    )
+
+
+def test_sqlite_fixture_requires_exact_path_and_direct_consumer_evidence(
+    repository: Path,
+) -> None:
+    assert (
+        forbidden_tracked_path_category(
+            "tests/fixtures/m4_10_recovery_proof_v6.sqlite3",
+            proven_test_fixture=True,
+        )
+        is None
+    )
+    assert (
+        forbidden_tracked_path_category(
+            "other/fixtures/m4_10_recovery_proof_v6.sqlite3",
+            proven_test_fixture=True,
+        )
+        == "LOCAL_STATE_FILE"
+    )
+
+    fixture = repository / "tests/fixtures/m4_10_recovery_proof_v6.sqlite3"
+    fixture.parent.mkdir(parents=True, exist_ok=True)
+    fixture.write_bytes(b"unreferenced")
+    subprocess.run(("git", "add", "."), cwd=repository, check=True)
+    subprocess.run(("git", "commit", "-qm", "unreferenced fixture"), cwd=repository, check=True)
+    result = build_repository_inventory(_request(repository), repository)
+    assert result.reason_code == "FORBIDDEN_TRACKED_PATH"
 
 
 def test_parse_failure_and_unsupported_coverage(repository: Path) -> None:
