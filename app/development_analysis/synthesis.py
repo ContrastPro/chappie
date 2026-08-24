@@ -6,6 +6,8 @@ import re
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
+from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from app.ai.errors import AIProviderError, AIProviderTimeoutError, AIValidationError
@@ -13,7 +15,11 @@ from app.ai.models import ModelRequest
 from app.ai.project_qa import knowledge_facts
 from app.ai.schemas import canonical_json, digest
 from app.ai.tasks import AITask
-from app.development_analysis.context import DevelopmentContextMapV1, build_development_context_map
+from app.development_analysis.context import (
+    DevelopmentContextMapV1,
+    build_context_digest,
+    build_development_context_map,
+)
 from app.development_analysis.models import (
     DevelopmentCitationFailureV1,
     DevelopmentCitationKindV1,
@@ -36,6 +42,13 @@ DEVELOPMENT_SYNTHESIS_IDENTITY = "chappie_development_synthesis/2.0.0"
 DEVELOPMENT_GROUNDING_IDENTITY = "chappie_development_grounding/1.0.0"
 DEVELOPMENT_PROPOSAL_IDENTITY = "chappie_development_proposal/1.0.0"
 DEVELOPMENT_REVIEW_IDENTITY = "chappie_development_review/1.0.0"
+
+
+class DevelopmentReviewModeV1(StrEnum):
+    DETERMINISTIC_LOW_RISK = "DETERMINISTIC_LOW_RISK"
+    MODEL_REVIEW = "MODEL_REVIEW"
+
+
 DEVELOPMENT_SYNTHESIS_SCHEMA: dict[str, Any] = {
     "type": "object",
     "additionalProperties": False,
@@ -466,6 +479,89 @@ class DevelopmentStagedSynthesisOutputV1:
     proposal: DevelopmentProposalV1
     review: DevelopmentReviewV1
     stage_elapsed_ms: tuple[tuple[str, int], ...] = ()
+    review_mode: DevelopmentReviewModeV1 = DevelopmentReviewModeV1.MODEL_REVIEW
+
+
+MAX_DETERMINISTIC_REVIEW_FILES = 8
+
+
+def project_deterministic_low_risk_review(
+    grounding: DevelopmentGroundingV1,
+    proposal: DevelopmentProposalV1,
+    context_map: DevelopmentContextMapV1,
+    evidence: DevelopmentEvidencePackV1,
+) -> DevelopmentReviewV1 | None:
+    """Project Review evidence only for an exact, proven non-production scope."""
+    scope = proposal.proposed_scope
+    files = scope.proposed_modified_files
+    if not (
+        getattr(evidence, "repository_clean", False)
+        and evidence.source_commit == context_map.source_commit
+        and evidence.evidence_digest == context_map.evidence_digest
+        and evidence.knowledge_manifest_digest == context_map.knowledge_manifest_digest
+        and evidence.knowledge_context_digest == context_map.knowledge_context_digest
+        and evidence.requested_role.value == context_map.requested_role
+        and evidence.effective_model == context_map.effective_model
+        and context_map.context_digest == build_context_digest(context_map)
+        and len(context_map.owner_candidates) == 1
+        and scope.proposed_owner == context_map.owner_candidates[0]
+        and 0 < len(files) <= MAX_DETERMINISTIC_REVIEW_FILES
+        and not scope.proposed_new_files
+        and not scope.proposed_contract_changes
+        and not scope.proposed_components
+        and not grounding.unknowns
+        and not proposal.proposal_unknowns
+        and grounding.relevant_evidence_handles
+        and context_map.existing_contracts
+        and scope.proposed_behavior
+        and scope.rationale
+    ):
+        return None
+    normalized = tuple(path.replace("\\", "/") for path in files)
+    if len(set(normalized)) != len(normalized) or any(
+        not _safe_proposed_path(path) or path not in context_map.existing_files
+        for path in normalized
+    ):
+        return None
+    kinds = {_low_risk_file_kind(path) for path in normalized}
+    if None in kinds or len(kinds) != 1:
+        return None
+    kind = kinds.pop()
+    label = "documentation" if kind == "DOCUMENTATION" else "test"
+    joined = ", ".join(normalized)
+    return DevelopmentReviewV1(
+        risks=(
+            f"The bounded {label} change in {joined} could diverge from supplied current evidence.",
+        ),
+        required_tests=(
+            f"Verify only the approved {label} paths change: {joined}.",
+            "Verify production source remains unchanged and repository static checks pass.",
+            "Verify referenced runtime contracts or symbols exist in the supplied bounded evidence.",
+            "Verify the resulting diff remains inside the approved Proposal scope.",
+        ),
+        non_goals=(
+            "No production runtime behavior or contract change.",
+            "No file, shell, Git, Knowledge, trading, Risk, or execution authority.",
+        ),
+        acceptance_criteria=(
+            f"The bounded {label} update changes only approved paths: {joined}.",
+            "Production source remains unchanged and no unsupported authority is claimed.",
+            "Applicable repository static checks pass and the diff matches the approved Proposal scope.",
+        ),
+        unresolved_unknowns=(
+            "Runtime details outside the supplied bounded evidence remain unknown.",
+        ),
+        confidence=1.0,
+    )
+
+
+def _low_risk_file_kind(path: str) -> str | None:
+    parsed = PurePosixPath(path)
+    if parsed.suffix.casefold() == ".md" and parsed.parts[:1] == ("docs",):
+        return "DOCUMENTATION"
+    if parsed.suffix.casefold() == ".py" and parsed.parts[:1] == ("tests",):
+        return "TEST"
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1155,7 +1251,7 @@ def synthesize_development(
     context: KnowledgeContextV1,
     evidence: DevelopmentEvidencePackV1,
 ) -> DevelopmentStagedSynthesisOutputV1 | DevelopmentIntentSynthesisOutputV1:
-    """Run three small, fail-closed Development reasoning stages using one selected model."""
+    """Run bounded fail-closed Development stages using one selected model."""
     now = datetime.now(tz=UTC)
     facts = knowledge_facts(context, now)
     allowed_fact_ids = tuple(sorted({fact.fact_id for fact in facts}))
@@ -1338,6 +1434,23 @@ def synthesize_development(
         )
         error.completed_grounding = grounding
         raise
+    deterministic_review = (
+        project_deterministic_low_risk_review(grounding, proposal, context_map, evidence)
+        if intent is DevelopmentTaskIntentKindV1.IMPLEMENTATION
+        else None
+    )
+    if deterministic_review is not None:
+        return DevelopmentStagedSynthesisOutputV1(
+            grounding,
+            proposal,
+            deterministic_review,
+            (
+                ("GROUNDING_SYNTHESIS", grounding_result.latency_ms),
+                ("PROPOSAL_SYNTHESIS", proposal_result.latency_ms),
+                ("REVIEW_DETERMINISTIC", 0),
+            ),
+            DevelopmentReviewModeV1.DETERMINISTIC_LOW_RISK,
+        )
     try:
         review_targets = _review_target_set(proposal)
     except DevelopmentStageError as error:
@@ -1415,6 +1528,7 @@ def synthesize_development(
             ("PROPOSAL_SYNTHESIS", proposal_result.latency_ms),
             ("REVIEW_SYNTHESIS", review_result.latency_ms),
         ),
+        DevelopmentReviewModeV1.MODEL_REVIEW,
     )
 
 

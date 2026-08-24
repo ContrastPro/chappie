@@ -217,6 +217,7 @@ function isDevelopmentLifecycle(value: unknown): boolean {
     "GROUNDING_PARSE",
     "PROPOSAL_SYNTHESIS",
     "PROPOSAL_PARSE",
+    "REVIEW_DETERMINISTIC",
     "REVIEW_SYNTHESIS",
     "REVIEW_PARSE",
     "STRUCTURAL_VALIDATION",

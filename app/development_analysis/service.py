@@ -375,6 +375,7 @@ def _analysis_from_output(request, context, evidence, output) -> DevelopmentAnal
                 "grounding": output.grounding.payload(),
                 "proposal": output.proposal.payload(),
                 "review": output.review.payload(),
+                "review_mode": output.review_mode.value,
             },
         )
 
@@ -457,6 +458,17 @@ def _record_completed_staged_lifecycle(
 ) -> None:
     """Record only provider calls that returned, then their validated parses."""
     elapsed = dict(stage_elapsed_ms)
+    if "REVIEW_DETERMINISTIC" in elapsed:
+        for name in ("GROUNDING", "PROPOSAL"):
+            synthesis = DevelopmentLifecycleStageV1[f"{name}_SYNTHESIS"]
+            parse = DevelopmentLifecycleStageV1[f"{name}_PARSE"]
+            lifecycle.begin(synthesis)
+            lifecycle.complete(elapsed_ms=elapsed[synthesis.value])
+            lifecycle.begin(parse)
+            lifecycle.complete(elapsed_ms=0)
+        lifecycle.begin(DevelopmentLifecycleStageV1.REVIEW_DETERMINISTIC)
+        lifecycle.complete(elapsed_ms=elapsed["REVIEW_DETERMINISTIC"])
+        return
     for name in ("GROUNDING", "PROPOSAL", "REVIEW"):
         synthesis = DevelopmentLifecycleStageV1[f"{name}_SYNTHESIS"]
         parse = DevelopmentLifecycleStageV1[f"{name}_PARSE"]

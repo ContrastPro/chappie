@@ -150,6 +150,12 @@ test("Development Analysis and Codex task use typed read-only Control Plane cont
   assert.equal(parsed.identity, analysis.identity);
   assert.equal(parsed.outcome?.status, "NEEDS_CONTEXT");
   assert.equal(parsed.lifecycle?.events[0]?.stage, "GROUNDING_PARSE");
+
+  const deterministicReview = structuredClone(analysis);
+  deterministicReview.lifecycle.events = [{ stage: "REVIEW_DETERMINISTIC", status: "COMPLETED", elapsed_ms: 0, reason_code: null }];
+  const lifecycleClient = new ChappieControlPlaneClient(8765, async () => envelope(deterministicReview));
+  const parsedDeterministic = await lifecycleClient.analyzeDevelopment({ request: "Plan", requested_role: "CODE", requested_intent: "IMPLEMENTATION", workspace_context: null });
+  assert.equal(parsedDeterministic.lifecycle?.events[0]?.stage, "REVIEW_DETERMINISTIC");
   assert.equal((await client.prepareCodexTask({ analysis: analysis as never })).approval_status, "HUMAN_APPROVAL_REQUIRED");
   assert.deepEqual(JSON.parse(bodies[0]), { request: "Plan", requested_role: "CODE", requested_intent: "PLAN", workspace_context: null });
   assert.deepEqual(JSON.parse(bodies[1]), { analysis });

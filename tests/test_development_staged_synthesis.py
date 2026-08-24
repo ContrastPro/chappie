@@ -7,17 +7,30 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.ai.model_policy import DevelopmentModelRoleV1
 from app.development_analysis.context import (
     DevelopmentContextMapV1,
     DevelopmentEvidenceHandleV1,
     build_context_digest,
 )
+from app.development_analysis.models import (
+    DevelopmentAnalysisReadinessV1,
+    DevelopmentAnalysisStateV1,
+    DevelopmentAnalysisV1,
+    DevelopmentProposedScopeV1,
+    DevelopmentTaskIntentKindV1,
+    development_readiness,
+    validate_development_analysis,
+)
+from app.development_analysis.service import _record_completed_staged_lifecycle
 from app.development_analysis.synthesis import (
     PROPOSAL_SCHEMA,
     PROPOSED_SCOPE_FIELDS,
     REVIEW_OBSERVABLE_CONDITIONS,
     REVIEW_VERIFICATION_ACTIONS,
+    DevelopmentGroundingV1,
     DevelopmentProposalV1,
+    DevelopmentReviewModeV1,
     DevelopmentStageError,
     _grounding_instruction,
     _observable_condition_category,
@@ -25,8 +38,15 @@ from app.development_analysis.synthesis import (
     parse_development_grounding,
     parse_development_proposal,
     parse_development_review,
+    project_deterministic_low_risk_review,
     proposal_provider_schema,
     public_grounding_evidence_handles,
+    synthesize_development,
+)
+from app.development_analysis.task import (
+    CodexTaskPreparationRequestV1,
+    CodexTaskStateV1,
+    prepare_codex_task,
 )
 
 
@@ -69,6 +89,304 @@ def _scope(owner="app.development_analysis", path="app/development_analysis/diff
         "proposed_behavior": ["Remain advisory."],
         "rationale": ["The diff review is future scope."],
     }
+
+
+def _low_risk_context_map(path="docs/architecture/ARCHITECTURE.md"):
+    value = replace(
+        _context_map(),
+        existing_files=(path,),
+    )
+    return replace(value, context_digest=build_context_digest(value))
+
+
+def _low_risk_evidence(context_map, *, clean=True):
+    return SimpleNamespace(
+        repository_clean=clean,
+        source_commit=context_map.source_commit,
+        evidence_digest=context_map.evidence_digest,
+        knowledge_manifest_digest=context_map.knowledge_manifest_digest,
+        knowledge_context_digest=context_map.knowledge_context_digest,
+        requested_role=DevelopmentModelRoleV1.CODE,
+        requested_model=context_map.effective_model,
+        effective_model=context_map.effective_model,
+        repository_inventory_digest=None,
+        allowed_fact_ids=(),
+    )
+
+
+def _low_risk_proposal(path="docs/architecture/ARCHITECTURE.md"):
+    return DevelopmentProposalV1(
+        DevelopmentProposedScopeV1(
+            "app.development_analysis",
+            (path,),
+            (),
+            (),
+            (),
+            ("Update bounded architecture documentation to match current runtime evidence.",),
+            ("The approved change is documentation-only.",),
+        ),
+        (),
+    )
+
+
+def test_bounded_documentation_review_is_projected_deterministically() -> None:
+    context_map = _low_risk_context_map()
+    review = project_deterministic_low_risk_review(
+        DevelopmentGroundingV1(("E1",), "Update bounded documentation.", ()),
+        _low_risk_proposal(),
+        context_map,
+        _low_risk_evidence(context_map),
+    )
+
+    assert review is not None
+    assert review.required_tests
+    assert review.acceptance_criteria
+    assert all("RT" not in item for item in review.required_tests)
+
+
+def test_bounded_existing_test_review_is_projected_deterministically() -> None:
+    path = "tests/test_architecture_documentation.py"
+    context_map = _low_risk_context_map(path)
+    review = project_deterministic_low_risk_review(
+        DevelopmentGroundingV1(("E1",), "Update a bounded test.", ()),
+        _low_risk_proposal(path),
+        context_map,
+        _low_risk_evidence(context_map),
+    )
+
+    assert review is not None
+    assert "test" in review.required_tests[0]
+
+
+def test_configuration_scope_is_not_assumed_low_risk() -> None:
+    path = "pyproject.toml"
+    context_map = _low_risk_context_map(path)
+    assert (
+        project_deterministic_low_risk_review(
+            DevelopmentGroundingV1(("E1",), "Update configuration.", ()),
+            _low_risk_proposal(path),
+            context_map,
+            _low_risk_evidence(context_map),
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    ("proposal", "context_map", "clean"),
+    [
+        (
+            _low_risk_proposal("app/development_analysis/service.py"),
+            _low_risk_context_map("app/development_analysis/service.py"),
+            True,
+        ),
+        (
+            replace(
+                _low_risk_proposal(),
+                proposed_scope=replace(
+                    _low_risk_proposal().proposed_scope,
+                    proposed_contract_changes=("Change contract.",),
+                ),
+            ),
+            _low_risk_context_map(),
+            True,
+        ),
+        (
+            replace(
+                _low_risk_proposal(),
+                proposed_scope=replace(
+                    _low_risk_proposal().proposed_scope, proposed_new_files=("app/new.py",)
+                ),
+            ),
+            _low_risk_context_map(),
+            True,
+        ),
+        (_low_risk_proposal(), _low_risk_context_map(), False),
+        (_low_risk_proposal("../unsafe.md"), _low_risk_context_map("../unsafe.md"), True),
+    ],
+)
+def test_ineligible_scope_does_not_receive_deterministic_review(
+    proposal, context_map, clean
+) -> None:
+    assert (
+        project_deterministic_low_risk_review(
+            DevelopmentGroundingV1(("E1",), "Bounded change.", ()),
+            proposal,
+            context_map,
+            _low_risk_evidence(context_map, clean=clean),
+        )
+        is None
+    )
+
+
+def test_ambiguous_or_mixed_scope_never_receives_deterministic_review() -> None:
+    base = _low_risk_proposal()
+    cases = (
+        (
+            replace(_low_risk_context_map(), owner_candidates=("app.a", "app.b")),
+            base,
+            DevelopmentGroundingV1(("E1",), "Bounded change.", ()),
+        ),
+        (
+            _low_risk_context_map(),
+            replace(base, proposal_unknowns=("Scope remains unknown.",)),
+            DevelopmentGroundingV1(("E1",), "Bounded change.", ()),
+        ),
+        (
+            _low_risk_context_map(),
+            base,
+            DevelopmentGroundingV1(("E1",), "Bounded change.", ("Source is unknown.",)),
+        ),
+        (
+            replace(
+                _low_risk_context_map(),
+                existing_files=(
+                    "docs/architecture/ARCHITECTURE.md",
+                    "app/development_analysis/service.py",
+                ),
+            ),
+            replace(
+                base,
+                proposed_scope=replace(
+                    base.proposed_scope,
+                    proposed_modified_files=(
+                        "docs/architecture/ARCHITECTURE.md",
+                        "app/development_analysis/service.py",
+                    ),
+                ),
+            ),
+            DevelopmentGroundingV1(("E1",), "Bounded change.", ()),
+        ),
+    )
+    for context_map, proposal, grounding in cases:
+        assert (
+            project_deterministic_low_risk_review(
+                grounding, proposal, context_map, _low_risk_evidence(context_map)
+            )
+            is None
+        )
+
+
+def test_documentation_implementation_uses_two_provider_calls(monkeypatch) -> None:
+    from app.development_analysis import synthesis
+
+    context_map = _low_risk_context_map()
+    monkeypatch.setattr(synthesis, "build_development_context_map", lambda *_args: context_map)
+    calls = []
+
+    class Provider:
+        def generate(self, request):
+            calls.append(request.prompt_version)
+            payload = (
+                {
+                    "relevant_evidence_handles": ["E1"],
+                    "task_interpretation": "Update bounded architecture documentation.",
+                    "unknowns": [],
+                }
+                if len(calls) == 1
+                else {
+                    "proposed_scope": {
+                        "proposed_owner": "app.development_analysis",
+                        "proposed_modified_files": ["docs/architecture/ARCHITECTURE.md"],
+                        "proposed_new_files": [],
+                        "proposed_contract_changes": [],
+                        "proposed_components": [],
+                        "proposed_behavior": [
+                            "Update bounded architecture documentation to match current runtime evidence."
+                        ],
+                        "rationale": ["The approved change is documentation-only."],
+                    },
+                    "proposal_unknowns": [],
+                }
+            )
+            return SimpleNamespace(structured_output=payload, latency_ms=1)
+
+    ai = SimpleNamespace(
+        config=SimpleNamespace(profile="LOCAL", temperature=0, timeout_seconds=1),
+        router=SimpleNamespace(provider_for=lambda _profile: Provider()),
+    )
+    request = SimpleNamespace(
+        request="Update stale architecture documentation to reflect the current runtime.",
+        requested_intent=DevelopmentTaskIntentKindV1.IMPLEMENTATION,
+    )
+    output = synthesize_development(
+        ai,
+        request,
+        SimpleNamespace(records=(), context_digest=context_map.knowledge_context_digest),
+        _low_risk_evidence(context_map),
+    )
+
+    assert calls == [
+        "chappie_development_grounding/1.0.0",
+        "chappie_development_proposal/1.0.0",
+    ]
+    assert output.review_mode is DevelopmentReviewModeV1.DETERMINISTIC_LOW_RISK
+    assert output.stage_elapsed_ms[-1] == ("REVIEW_DETERMINISTIC", 0)
+
+
+def test_deterministic_review_lifecycle_proves_no_review_synthesis() -> None:
+    events = []
+
+    class Lifecycle:
+        def begin(self, stage):
+            events.append(("BEGIN", stage.value))
+
+        def complete(self, *, elapsed_ms):
+            events.append(("COMPLETE", elapsed_ms))
+
+    _record_completed_staged_lifecycle(
+        Lifecycle(),
+        (
+            ("GROUNDING_SYNTHESIS", 11),
+            ("PROPOSAL_SYNTHESIS", 12),
+            ("REVIEW_DETERMINISTIC", 0),
+        ),
+    )
+
+    assert ("BEGIN", "REVIEW_DETERMINISTIC") in events
+    assert ("BEGIN", "REVIEW_SYNTHESIS") not in events
+
+
+def test_deterministic_documentation_review_reaches_normal_handoff_gates() -> None:
+    context_map = _low_risk_context_map()
+    evidence = _low_risk_evidence(context_map)
+    proposal = _low_risk_proposal()
+    review = project_deterministic_low_risk_review(
+        DevelopmentGroundingV1(("E1",), "Update architecture documentation.", ()),
+        proposal,
+        context_map,
+        evidence,
+    )
+    assert review is not None
+    analysis = DevelopmentAnalysisV1(
+        DevelopmentAnalysisStateV1.OK,
+        "Update stale architecture documentation to reflect the current runtime.",
+        evidence,
+        facts=("app.development_analysis owns DevelopmentAnalysisV1.",),
+        inferences=("Update architecture documentation from supplied evidence.",),
+        unknowns=review.unresolved_unknowns,
+        architecture_owners=context_map.owner_candidates,
+        affected_contracts=context_map.existing_contracts,
+        likely_files=context_map.existing_files,
+        risks=review.risks,
+        required_tests=review.required_tests,
+        non_goals=review.non_goals,
+        acceptance_criteria=review.acceptance_criteria,
+        confidence=review.confidence,
+        validation_status="VALID",
+        context_map=context_map,
+        current_evidence_handles=("E1",),
+        proposed_scope=proposal.proposed_scope,
+    )
+    validate_development_analysis(analysis)
+    readiness, reason = development_readiness(analysis)
+    ready = replace(analysis, readiness=readiness, reason_code=reason)
+    handoff = prepare_codex_task(CodexTaskPreparationRequestV1(ready))
+
+    assert readiness is DevelopmentAnalysisReadinessV1.READY_FOR_TASK
+    assert reason is None
+    assert handoff.state is CodexTaskStateV1.ADVISORY
+    assert handoff.approval_status == "HUMAN_APPROVAL_REQUIRED"
 
 
 def test_grounding_accepts_only_supplied_evidence_and_unknowns() -> None:
