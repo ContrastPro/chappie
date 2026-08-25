@@ -85,12 +85,20 @@ def compare_strategy(
     candles: tuple[Candle, ...],
     strategy_config: StrategySettings,
     config: StrategyComparisonConfig | None = None,
+    *,
+    evaluation_start_index: int = 0,
 ) -> StrategyComparisonResult:
     config = config or StrategyComparisonConfig()
     if len(candles) < 2:
         raise ValueError("at least two candles are required")
+    if not isinstance(evaluation_start_index, int) or isinstance(evaluation_start_index, bool):
+        raise TypeError("evaluation_start_index must be an integer")
+    if not 0 <= evaluation_start_index < len(candles):
+        raise ValueError("evaluation_start_index is outside candle data")
     stream_key = MarketStreamKey("BTCUSDT", "1m")
     strategy: Strategy = build_strategy(strategy_config, _SequentialSignalIds())
+    if evaluation_start_index and evaluation_start_index < strategy.required_history:
+        raise ValueError("insufficient preceding warmup history")
     factory = MarketSnapshotFactory(config.stale_after_ms)
     cash, quantity, fees, turnover = config.starting_equity, Decimal(0), Decimal(0), Decimal(0)
     entry_cost = Decimal(0)
@@ -100,7 +108,7 @@ def compare_strategy(
     peak, max_drawdown, exposed_ms = config.starting_equity, Decimal(0), 0
     regimes: dict[str, int] = {}
     observations: dict[str, int] = {}
-    previous_time = candles[0].close_time_ms
+    previous_time = candles[evaluation_start_index].close_time_ms
     for index, candle in enumerate(candles):
         closed = tuple(candles[: index + 1])
         snapshot = factory.create(
@@ -111,6 +119,10 @@ def compare_strategy(
             correlation_cycle_id=f"replay-{index}",
         )
         signal = strategy.generate_signal(snapshot)
+        # Feed deterministic strategy state with prior candles, but do not
+        # account for pre-boundary decisions, fills, exposure, or regimes.
+        if index < evaluation_start_index:
+            continue
         if strategy.name == "regime_mean_reversion" and "regime" in signal.metadata:
             regime_name = str(signal.metadata["regime"])
             observation = (

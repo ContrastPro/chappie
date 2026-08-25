@@ -1,5 +1,7 @@
 from decimal import Decimal
 
+import pytest
+
 from app.market.models import Candle, MarketStreamKey
 from app.research.strategy.lab import StrategyComparisonConfig, compare_all, compare_strategy
 from app.strategies import (
@@ -105,3 +107,30 @@ def test_mean_reversion_replay_charges_quote_fees_without_reusing_invested_cash(
     assert result.fees == expected_fees
     assert result.ending_equity == sell_gross - (sell_gross * Decimal("0.001"))
     assert result.ending_equity < Decimal(20_000)  # no leverage or duplicated capital
+
+
+def test_boundary_replay_uses_prior_history_without_counting_prior_accounting() -> None:
+    candles = _candles([100] * 20 + [90, 89, 101] + [100] * 10)
+    config = StrategyComparisonConfig(Decimal(10_000), Decimal("0.001"))
+    full = compare_strategy(candles, StrategySettings(name="mean_reversion"), config)
+    boundary = compare_strategy(
+        candles,
+        StrategySettings(name="mean_reversion"),
+        config,
+        evaluation_start_index=23,
+    )
+    assert full.fills == 2 and full.fees > 0
+    assert boundary.starting_equity == Decimal(10_000)
+    assert boundary.fills == 0
+    assert boundary.fees == 0
+    assert boundary.net_pnl == 0
+    assert boundary.turnover == 0
+
+
+def test_boundary_replay_fails_closed_without_required_prior_history() -> None:
+    with pytest.raises(ValueError, match="warmup"):
+        compare_strategy(
+            _candles([100] * 40),
+            StrategySettings(name="ema_crossover"),
+            evaluation_start_index=26,
+        )
