@@ -18,6 +18,7 @@ from app.development_analysis.context_recovery import (
 )
 from app.development_analysis.implementation_context import (
     build_implementation_context_from_development,
+    build_partial_implementation_context_from_development,
     compare_development_projection,
 )
 from app.development_analysis.models import (
@@ -30,7 +31,16 @@ from app.development_analysis.models import (
     DevelopmentTaskIntentSourceV1,
     DevelopmentTaskIntentV1,
 )
-from app.development_analysis.task import CodexTaskStateV1, CodexTaskV1
+from app.development_analysis.synthesis import (
+    DEVELOPMENT_GROUNDING_IDENTITY,
+    DEVELOPMENT_PROPOSAL_IDENTITY,
+)
+from app.development_analysis.task import (
+    CodexTaskPreparationRequestV1,
+    CodexTaskStateV1,
+    CodexTaskV1,
+    prepare_codex_task,
+)
 from app.implementation_context import (
     ImplementationContextStateV1,
     ImplementationContextSufficiencyStateV1,
@@ -195,6 +205,96 @@ def test_agent_context_reuses_implementation_context_with_nonsemantic_size_metad
     assert payload["implementation_context"]["identity"] == "chappie_implementation_context/1.0.0"
     assert "context_map" not in payload["implementation_context"]
     assert "lifecycle" not in payload["implementation_context"]
+    assert payload["context_available"] is True
+    assert payload["implementation_authorization"] == "IMPLEMENTATION_NOT_AUTHORIZED"
+
+
+def _late_review_failure() -> DevelopmentAnalysisV1:
+    analysis = _analysis()
+    return replace(
+        analysis,
+        state=DevelopmentAnalysisStateV1.ANALYSIS_INVALID,
+        validation_status="PARTIAL",
+        readiness=None,
+        risks=(),
+        required_tests=(),
+        non_goals=(),
+        acceptance_criteria=(),
+        reason_code="REVIEW_TESTS_NOT_SPECIFIC",
+        staged_results={
+            "grounding": {"identity": DEVELOPMENT_GROUNDING_IDENTITY},
+            "proposal": {"identity": DEVELOPMENT_PROPOSAL_IDENTITY},
+            "proposal_status": "PROPOSED_IMPLEMENTATION_NOT_AUTHORIZED",
+            "failed_review_text": "must never be projected",
+        },
+    )
+
+
+def test_late_review_failure_projects_discovery_context_without_authorization() -> None:
+    analysis = _late_review_failure()
+    context = build_partial_implementation_context_from_development(_context_map(), analysis)
+    response = project_agent_task_context(analysis)
+    payload = response.payload()
+    assert response.state is AgentTaskContextStateV1.NEEDS_HUMAN_REVIEW
+    assert payload["context_available"] is True
+    assert payload["implementation_authorization"] == "IMPLEMENTATION_NOT_AUTHORIZED"
+    assert payload["context_digest"] == context.digest
+    assert payload["sufficiency"] != "IMPLEMENTATION_CONTEXT_SUFFICIENT"
+    assert payload["readiness"] is None
+    assert payload["reason_code"] == "REVIEW_TESTS_NOT_SPECIFIC"
+    assert payload["serialized_context_bytes"] > 0
+    assert payload["serialized_context_characters"] > 0
+    assert context.canonical_owner == "app.development_analysis"
+    assert "must never be projected" not in str(payload)
+    assert not context.risks
+    assert not context.acceptance_criteria
+
+
+@pytest.mark.parametrize(
+    "partial",
+    (
+        lambda value: replace(value, staged_results={}),
+        lambda value: replace(
+            value,
+            staged_results={
+                "grounding": {"identity": DEVELOPMENT_GROUNDING_IDENTITY},
+                "proposal_status": "PROPOSED_IMPLEMENTATION_NOT_AUTHORIZED",
+            },
+        ),
+        lambda value: replace(
+            value,
+            staged_results={
+                "grounding": {"identity": "invalid-grounding"},
+                "proposal": {"identity": "invalid-proposal"},
+                "proposal_status": "PROPOSED_IMPLEMENTATION_NOT_AUTHORIZED",
+            },
+        ),
+        lambda value: replace(
+            value,
+            proposed_scope=replace(value.proposed_scope, proposed_owner="app.invented"),
+        ),
+        lambda value: replace(value, evidence=replace(value.evidence, repository_clean=False)),
+        lambda value: replace(
+            value,
+            context_map=replace(value.context_map, source_commit="c" * 40),
+        ),
+    ),
+)
+def test_unsafe_or_incomplete_partials_do_not_project_discovery_context(partial) -> None:
+    response = project_agent_task_context(partial(_late_review_failure()))
+    assert response.implementation_context is None
+    assert response.context_available is False
+
+
+def test_partial_discovery_context_cannot_authorize_handoff_or_authorization_pair() -> None:
+    from tools.acceptance.development_authorization_pair import authorization_pair_payload
+
+    analysis = _late_review_failure()
+    handoff = prepare_codex_task(CodexTaskPreparationRequestV1(analysis))
+    assert handoff.state is CodexTaskStateV1.VALIDATION_ERROR
+    assert handoff.reason_code == "SOURCE_ANALYSIS_INVALID"
+    with pytest.raises(ValueError, match="validated approved pair"):
+        authorization_pair_payload(analysis, handoff)
 
 
 def test_agent_context_request_rejects_nonimplementation_intent_before_analysis() -> None:

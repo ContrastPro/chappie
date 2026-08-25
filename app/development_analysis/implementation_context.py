@@ -15,6 +15,10 @@ from app.development_analysis.models import (
     DevelopmentAnalysisStateV1,
     DevelopmentAnalysisV1,
 )
+from app.development_analysis.synthesis import (
+    DEVELOPMENT_GROUNDING_IDENTITY,
+    DEVELOPMENT_PROPOSAL_IDENTITY,
+)
 from app.development_analysis.task import CodexTaskStateV1, CodexTaskV1
 from app.implementation_context import (
     AuthorityBoundaryV1,
@@ -58,10 +62,86 @@ def build_implementation_context_from_development(
 
     if analysis.state is not DevelopmentAnalysisStateV1.OK or analysis.evidence is None:
         raise ValueError("development analysis must be validated before projection")
+    return _build_implementation_context(context_map, analysis, handoff)
+
+
+def build_partial_implementation_context_from_development(
+    context_map: DevelopmentContextMapV1,
+    analysis: DevelopmentAnalysisV1,
+) -> ImplementationContextV1:
+    """Project only a preserved, validated Grounding+Proposal partial for discovery."""
+
+    if not is_discovery_safe_partial_development_analysis(analysis):
+        raise ValueError("development partial is not safe for discovery projection")
+    return _build_implementation_context(context_map, analysis, None)
+
+
+def is_discovery_safe_partial_development_analysis(analysis: DevelopmentAnalysisV1) -> bool:
+    """Recognize only the internal late-stage partial shape; never trust Review output."""
+
+    staged = analysis.staged_results
+    grounding = staged.get("grounding") if isinstance(staged, dict) else None
+    proposal = staged.get("proposal") if isinstance(staged, dict) else None
+    known_handles = (
+        {handle.handle for handle in analysis.context_map.evidence_handles}
+        if analysis.context_map
+        else set()
+    )
+    return bool(
+        analysis.state is DevelopmentAnalysisStateV1.ANALYSIS_INVALID
+        and analysis.validation_status == "PARTIAL"
+        and analysis.evidence is not None
+        and analysis.context_map is not None
+        and analysis.evidence.repository_clean
+        and analysis.current_evidence_handles
+        and analysis.proposed_scope is not None
+        and analysis.proposed_scope.proposed_owner is not None
+        and isinstance(grounding, dict)
+        and grounding.get("identity") == DEVELOPMENT_GROUNDING_IDENTITY
+        and isinstance(proposal, dict)
+        and proposal.get("identity") == DEVELOPMENT_PROPOSAL_IDENTITY
+        and staged.get("proposal_status") == "PROPOSED_IMPLEMENTATION_NOT_AUTHORIZED"
+        and len(set(analysis.current_evidence_handles)) == len(analysis.current_evidence_handles)
+        and set(analysis.current_evidence_handles).issubset(known_handles)
+        and all(
+            _safe_repository_relative_path(path)
+            for path in (
+                *analysis.proposed_scope.proposed_modified_files,
+                *analysis.proposed_scope.proposed_new_files,
+            )
+        )
+    )
+
+
+def _safe_repository_relative_path(value: str) -> bool:
+    normalized = value.replace("\\", "/")
+    return (
+        bool(value)
+        and not normalized.startswith(("/", "../"))
+        and ":" not in value
+        and ".." not in normalized.split("/")
+    )
+
+
+def _build_implementation_context(
+    context_map: DevelopmentContextMapV1,
+    analysis: DevelopmentAnalysisV1,
+    handoff: CodexTaskV1 | None,
+) -> ImplementationContextV1:
+    """Build neutral context after the caller selects a fully-valid or safe-partial gate."""
+
     if analysis.context_map is not None and analysis.context_map != context_map:
         raise ValueError("development context map does not match analysis")
     if not analysis.evidence.repository_clean:
         raise ValueError("development evidence must bind a clean repository")
+    if (
+        context_map.source_commit != analysis.evidence.source_commit
+        or context_map.evidence_digest != analysis.evidence.evidence_digest
+        or context_map.knowledge_identity != analysis.evidence.knowledge_identity
+        or context_map.knowledge_manifest_digest != analysis.evidence.knowledge_manifest_digest
+        or context_map.knowledge_context_digest != analysis.evidence.knowledge_context_digest
+    ):
+        raise ValueError("development context provenance does not match analysis evidence")
     if not analysis.proposed_scope or not analysis.proposed_scope.proposed_owner:
         raise ValueError("development projection requires a canonical proposed owner")
     if analysis.proposed_scope.proposed_owner not in context_map.owner_candidates:

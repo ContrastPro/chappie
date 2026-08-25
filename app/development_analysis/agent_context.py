@@ -9,6 +9,8 @@ from enum import StrEnum
 from app.ai.model_policy import DevelopmentModelRoleV1
 from app.development_analysis.implementation_context import (
     build_implementation_context_from_development,
+    build_partial_implementation_context_from_development,
+    is_discovery_safe_partial_development_analysis,
 )
 from app.development_analysis.models import (
     DevelopmentAnalysisStateV1,
@@ -77,6 +79,10 @@ class AgentTaskContextResponseV1:
         return self.implementation_context.digest if self.implementation_context else None
 
     @property
+    def context_available(self) -> bool:
+        return self.implementation_context is not None
+
+    @property
     def serialized_context_bytes(self) -> int:
         return (
             _serialized_size(self.implementation_context.stable_payload())
@@ -101,6 +107,8 @@ class AgentTaskContextResponseV1:
                 if self.implementation_context
                 else None
             ),
+            "context_available": self.context_available,
+            "implementation_authorization": "IMPLEMENTATION_NOT_AUTHORIZED",
             "context_digest": self.context_digest,
             "serialized_context_bytes": self.serialized_context_bytes,
             "serialized_context_characters": self.serialized_context_characters,
@@ -124,6 +132,21 @@ def project_agent_task_context(analysis: DevelopmentAnalysisV1) -> AgentTaskCont
             reason_code=analysis.reason_code or "DEVELOPMENT_UNAVAILABLE",
         )
     if analysis.state is not DevelopmentAnalysisStateV1.OK:
+        if is_discovery_safe_partial_development_analysis(analysis):
+            try:
+                context = build_partial_implementation_context_from_development(
+                    analysis.context_map, analysis
+                )
+            except ValueError:
+                context = None
+            if context is not None:
+                return _project_context_response(
+                    AgentTaskContextStateV1.NEEDS_HUMAN_REVIEW,
+                    context,
+                    analysis,
+                    analysis.reason_code or "IMPLEMENTATION_NOT_AUTHORIZED",
+                    preserve_state=True,
+                )
         return AgentTaskContextResponseV1(
             AgentTaskContextStateV1.NEEDS_HUMAN_REVIEW,
             reason_code=analysis.reason_code or "DEVELOPMENT_ANALYSIS_UNAVAILABLE",
@@ -142,13 +165,24 @@ def project_agent_task_context(analysis: DevelopmentAnalysisV1) -> AgentTaskCont
             reasons=("IMPLEMENTATION_CONTEXT_UNAVAILABLE",),
             reason_code=analysis.reason_code or "IMPLEMENTATION_CONTEXT_UNAVAILABLE",
         )
+    return _project_context_response(AgentTaskContextStateV1.READY, context, analysis)
+
+
+def _project_context_response(
+    ready_state: AgentTaskContextStateV1,
+    context: ImplementationContextV1,
+    analysis: DevelopmentAnalysisV1,
+    reason_code: str | None = None,
+    *,
+    preserve_state: bool = False,
+) -> AgentTaskContextResponseV1:
     sufficiency = assess_implementation_context_sufficiency(context)
     missing_context = tuple(item.payload() for item in sufficiency.missing_context)
-    if (
+    if preserve_state or (
         sufficiency.state
         is ImplementationContextSufficiencyStateV1.IMPLEMENTATION_CONTEXT_SUFFICIENT
     ):
-        state = AgentTaskContextStateV1.READY
+        state = ready_state
     elif sufficiency.state is ImplementationContextSufficiencyStateV1.TARGETED_EXPANSION_REQUIRED:
         state = AgentTaskContextStateV1.NEEDS_CONTEXT
     else:
@@ -160,6 +194,7 @@ def project_agent_task_context(analysis: DevelopmentAnalysisV1) -> AgentTaskCont
         analysis.readiness.value if analysis.readiness else None,
         sufficiency.reasons,
         missing_context,
+        reason_code,
     )
 
 

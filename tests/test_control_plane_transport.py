@@ -364,6 +364,8 @@ def test_agent_context_transport_is_machine_readable_and_excludes_internal_paylo
     context = body["data"]["implementation_context"]
     assert body["data"]["identity"] == "chappie_agent_task_context/1.0.0"
     assert body["data"]["state"] == "NEEDS_CONTEXT"
+    assert body["data"]["context_available"] is True
+    assert body["data"]["implementation_authorization"] == "IMPLEMENTATION_NOT_AUTHORIZED"
     assert body["data"]["context_digest"]
     assert body["data"]["serialized_context_bytes"] > 0
     assert body["data"]["serialized_context_characters"] > 0
