@@ -3,7 +3,7 @@ import logging
 from dataclasses import dataclass
 
 from app.execution.models import Fill, PaperExecutionResult
-from app.persistence.canonical import canonical_json
+from app.persistence.canonical import canonical_json, canonical_sha256
 from app.persistence.keys import (
     DurableCommandKeyInput,
     StableDecisionKeyInput,
@@ -15,6 +15,7 @@ from app.persistence.keys import (
 from app.persistence.models import (
     CycleOutcome,
     DurableDecisionState,
+    PaperAttributionV1,
     PersistentCommandRecord,
     PersistentDecisionRecord,
     PersistentFillRecord,
@@ -185,6 +186,8 @@ class DurablePaperCycleStore:
         transitions: tuple[PortfolioTransitionPreview, ...],
         risk: RiskDecision | None,
         execution: PaperExecutionResult | None,
+        portfolio_before: PortfolioSnapshot,
+        portfolio_after: PortfolioSnapshot,
     ) -> DurableCycleCommit:
         decision_payload = canonical_json(
             {
@@ -242,6 +245,16 @@ class DurablePaperCycleStore:
                 hashlib.sha256(command_payload.encode()).hexdigest(),
             )
         fill = execution.fill if execution is not None else None
+        attribution = self._attribution(
+            identity=identity,
+            command_key=command_key,
+            decision=decision,
+            outcome=outcome,
+            risk=risk,
+            execution=execution,
+            portfolio_before=portfolio_before,
+            portfolio_after=portfolio_after,
+        )
         transaction = self._persistence.begin_cycle()
         last_journal_seq = 0
         try:
@@ -250,6 +263,7 @@ class DurablePaperCycleStore:
                 transaction.record_command(command_record)
             if fill is not None:
                 transaction.record_fill(self._fill_record(fill, command_key))
+            transaction.record_attribution(attribution)
             for index, preview in enumerate(transitions):
                 after_state = snapshot_to_state(preview.after)
                 transition_fill = preview.fill if isinstance(preview.fill, Fill) else None
@@ -274,6 +288,61 @@ class DurablePaperCycleStore:
             raise
         transaction.commit()
         return DurableCycleCommit(identity, command_key, last_journal_seq)
+
+    def _attribution(
+        self,
+        *,
+        identity: DurableDecisionIdentity,
+        command_key: str | None,
+        decision: DecisionPipelineResult,
+        outcome: CycleOutcome,
+        risk: RiskDecision | None,
+        execution: PaperExecutionResult | None,
+        portfolio_before: PortfolioSnapshot,
+        portfolio_after: PortfolioSnapshot,
+    ) -> PaperAttributionV1:
+        fill = execution.fill if execution is not None else None
+        approved = risk.approved_order if risk is not None else None
+        payload = {
+            "stable_decision_key": identity.stable_decision_key,
+            "decision_slot_key": identity.decision_slot_key,
+            "durable_command_key": command_key,
+            "cycle_outcome": CycleOutcome(outcome),
+            "portfolio_id": portfolio_before.portfolio_id,
+            "portfolio_version_before": portfolio_before.version,
+            "portfolio_version_after": portfolio_after.version,
+            "symbol": decision.stream_key.symbol,
+            "interval": decision.stream_key.interval,
+            "decision_time_ms": decision.evaluated_at_ms,
+            "strategy_name": decision.strategy_name,
+            "strategy_version": decision.strategy_version,
+            "strategy_config_fingerprint": self._config.strategy_config_fingerprint,
+            "signal_id": decision.signal.signal_id,
+            "signal_direction": decision.signal.direction.value,
+            "signal_reason_code": decision.signal.reason_code,
+            "pipeline_run_id": decision.pipeline_run_id,
+            "intent_id": decision.order_intent.intent_id if decision.order_intent else None,
+            "risk_decision_id": risk.decision_id if risk else None,
+            "risk_outcome": risk.outcome.value if risk else None,
+            "risk_rejection_reasons": risk.rejection_reasons if risk else (),
+            "risk_modification_reasons": risk.modification_reasons if risk else (),
+            "requested_target_exposure": risk.requested_target_exposure if risk else None,
+            "approved_target_exposure": approved.approved_target_exposure if approved else None,
+            "execution_id": execution.execution_id if execution else None,
+            "execution_status": execution.status.value if execution else None,
+            "fill_id": fill.fill_id if fill else None,
+            "observed_paper_fee": fill.fee if fill else None,
+            "gross_notional": fill.gross_notional if fill else None,
+            "before_state_digest": snapshot_to_state(portfolio_before).digest,
+            "after_state_digest": snapshot_to_state(portfolio_after).digest,
+        }
+        return PaperAttributionV1(
+            **payload,
+            attribution_digest=canonical_sha256(
+                {"identity": PaperAttributionV1.IDENTITY, **payload},
+                algorithm_version="paper-attribution/v1",
+            ),
+        )
 
     def maybe_checkpoint(self, snapshot: PortfolioSnapshot, journal_seq: int) -> bool:
         if (

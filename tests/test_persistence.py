@@ -331,13 +331,47 @@ def test_durable_command_key_is_deterministic_and_sensitive() -> None:
 def test_new_database_migrates_reopens_and_has_safe_pragmas(tmp_path: Path) -> None:
     path = tmp_path / "paper.sqlite3"
     adapter = SQLiteTradingPersistence(SQLitePersistenceConfig(path))
-    assert adapter.status.schema_version == 1
+    assert adapter.status.schema_version == 11
     assert adapter.status.journal_mode.lower() == "wal"
     assert adapter.status.synchronous_mode == 2
     assert adapter.status.foreign_keys
     adapter.close()
     reopened = SQLiteTradingPersistence(SQLitePersistenceConfig(path))
-    assert reopened._connection.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == 1
+    assert (
+        reopened._connection.execute("SELECT count(*) FROM schema_migrations").fetchone()[0] == 11
+    )
+    reopened.close()
+
+
+def test_version_ten_database_upgrades_once_to_paper_attribution(tmp_path: Path) -> None:
+    path = tmp_path / "paper-v10.sqlite3"
+    legacy = SQLiteTradingPersistence(SQLitePersistenceConfig(path, expected_schema_version=10))
+    assert legacy.status.schema_version == 10
+    legacy.close()
+
+    upgraded = SQLiteTradingPersistence(SQLitePersistenceConfig(path))
+    assert upgraded.status.schema_version == 11
+    assert (
+        upgraded._connection.execute(
+            "SELECT count(*) FROM schema_migrations WHERE version=11"
+        ).fetchone()[0]
+        == 1
+    )
+    assert (
+        upgraded._connection.execute(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='paper_attributions'"
+        ).fetchone()[0]
+        == 1
+    )
+    upgraded.close()
+
+    reopened = SQLiteTradingPersistence(SQLitePersistenceConfig(path))
+    assert (
+        reopened._connection.execute(
+            "SELECT count(*) FROM schema_migrations WHERE version=11"
+        ).fetchone()[0]
+        == 1
+    )
     reopened.close()
 
 
@@ -357,7 +391,9 @@ def test_failed_migration_rolls_back_schema(
     monkeypatch.setattr(
         SQLiteTradingPersistence,
         "_migration",
-        staticmethod(lambda: ("CREATE TABLE partial(id INTEGER); BROKEN SQL;", "a" * 64)),
+        staticmethod(
+            lambda _name=None: ("CREATE TABLE partial(id INTEGER); BROKEN SQL;", "a" * 64)
+        ),
     )
     with pytest.raises(PersistenceMigrationError):
         SQLiteTradingPersistence(SQLitePersistenceConfig(path))
@@ -658,7 +694,7 @@ def test_newer_schema_is_rejected(tmp_path: Path) -> None:
     path = tmp_path / "newer.sqlite3"
     adapter = SQLiteTradingPersistence(SQLitePersistenceConfig(path))
     adapter._connection.execute(
-        "INSERT INTO schema_migrations VALUES(2,'002_future.sql',?,0)", ("f" * 64,)
+        "INSERT INTO schema_migrations VALUES(12,'012_future.sql',?,0)", ("f" * 64,)
     )
     adapter.close()
     with pytest.raises(PersistenceSchemaError):
@@ -707,7 +743,7 @@ def test_persistence_configuration_validation(tmp_path: Path) -> None:
         {"database_path": tmp_path},
         {"database_path": ":memory:", "busy_timeout_ms": 0},
         {"database_path": ":memory:", "checkpoint_interval_transitions": True},
-        {"database_path": ":memory:", "expected_schema_version": 11},
+        {"database_path": ":memory:", "expected_schema_version": 12},
     )
     for values in invalid:
         with pytest.raises(PersistenceConfigurationError):

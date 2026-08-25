@@ -354,6 +354,8 @@ class PaperTradingEngine:
                     transitions=transitions,
                     risk=risk,
                     execution=execution,
+                    portfolio_before=at_start,
+                    portfolio_after=after,
                 )
             except Exception as error:
                 wrapped = PaperTradingPortfolioError("durable paper cycle commit failed")

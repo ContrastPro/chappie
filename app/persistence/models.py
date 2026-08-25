@@ -59,7 +59,7 @@ class SQLitePersistenceConfig:
     database_path: str | Path
     busy_timeout_ms: int = 5_000
     checkpoint_interval_transitions: int = 100
-    expected_schema_version: int = 1
+    expected_schema_version: int = 11
     exclusive_writer: bool = False
 
     def __post_init__(self) -> None:
@@ -73,8 +73,8 @@ class SQLitePersistenceConfig:
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
                 raise PersistenceConfigurationError(f"{name} must be positive")
-        if self.expected_schema_version not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10}:
-            raise PersistenceConfigurationError("expected_schema_version must be between 1 and 10")
+        if self.expected_schema_version not in {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11}:
+            raise PersistenceConfigurationError("expected_schema_version must be between 1 and 11")
         if not isinstance(self.exclusive_writer, bool):
             raise PersistenceConfigurationError("exclusive_writer must be bool")
 
@@ -242,6 +242,109 @@ class PersistentDecisionRecord:
         _digest(self.payload_digest, "payload_digest")
         _verify_payload_digest(self.payload, self.payload_digest)
         _integer(self.created_at_ms, "created_at_ms")
+
+
+@dataclass(frozen=True, slots=True)
+class PaperAttributionV1:
+    """Immutable analytical lineage for one terminal durable Paper decision."""
+
+    stable_decision_key: str
+    decision_slot_key: str
+    durable_command_key: str | None
+    cycle_outcome: CycleOutcome
+    portfolio_id: str
+    portfolio_version_before: int
+    portfolio_version_after: int
+    symbol: str
+    interval: str
+    decision_time_ms: int
+    strategy_name: str
+    strategy_version: str
+    strategy_config_fingerprint: str
+    signal_id: str
+    signal_direction: str
+    signal_reason_code: str
+    pipeline_run_id: str
+    intent_id: str | None
+    risk_decision_id: str | None
+    risk_outcome: str | None
+    risk_rejection_reasons: tuple[str, ...]
+    risk_modification_reasons: tuple[str, ...]
+    requested_target_exposure: Decimal | None
+    approved_target_exposure: Decimal | None
+    execution_id: str | None
+    execution_status: str | None
+    fill_id: str | None
+    observed_paper_fee: Decimal | None
+    gross_notional: Decimal | None
+    before_state_digest: str
+    after_state_digest: str
+    attribution_digest: str
+
+    IDENTITY = "chappie_paper_attribution/1.0.0"
+
+    def __post_init__(self) -> None:
+        for name in (
+            "stable_decision_key",
+            "decision_slot_key",
+            "strategy_config_fingerprint",
+            "before_state_digest",
+            "after_state_digest",
+            "attribution_digest",
+        ):
+            _digest(getattr(self, name), name)
+        for name in (
+            "portfolio_id",
+            "symbol",
+            "interval",
+            "strategy_name",
+            "strategy_version",
+            "signal_id",
+            "signal_direction",
+            "signal_reason_code",
+            "pipeline_run_id",
+        ):
+            _text(getattr(self, name), name)
+        for name in ("durable_command_key",):
+            value = getattr(self, name)
+            if value is not None:
+                _digest(value, name)
+        for name in ("intent_id", "risk_decision_id", "execution_id", "fill_id"):
+            value = getattr(self, name)
+            if value is not None:
+                _text(value, name)
+        if not isinstance(self.cycle_outcome, CycleOutcome):
+            raise PersistenceIntegrityError("cycle_outcome is invalid")
+        for name in ("portfolio_version_before", "portfolio_version_after", "decision_time_ms"):
+            _integer(getattr(self, name), name)
+        if self.portfolio_version_after < self.portfolio_version_before:
+            raise PersistenceIntegrityError("portfolio versions are not ordered")
+        for name in ("risk_rejection_reasons", "risk_modification_reasons"):
+            values = getattr(self, name)
+            if not isinstance(values, tuple) or any(
+                not isinstance(value, str) or not value for value in values
+            ):
+                raise PersistenceIntegrityError(f"{name} must be a tuple of non-empty strings")
+        for name in (
+            "requested_target_exposure",
+            "approved_target_exposure",
+            "observed_paper_fee",
+            "gross_notional",
+        ):
+            value = getattr(self, name)
+            if value is not None:
+                _decimal(value, name, non_negative=True)
+        if self.attribution_digest != canonical_sha256(
+            {"identity": self.IDENTITY, **self.payload()}, algorithm_version="paper-attribution/v1"
+        ):
+            raise PersistenceIntegrityError("attribution_digest does not match attribution payload")
+
+    def payload(self) -> dict[str, object]:
+        return {
+            name: getattr(self, name)
+            for name in self.__dataclass_fields__
+            if name != "attribution_digest"
+        }
 
 
 @dataclass(frozen=True, slots=True)

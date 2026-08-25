@@ -8,7 +8,7 @@ from types import TracebackType
 from typing import Self
 
 from app.market.models import MarketStreamKey
-from app.persistence.canonical import deserialize_decimal, serialize_decimal
+from app.persistence.canonical import canonical_json, deserialize_decimal, serialize_decimal
 from app.persistence.exceptions import (
     PersistenceCheckpointError,
     PersistenceConflictError,
@@ -24,6 +24,7 @@ from app.persistence.models import (
     CycleOutcome,
     DurableDecisionState,
     InitialPortfolioRecord,
+    PaperAttributionV1,
     PersistenceStatus,
     PersistentCommandRecord,
     PersistentDecisionRecord,
@@ -46,6 +47,7 @@ MIGRATION_NAMES = (
     "008_stage4_sell_recovery.sql",
     "009_stage4_sell_disposition.sql",
     "010_stage4_sell_successor.sql",
+    "011_paper_attribution.sql",
 )
 
 
@@ -118,6 +120,7 @@ class SQLitePaperCycleTransaction:
         self._current_set = False
         self._command_recorded = False
         self._fill_recorded = False
+        self._attribution_recorded = False
         self._terminal_outcome: CycleOutcome | None = None
         self._transitions: list[tuple[int, PortfolioTransitionRecord]] = []
 
@@ -235,6 +238,65 @@ class SQLitePaperCycleTransaction:
             ),
         )
         self._fill_recorded = True
+        return True
+
+    def record_attribution(self, record: PaperAttributionV1) -> bool:
+        self._require_active()
+        row = self._fetchone(
+            "SELECT attribution_digest FROM paper_attributions WHERE stable_decision_key=?",
+            (record.stable_decision_key,),
+        )
+        if row is not None:
+            if row[0] == record.attribution_digest:
+                self._attribution_recorded = True
+                return False
+            raise PersistenceConflictError("stable decision key has conflicting attribution")
+        self._execute(
+            "INSERT INTO paper_attributions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (
+                record.stable_decision_key,
+                record.decision_slot_key,
+                record.durable_command_key,
+                record.cycle_outcome.value,
+                record.portfolio_id,
+                record.portfolio_version_before,
+                record.portfolio_version_after,
+                record.symbol,
+                record.interval,
+                record.decision_time_ms,
+                record.strategy_name,
+                record.strategy_version,
+                record.strategy_config_fingerprint,
+                record.signal_id,
+                record.signal_direction,
+                record.signal_reason_code,
+                record.pipeline_run_id,
+                record.intent_id,
+                record.risk_decision_id,
+                record.risk_outcome,
+                canonical_json(record.risk_rejection_reasons),
+                canonical_json(record.risk_modification_reasons),
+                serialize_decimal(record.requested_target_exposure)
+                if record.requested_target_exposure is not None
+                else None,
+                serialize_decimal(record.approved_target_exposure)
+                if record.approved_target_exposure is not None
+                else None,
+                record.execution_id,
+                record.execution_status,
+                record.fill_id,
+                serialize_decimal(record.observed_paper_fee)
+                if record.observed_paper_fee is not None
+                else None,
+                serialize_decimal(record.gross_notional)
+                if record.gross_notional is not None
+                else None,
+                record.before_state_digest,
+                record.after_state_digest,
+                record.attribution_digest,
+            ),
+        )
+        self._attribution_recorded = True
         return True
 
     def record_portfolio_transition(self, record: PortfolioTransitionRecord) -> int:
@@ -836,6 +898,68 @@ class SQLiteTradingPersistence:
             row[0],
             CycleOutcome(row[1]),
             int(journal_seq),
+        )
+
+    def load_attribution(self, stable_decision_key: str) -> PaperAttributionV1 | None:
+        self._require_open()
+        row = self._connection.execute(
+            "SELECT * FROM paper_attributions WHERE stable_decision_key=?", (stable_decision_key,)
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            reasons = json.loads(row["risk_rejection_reasons_json"])
+            modifications = json.loads(row["risk_modification_reasons_json"])
+            if not isinstance(reasons, list) or not isinstance(modifications, list):
+                raise TypeError("reasons are not lists")
+            optional_decimal = lambda value: None if value is None else deserialize_decimal(value)
+            return PaperAttributionV1(
+                stable_decision_key=row["stable_decision_key"],
+                decision_slot_key=row["decision_slot_key"],
+                durable_command_key=row["durable_command_key"],
+                cycle_outcome=CycleOutcome(row["cycle_outcome"]),
+                portfolio_id=row["portfolio_id"],
+                portfolio_version_before=row["portfolio_version_before"],
+                portfolio_version_after=row["portfolio_version_after"],
+                symbol=row["symbol"],
+                interval=row["interval"],
+                decision_time_ms=row["decision_time_ms"],
+                strategy_name=row["strategy_name"],
+                strategy_version=row["strategy_version"],
+                strategy_config_fingerprint=row["strategy_config_fingerprint"],
+                signal_id=row["signal_id"],
+                signal_direction=row["signal_direction"],
+                signal_reason_code=row["signal_reason_code"],
+                pipeline_run_id=row["pipeline_run_id"],
+                intent_id=row["intent_id"],
+                risk_decision_id=row["risk_decision_id"],
+                risk_outcome=row["risk_outcome"],
+                risk_rejection_reasons=tuple(reasons),
+                risk_modification_reasons=tuple(modifications),
+                requested_target_exposure=optional_decimal(row["requested_target_exposure"]),
+                approved_target_exposure=optional_decimal(row["approved_target_exposure"]),
+                execution_id=row["execution_id"],
+                execution_status=row["execution_status"],
+                fill_id=row["fill_id"],
+                observed_paper_fee=optional_decimal(row["observed_paper_fee"]),
+                gross_notional=optional_decimal(row["gross_notional"]),
+                before_state_digest=row["before_state_digest"],
+                after_state_digest=row["after_state_digest"],
+                attribution_digest=row["attribution_digest"],
+            )
+        except Exception as error:
+            raise PersistenceIntegrityError("invalid persisted Paper attribution") from error
+
+    def load_attributions(self) -> tuple[PaperAttributionV1, ...]:
+        self._require_open()
+        rows = self._connection.execute(
+            "SELECT stable_decision_key FROM paper_attributions "
+            "ORDER BY decision_time_ms, stable_decision_key"
+        ).fetchall()
+        return tuple(
+            attribution
+            for row in rows
+            if (attribution := self.load_attribution(row["stable_decision_key"])) is not None
         )
 
     def create_checkpoint(self, state: PortfolioState, journal_seq: int) -> bool:
