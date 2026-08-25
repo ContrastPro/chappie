@@ -9,12 +9,79 @@ import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
 from app.foundation.config import get_settings
 
 NA = "N/A"
+
+_PORTFOLIO_FIELDS = (
+    "portfolio_id",
+    "symbol",
+    "interval",
+    "quote_balance",
+    "base_balance",
+    "current_equity",
+    "equity",
+    "realised_pnl",
+    "unrealised_pnl",
+    "fees",
+    "total_fees",
+    "turnover",
+    "drawdown",
+    "trade_count",
+    "portfolio_version",
+    "version",
+    "position",
+)
+_POSITION_FIELDS = ("quantity", "average_entry_price", "cost_basis")
+_MARKET_FIELDS = (
+    "symbol",
+    "interval",
+    "latest_price",
+    "latest_closed_price",
+    "cached_candle_count",
+    "last_successful_market_cycle_time_ms",
+    "polling_state",
+)
+_STRATEGY_FIELDS = (
+    "name",
+    "last_signal",
+    "reason",
+    "fast_ema",
+    "slow_ema",
+    "ema_spread",
+    "exposure",
+    "last_buy_time_ms",
+    "last_sell_time_ms",
+    "last_intent",
+    "last_decision_time_ms",
+)
+_TRADING_FIELDS = ("last_fill_id", "last_outcome")
+_STATUS_FIELDS = (
+    "process_state",
+    "mode",
+    "safe_stop_reason",
+    "schema_version",
+    "submission_enabled",
+    "updated_at_utc",
+    "reconciliation_status",
+    "market_polling_state",
+    "last_successful_market_cycle_time_ms",
+)
+_FILL_FIELDS = (
+    "fill_id",
+    "order_id",
+    "side",
+    "quantity",
+    "price",
+    "gross_notional",
+    "fee",
+    "filled_at_ms",
+)
+_JSON_UNSAFE = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,6 +338,70 @@ def _line(label: str, value: object) -> str:
     return f"  {label:<31} {value if value is not None else NA}"
 
 
+def _safe_json_value(value: object) -> object:
+    if value is None or isinstance(value, str | int | bool):
+        return value
+    if isinstance(value, float):
+        return value if isfinite(value) else _JSON_UNSAFE
+    if (
+        isinstance(value, dict)
+        and set(value) == {"$decimal"}
+        and isinstance(value["$decimal"], str)
+    ):
+        return {"$decimal": value["$decimal"]}
+    return _JSON_UNSAFE
+
+
+def _known_fields(value: object, names: tuple[str, ...]) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        name: projected
+        for name in names
+        if name in value and (projected := _safe_json_value(value[name])) is not _JSON_UNSAFE
+    }
+
+
+def paper_monitor_json_payload(snapshot: PaperMonitorSnapshot) -> dict[str, object]:
+    """Return a bounded, read-only projection of the existing monitor snapshot."""
+
+    status = snapshot.status or {}
+    portfolio = _known_fields(snapshot.portfolio, _PORTFOLIO_FIELDS)
+    if isinstance(snapshot.portfolio, dict) and isinstance(
+        snapshot.portfolio.get("position"), dict
+    ):
+        portfolio["position"] = _known_fields(snapshot.portfolio["position"], _POSITION_FIELDS)
+    else:
+        portfolio.pop("position", None)
+    return {
+        "database": {
+            "status": snapshot.database_status,
+            "schema_version": snapshot.schema_version,
+            "performance_complete": snapshot.performance_complete,
+        },
+        "portfolio": portfolio,
+        "recent_trades": [_known_fields(fill, _FILL_FIELDS) for fill in snapshot.fills],
+        "status": {
+            **_known_fields(status, _STATUS_FIELDS),
+            "market": _known_fields(status.get("market"), _MARKET_FIELDS),
+            "strategy": _known_fields(status.get("strategy"), _STRATEGY_FIELDS),
+            "trading": _known_fields(status.get("trading"), _TRADING_FIELDS),
+        },
+        "status_error": snapshot.status_error,
+    }
+
+
+def render_json_snapshot(snapshot: PaperMonitorSnapshot) -> str:
+    """Serialize the bounded monitor projection deterministically for one-shot tooling."""
+
+    return json.dumps(
+        paper_monitor_json_payload(snapshot),
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    )
+
+
 def render_dashboard(snapshot: PaperMonitorSnapshot, *, now: datetime | None = None) -> str:
     now = now or datetime.now().astimezone()
     status = snapshot.status or {}
@@ -461,6 +592,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--interval", type=float, default=5.0, help="Refresh interval in seconds")
     parser.add_argument("--once", action="store_true", help="Render one snapshot and exit")
     parser.add_argument(
+        "--json", action="store_true", help="Emit a machine-readable one-shot snapshot"
+    )
+    parser.add_argument(
         "--trades", type=int, default=10, help="Recent trades to display (default: 10)"
     )
     args = parser.parse_args(argv)
@@ -468,14 +602,19 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--interval must be positive")
     if args.trades <= 0:
         parser.error("--trades must be positive")
+    if args.json and not args.once:
+        parser.error("--json requires --once")
     settings = get_settings()
     try:
         while True:
             snapshot = read_paper_monitor_snapshot(
                 settings.sqlite_path, settings.server_status_file, fill_limit=args.trades
             )
-            print("\x1b[2J\x1b[H" if not args.once else "", end="")
-            print(render_dashboard(snapshot))
+            if args.json:
+                print(render_json_snapshot(snapshot))
+            else:
+                print("\x1b[2J\x1b[H" if not args.once else "", end="")
+                print(render_dashboard(snapshot))
             if args.once:
                 return 0
             time.sleep(args.interval)

@@ -16,8 +16,10 @@ from app.tools.paper_monitor import (
     _format_duration,
     _trade_analytics,
     main,
+    paper_monitor_json_payload,
     read_paper_monitor_snapshot,
     render_dashboard,
+    render_json_snapshot,
 )
 
 
@@ -323,3 +325,67 @@ def test_once_and_interval_validation(
     assert "Chappie Paper Monitor" in capsys.readouterr().out
     with pytest.raises(SystemExit):
         main(["--interval", "0"])
+
+
+def test_one_shot_json_is_deterministic_bounded_and_excludes_unknown_status_fields(
+    tmp_path: Path,
+) -> None:
+    status = tmp_path / "status.json"
+    _status(
+        status,
+        portfolio={"equity": "10000", "api_key": "must-not-serialize"},
+        trading={
+            "recent_trades": [
+                {
+                    "fill_id": "fill-1",
+                    "order_id": "order-1",
+                    "side": "BUY",
+                    "quantity": "0.01",
+                    "price": "100000",
+                    "credential": "must-not-serialize",
+                }
+            ],
+            "secret": "must-not-serialize",
+        },
+        token="must-not-serialize",
+        market={"latest_price": float("inf")},
+    )
+    snapshot = read_paper_monitor_snapshot(tmp_path / "missing.sqlite3", status)
+
+    rendered = render_json_snapshot(snapshot)
+    payload = json.loads(rendered)
+
+    assert rendered == render_json_snapshot(snapshot)
+    assert payload == paper_monitor_json_payload(snapshot)
+    assert payload["portfolio"] == {"equity": "10000"}
+    assert payload["recent_trades"] == [
+        {
+            "fill_id": "fill-1",
+            "order_id": "order-1",
+            "side": "BUY",
+            "quantity": "0.01",
+            "price": "100000",
+        }
+    ]
+    assert "must-not-serialize" not in rendered
+    assert "Infinity" not in rendered
+
+
+def test_one_shot_json_cli_preserves_terminal_mode_and_requires_once(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setattr(
+        "app.tools.paper_monitor.get_settings",
+        lambda: type(
+            "Settings",
+            (),
+            {"sqlite_path": Path("missing.sqlite3"), "server_status_file": Path("missing.json")},
+        )(),
+    )
+
+    assert main(["--once", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["database"]["status"] == "no database"
+    assert main(["--once"]) == 0
+    assert "Chappie Paper Monitor" in capsys.readouterr().out
+    with pytest.raises(SystemExit):
+        main(["--json"])
