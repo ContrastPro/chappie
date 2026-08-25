@@ -304,7 +304,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
   workbench = new ChappieWorkbenchV1({
     askProject: (question, options, attachments, role) => new ChappieControlPlaneClient(configuredPort()).askProject(question, collectAttachedWorkbenchContext(options, attachments, workbenchSnapshots), role),
-    analyzeDevelopment: (request, options, attachments, role, intent) => new ChappieControlPlaneClient(configuredPort()).analyzeDevelopment({ request, requested_role: role, requested_intent: intent, workspace_context: collectAttachedWorkbenchContext(options, attachments, workbenchSnapshots) ?? null }),
+    analyzeDevelopment: (request, options, attachments, role, intent, recoveryAttachment) => new ChappieControlPlaneClient(configuredPort()).analyzeDevelopment({ request, requested_role: role, requested_intent: intent, workspace_context: collectAttachedWorkbenchContext(options, attachments, workbenchSnapshots) ?? null, ...(recoveryAttachment ? { targeted_context_attachment: recoveryAttachment } : {}) }),
+    gatherDevelopmentContext: (analysis) => new ChappieControlPlaneClient(configuredPort()).gatherDevelopmentContext(analysis),
     prepareCodexTask: (analysis) => new ChappieControlPlaneClient(configuredPort()).prepareCodexTask({ analysis }),
     selectModelRole: async () => {
       const models = (await new ChappieControlPlaneClient(configuredPort()).models()).models.filter((item) => item.role !== null);

@@ -173,7 +173,35 @@ class DevelopmentAnalysisServiceV1:
             **{**payload, "requested_role": request.requested_role},
             evidence_digest=evidence_digest(payload),
         )
-        context_map = build_development_context_map(context, evidence)
+        targeted_attachment = request.targeted_context_attachment
+        baseline_context_map = build_development_context_map(context, evidence)
+        if targeted_attachment is not None:
+            from app.development_analysis.context_recovery import (
+                DevelopmentTargetedContextAttachmentV1,
+            )
+
+            if not isinstance(targeted_attachment, DevelopmentTargetedContextAttachmentV1):
+                return _failure(
+                    request,
+                    DevelopmentAnalysisStateV1.VALIDATION_ERROR,
+                    "TARGETED_CONTEXT_ATTACHMENT_INVALID",
+                    lifecycle=lifecycle.failed("TARGETED_CONTEXT_ATTACHMENT_INVALID"),
+                )
+            if (
+                targeted_attachment.source_commit != snapshot.commit
+                or targeted_attachment.knowledge_identity != evidence.knowledge_identity
+                or targeted_attachment.knowledge_manifest_digest != manifest.manifest_digest
+                or targeted_attachment.original_evidence_digest != evidence.evidence_digest
+                or targeted_attachment.original_context_digest
+                != baseline_context_map.context_digest
+            ):
+                return _failure(
+                    request,
+                    DevelopmentAnalysisStateV1.REPOSITORY_UNAVAILABLE,
+                    "TARGETED_CONTEXT_STALE",
+                    lifecycle=lifecycle.failed("TARGETED_CONTEXT_STALE"),
+                )
+        context_map = build_development_context_map(context, evidence, targeted_attachment)
         from app.development_analysis.intent import resolve_development_task_intent
 
         task_intent = resolve_development_task_intent(request, evidence, context_map.context_digest)
@@ -342,12 +370,21 @@ def _analysis_from_output(request, context, evidence, output) -> DevelopmentAnal
     )
 
     if isinstance(output, DevelopmentStagedSynthesisOutputV1):
-        context_map = build_development_context_map(context, evidence)
+        context_map = build_development_context_map(
+            context, evidence, request.targeted_context_attachment
+        )
         selected = tuple(
             item
             for item in context_map.evidence_handles
             if item.handle in output.grounding.relevant_evidence_handles
         )
+        contracts = context_map.existing_contracts
+        if (
+            request.targeted_context_attachment is not None
+            and "TC1" not in output.grounding.relevant_evidence_handles
+        ):
+            target = request.targeted_context_attachment.contract_identifier.rsplit(".", 1)[-1]
+            contracts = tuple(item for item in contracts if item != target)
         return DevelopmentAnalysisV1(
             DevelopmentAnalysisStateV1.OK,
             request.request,
@@ -360,7 +397,7 @@ def _analysis_from_output(request, context, evidence, output) -> DevelopmentAnal
                 *output.review.unresolved_unknowns,
             ),
             architecture_owners=tuple(sorted({item.category for item in selected})),
-            affected_contracts=context_map.existing_contracts,
+            affected_contracts=contracts,
             likely_files=context_map.existing_files,
             risks=output.review.risks,
             required_tests=output.review.required_tests,
@@ -383,7 +420,9 @@ def _analysis_from_output(request, context, evidence, output) -> DevelopmentAnal
         raise AIValidationError(
             "development synthesis output is invalid", code="DEVELOPMENT_SCHEMA_INVALID"
         )
-    context_map = build_development_context_map(context, evidence)
+    context_map = build_development_context_map(
+        context, evidence, request.targeted_context_attachment
+    )
     requested_handles = output.current_evidence_handles
     if not requested_handles:
         legacy_fact_ids = getattr(output, "_legacy_fact_ids", ())
@@ -393,6 +432,10 @@ def _analysis_from_output(request, context, evidence, output) -> DevelopmentAnal
     selected_handles = tuple(
         item for item in context_map.evidence_handles if item.handle in requested_handles
     )
+    contracts = context_map.existing_contracts
+    if request.targeted_context_attachment is not None and "TC1" not in requested_handles:
+        target = request.targeted_context_attachment.contract_identifier.rsplit(".", 1)[-1]
+        contracts = tuple(item for item in contracts if item != target)
     return DevelopmentAnalysisV1(
         DevelopmentAnalysisStateV1.OK,
         request.request,
@@ -404,7 +447,7 @@ def _analysis_from_output(request, context, evidence, output) -> DevelopmentAnal
             getattr(output, "_legacy_architecture_owners", ())
             or tuple(sorted({item.category for item in selected_handles}))
         ),
-        affected_contracts=context_map.existing_contracts,
+        affected_contracts=contracts,
         likely_files=context_map.existing_files,
         risks=output.risks,
         required_tests=output.required_tests,

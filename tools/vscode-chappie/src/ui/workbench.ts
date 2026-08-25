@@ -1,5 +1,5 @@
 import * as vscode from "vscode";
-import { CodexTaskV1, DevelopmentAnalysisV1, DevelopmentModelRoleV1, DevelopmentTaskIntentKindV1, ProjectQAResponseV1 } from "../api/contracts";
+import { CodexTaskV1, DevelopmentAnalysisV1, DevelopmentModelRoleV1, DevelopmentTargetedContextAttachmentV1, DevelopmentTargetedContextRecoveryV1, DevelopmentTaskIntentKindV1, ProjectQAResponseV1 } from "../api/contracts";
 import { ControlPlaneDependencyError, ControlPlaneRequestError } from "../api/client";
 import { workbenchHtml } from "./workbench_html";
 import { ContextOptionsV1, DevelopmentFailureCategoryV1, HostMessageV1, parseWebviewMessage, RuntimeTelemetryV1, WorkbenchActionV1, WorkbenchConnectionSnapshotV1, WorkbenchContextAttachmentV1, WorkbenchContextKindV1, WorkbenchDevelopmentFailureV1, WorkbenchModeV1 } from "./workbench_protocol";
@@ -8,7 +8,8 @@ import { DevelopmentIntentSelectionV1 } from "./development_intent";
 
 export interface WorkbenchDependenciesV1 {
   askProject(question: string, context: ContextOptionsV1, attachments: readonly WorkbenchContextAttachmentV1[], role: DevelopmentModelRoleV1): Promise<ProjectQAResponseV1>;
-  analyzeDevelopment(request: string, context: ContextOptionsV1, attachments: readonly WorkbenchContextAttachmentV1[], role: DevelopmentModelRoleV1, intent: DevelopmentTaskIntentKindV1): Promise<DevelopmentAnalysisV1>;
+  analyzeDevelopment(request: string, context: ContextOptionsV1, attachments: readonly WorkbenchContextAttachmentV1[], role: DevelopmentModelRoleV1, intent: DevelopmentTaskIntentKindV1, recoveryAttachment?: DevelopmentTargetedContextAttachmentV1): Promise<DevelopmentAnalysisV1>;
+  gatherDevelopmentContext(analysis: DevelopmentAnalysisV1): Promise<DevelopmentTargetedContextRecoveryV1>;
   prepareCodexTask(analysis: DevelopmentAnalysisV1): Promise<CodexTaskV1>;
   selectModelRole(): Promise<void>;
   selectWorkbenchMode(): Promise<WorkbenchModeV1>;
@@ -32,6 +33,7 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
   private mode: WorkbenchModeV1;
   private readonly intentSelection = new DevelopmentIntentSelectionV1();
   private sequence = 0;
+  private readonly recoveredAttachments = new Map<string, DevelopmentTargetedContextAttachmentV1>();
 
   public constructor(private readonly dependencies: WorkbenchDependenciesV1) { this.mode = dependencies.workbenchMode(); this.connection = { ...this.connection, mode: this.mode, developmentIntent: this.intentSelection.current }; }
 
@@ -100,19 +102,35 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
       await this.postSession();
       return;
     }
+    if (message.type === "gatherDevelopmentContext") {
+      const turn = this.session.find(message.turnId);
+      if (!turn?.development || turn.development.outcome?.status !== "NEEDS_CONTEXT") return;
+      try {
+        const recovery = await this.dependencies.gatherDevelopmentContext(turn.development);
+        if (recovery.status !== "RESOLVED" || !recovery.attachment) throw new Error(recovery.reason_code ?? "Context could not be gathered.");
+        this.recoveredAttachments.set(turn.turnId, recovery.attachment);
+        this.session.setRecovery(turn.turnId, recovery);
+      } catch (error) { await this.post({ type: "notice", message: this.dependencies.errorMessage(error, "DEVELOPMENT") }); }
+      await this.postSession();
+      return;
+    }
     if (message.type === "feedback") { const updated = this.session.feedback(message.turnId, message.value); if (updated) await this.post({ type: "turnFeedback", turn: updated }); return; }
     if (message.type === "runAction") { await this.dependencies.runAction(message.action); return; }
-    const original = message.type === "retry" ? this.session.find(message.turnId) : undefined;
-    if (message.type === "retry" && (!original || original.status === "pending")) return;
-    const question = message.type === "retry" ? original!.question : message.question.trim();
-    const attachments = message.type === "retry" ? original!.attachments : this.attachmentSnapshot();
+    const original = message.type === "retry" || message.type === "rerunWithRecoveredContext" ? this.session.find(message.turnId) : undefined;
+    if ((message.type === "retry" || message.type === "rerunWithRecoveredContext") && (!original || original.status === "pending")) return;
+    const recoveryAttachment = message.type === "rerunWithRecoveredContext" && original ? this.recoveredAttachments.get(original.turnId) : undefined;
+    if (message.type === "rerunWithRecoveredContext" && !recoveryAttachment) return;
+    const newMessage = message.type === "ask" ? message : undefined;
+    if (!original && !newMessage) return;
+    const question = original ? original.question : newMessage!.question.trim();
+    const attachments = original ? original.attachments : this.attachmentSnapshot();
     const context = contextFor(attachments);
-    const requestId = message.type === "retry" ? `retry_${Date.now().toString(36)}` : message.requestId;
+    const requestId = original ? `retry_${Date.now().toString(36)}` : newMessage!.requestId;
     if (this.connection.availability) {
       await this.post({ type: "notice", message: this.connection.availability });
       return;
     }
-    const requestedIntent = message.type === "retry" ? original!.requestedIntent : this.mode === "DEVELOPMENT" ? this.intentSelection.current : undefined;
+    const requestedIntent = original ? original.requestedIntent : this.mode === "DEVELOPMENT" ? this.intentSelection.current : undefined;
     const turn = this.session.begin(`turn_${++this.sequence}`, requestId, question, context, Date.now(), attachments, this.mode, requestedIntent);
     if (!turn) return;
     if (message.type === "ask") this.clearAttachments();
@@ -120,7 +138,7 @@ export class ChappieWorkbenchV1 implements vscode.Disposable {
     const telemetry = setInterval(() => { void this.publishTelemetry(); }, 1_500); void this.publishTelemetry();
     try {
       if (turn.mode === "DEVELOPMENT") {
-        const analysis = await this.dependencies.analyzeDevelopment(turn.question, turn.context, turn.attachments, this.connection.modelRole, turn.requestedIntent!);
+        const analysis = await this.dependencies.analyzeDevelopment(turn.question, turn.context, turn.attachments, this.connection.modelRole, turn.requestedIntent!, recoveryAttachment);
         if (analysis.state !== "OK" && analysis.outcome === undefined) throw new Error(analysis.reason_code ?? "Development analysis did not return a valid result.");
         if (!this.session.completeDevelopment(turn.turnId, analysis)) throw new Error("Development analysis completed after its Workbench turn was no longer pending.");
       } else {

@@ -1,5 +1,13 @@
 """Read-only, evidence-bound development request analysis."""
 
+from app.development_analysis.context_recovery import (
+    DEVELOPMENT_TARGETED_CONTEXT_ATTACHMENT_IDENTITY,
+    DEVELOPMENT_TARGETED_CONTEXT_RECOVERY_IDENTITY,
+    DevelopmentTargetedContextAttachmentV1,
+    DevelopmentTargetedContextRecoveryV1,
+    recover_targeted_contract_context,
+    targeted_context_attachment_from_payload,
+)
 from app.development_analysis.models import (
     DEVELOPMENT_ANALYSIS_IDENTITY,
     DEVELOPMENT_DIFF_REVIEW_IDENTITY,
@@ -76,6 +84,8 @@ __all__ = (
     "DEVELOPMENT_CONTEXT_REQUIREMENT_IDENTITY",
     "DEVELOPMENT_DIFF_REVIEW_IDENTITY",
     "DEVELOPMENT_OUTCOME_IDENTITY",
+    "DEVELOPMENT_TARGETED_CONTEXT_ATTACHMENT_IDENTITY",
+    "DEVELOPMENT_TARGETED_CONTEXT_RECOVERY_IDENTITY",
     "DEVELOPMENT_TASK_INTENT_IDENTITY",
     "REPOSITORY_INVENTORY_ATTACHMENT_IDENTITY",
     "REVIEW_PROPOSAL_TARGETS_IDENTITY",
@@ -109,6 +119,8 @@ __all__ = (
     "DevelopmentRepositoryInventoryAttachmentV1",
     "DevelopmentReviewV1",
     "DevelopmentStagedSynthesisOutputV1",
+    "DevelopmentTargetedContextAttachmentV1",
+    "DevelopmentTargetedContextRecoveryV1",
     "DevelopmentTaskIntentKindV1",
     "DevelopmentTaskIntentSourceV1",
     "DevelopmentTaskIntentV1",
@@ -127,5 +139,7 @@ __all__ = (
     "prepare_codex_handoff",
     "prepare_codex_task",
     "project_development_outcome",
+    "recover_targeted_contract_context",
     "review_development_diff",
+    "targeted_context_attachment_from_payload",
 )

@@ -1,5 +1,6 @@
 import { CodexTaskV1, DevelopmentAnalysisV1, DevelopmentTaskIntentKindV1 } from "../api/contracts";
 import { buildDevelopmentPresentation } from "./development_presentation";
+import { DevelopmentTargetedContextRecoveryV1 } from "../api/contracts";
 import { ContextOptionsV1, WorkbenchContextAttachmentV1, WorkbenchDevelopmentFailureV1, WorkbenchModeV1, WorkbenchTurnV1 } from "./workbench_protocol";
 
 export const MAX_WORKBENCH_TURNS = 100;
@@ -22,6 +23,13 @@ export class WorkbenchSessionV1 {
     const index = this.turns.findIndex((turn) => turn.turnId === turnId && turn.status === "complete" && turn.development?.state === "OK");
     if (index < 0) return undefined;
     this.turns[index] = { ...this.turns[index], codexTask: copyCodexTask(task) };
+    this.revision += 1;
+    return copyTurn(this.turns[index]);
+  }
+  public setRecovery(turnId: string, recovery: DevelopmentTargetedContextRecoveryV1): WorkbenchTurnV1 | undefined {
+    const index = this.turns.findIndex((turn) => turn.turnId === turnId && turn.status === "complete" && turn.development?.state === "OK");
+    if (index < 0) return undefined;
+    this.turns[index] = { ...this.turns[index], recovery: structuredClone(recovery) };
     this.revision += 1;
     return copyTurn(this.turns[index]);
   }
@@ -49,5 +57,5 @@ function copyAttachment(attachment: WorkbenchContextAttachmentV1): WorkbenchCont
 function copyDevelopment(value: DevelopmentAnalysisV1): DevelopmentAnalysisV1 { return structuredClone(value); }
 function copyCodexTask(value: CodexTaskV1): CodexTaskV1 { return structuredClone(value); }
 function copyTurn(turn: WorkbenchTurnV1): WorkbenchTurnV1 {
-  return { ...turn, context: { ...turn.context }, attachments: turn.attachments.map(copyAttachment), response: turn.response ? structuredClone(turn.response) : undefined, development: turn.development ? copyDevelopment(turn.development) : undefined, developmentPresentation: turn.developmentPresentation ? structuredClone(turn.developmentPresentation) : undefined, developmentFailure: turn.developmentFailure ? structuredClone(turn.developmentFailure) : undefined, codexTask: turn.codexTask ? copyCodexTask(turn.codexTask) : undefined };
+  return { ...turn, context: { ...turn.context }, attachments: turn.attachments.map(copyAttachment), response: turn.response ? structuredClone(turn.response) : undefined, development: turn.development ? copyDevelopment(turn.development) : undefined, developmentPresentation: turn.developmentPresentation ? structuredClone(turn.developmentPresentation) : undefined, developmentFailure: turn.developmentFailure ? structuredClone(turn.developmentFailure) : undefined, codexTask: turn.codexTask ? copyCodexTask(turn.codexTask) : undefined, recovery: turn.recovery ? structuredClone(turn.recovery) : undefined };
 }

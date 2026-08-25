@@ -1260,7 +1260,9 @@ def synthesize_development(
         raise AIValidationError(
             "development evidence allowlist is invalid", code="DEVELOPMENT_SCHEMA_INVALID"
         )
-    context_map = build_development_context_map(context, evidence)
+    context_map = build_development_context_map(
+        context, evidence, getattr(request, "targeted_context_attachment", None)
+    )
     provider = ai.router.provider_for(ai.config.profile)
 
     intent = getattr(request, "requested_intent", None)

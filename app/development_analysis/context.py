@@ -67,11 +67,16 @@ class DevelopmentContextMapV1:
         }
 
 
-def build_development_context_map(context: object, evidence: object) -> DevelopmentContextMapV1:
+def build_development_context_map(
+    context: object, evidence: object, targeted_context_attachment: object | None = None
+) -> DevelopmentContextMapV1:
     """Project bounded selected Knowledge into immutable handles before inference."""
     records = tuple(sorted(context.records, key=lambda item: item.knowledge_id))
-    if len(records) > MAX_DEVELOPMENT_EVIDENCE_HANDLES:
-        records = records[:MAX_DEVELOPMENT_EVIDENCE_HANDLES]
+    evidence_limit = MAX_DEVELOPMENT_EVIDENCE_HANDLES - (
+        1 if targeted_context_attachment is not None else 0
+    )
+    if len(records) > evidence_limit:
+        records = records[:evidence_limit]
     handles = tuple(
         DevelopmentEvidenceHandleV1(
             f"E{index}",
@@ -86,10 +91,32 @@ def build_development_context_map(context: object, evidence: object) -> Developm
     owner_candidates = tuple(
         sorted({owner for record in records for owner in _canonical_owners_from_record(record)})
     )
-    contracts = tuple(sorted(record.title for record in records if "V1" in record.title))
-    files = tuple(
-        sorted({source.path for record in records for source in record.sources if source.path})
-    )
+    contracts = {record.title for record in records if "V1" in record.title}
+    files = {source.path for record in records for source in record.sources if source.path}
+    if targeted_context_attachment is not None:
+        contract = getattr(targeted_context_attachment, "contract_identifier", None)
+        source_path = getattr(targeted_context_attachment, "source_path", None)
+        attachment_digest = getattr(targeted_context_attachment, "attachment_digest", None)
+        shape = getattr(targeted_context_attachment, "declaration_shape", None)
+        if not all(
+            isinstance(item, str) and item
+            for item in (contract, source_path, attachment_digest, shape)
+        ):
+            raise ValueError("targeted context attachment is invalid")
+        handles += (
+            DevelopmentEvidenceHandleV1(
+                "TC1",
+                "targeted_context.contract.statement",
+                contract,
+                attachment_digest,
+                "CONTRACT",
+                f"Current contract {contract} is declared in {source_path}: {shape}",
+            ),
+        )
+        contracts.add(contract.rsplit(".", 1)[-1])
+        files.add(source_path)
+    contracts = tuple(sorted(contracts))
+    files = tuple(sorted(files))
     tests = tuple(path for path in files if path.startswith("tests/"))
     constraints = (
         "Advisory only; human approval is required.",
@@ -140,8 +167,12 @@ def development_context_map_from_payload(value: object) -> DevelopmentContextMap
             for item in raw_handles
             if isinstance(item, dict)
         )
-        if len(handles) != len(raw_handles) or any(
-            handle.handle != f"E{index}" for index, handle in enumerate(handles, start=1)
+        expected_handles = tuple(f"E{index}" for index in range(1, len(handles) + 1))
+        if handles and handles[-1].handle == "TC1":
+            expected_handles = expected_handles[:-1] + ("TC1",)
+        if (
+            len(handles) != len(raw_handles)
+            or tuple(handle.handle for handle in handles) != expected_handles
         ):
             raise ValueError
         result = DevelopmentContextMapV1(

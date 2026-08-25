@@ -42,6 +42,8 @@ test("Workbench protocol accepts only bounded typed webview messages", () => {
   assert.equal(parseWebviewMessage({ type: "ask", requestId: "request_1", question: "x".repeat(12_001), context: noContext }), undefined);
   assert.equal(parseWebviewMessage({ type: "runAction", action: "unsafe" }), undefined);
   assert.deepEqual(parseWebviewMessage({ type: "retry", turnId: "turn_1" }), { type: "retry", turnId: "turn_1" });
+  assert.deepEqual(parseWebviewMessage({ type: "gatherDevelopmentContext", turnId: "turn_1" }), { type: "gatherDevelopmentContext", turnId: "turn_1" });
+  assert.deepEqual(parseWebviewMessage({ type: "rerunWithRecoveredContext", turnId: "turn_1" }), { type: "rerunWithRecoveredContext", turnId: "turn_1" });
   assert.deepEqual(parseWebviewMessage({ type: "feedback", turnId: "turn_1", value: "good" }), { type: "feedback", turnId: "turn_1", value: "good" });
   assert.equal(parseWebviewMessage({ type: "feedback", turnId: "turn_1", value: "maybe" }), undefined);
   assert.equal(parseWebviewMessage({ type: "ready", protocol: "wrong" }), undefined);
@@ -281,7 +283,9 @@ test("Workbench keeps all composer actions in one bottom bar while attachments s
 test("Workbench context protocol version and host snapshot retry path are intentional", () => {
   const source = readFileSync("src/ui/workbench.ts", "utf8");
   assert.equal(WORKBENCH_PROTOCOL_VERSION, "chappie_workbench/1.4.0");
-  assert.match(source, /const attachments = message\.type === "retry" \? original!\.attachments : this\.attachmentSnapshot\(\)/);
+  assert.match(source, /const attachments = original \? original\.attachments : this\.attachmentSnapshot\(\)/);
+  assert.match(source, /message\.type === "gatherDevelopmentContext"/);
+  assert.match(source, /message\.type === "rerunWithRecoveredContext"/);
   assert.match(source, /this\.dependencies\.askProject\(turn\.question, turn\.context, turn\.attachments, this\.connection\.modelRole\)/);
   assert.match(source, /selectModelRole/);
   assert.match(source, /if \(message\.type === "ask"\) this\.clearAttachments\(\)/);

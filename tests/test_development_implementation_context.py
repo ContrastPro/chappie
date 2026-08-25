@@ -1,7 +1,16 @@
 from __future__ import annotations
 
+from dataclasses import replace
+from pathlib import Path
+
+import pytest
+
 from app.ai.model_policy import DevelopmentModelRoleV1
 from app.development_analysis.context import DevelopmentContextMapV1, DevelopmentEvidenceHandleV1
+from app.development_analysis.context_recovery import (
+    recover_targeted_contract_context,
+    targeted_context_attachment_from_payload,
+)
 from app.development_analysis.implementation_context import (
     build_implementation_context_from_development,
     compare_development_projection,
@@ -12,6 +21,9 @@ from app.development_analysis.models import (
     DevelopmentAnalysisV1,
     DevelopmentEvidencePackV1,
     DevelopmentProposedScopeV1,
+    DevelopmentTaskIntentKindV1,
+    DevelopmentTaskIntentSourceV1,
+    DevelopmentTaskIntentV1,
 )
 from app.development_analysis.task import CodexTaskStateV1, CodexTaskV1
 from app.implementation_context import (
@@ -19,6 +31,7 @@ from app.implementation_context import (
     ImplementationContextSufficiencyStateV1,
     assess_implementation_context_sufficiency,
 )
+from app.knowledge.store import RepositorySnapshotV1
 
 COMMIT = "a" * 40
 DIGEST = "b" * 64
@@ -216,7 +229,78 @@ def test_projection_is_pure_and_rejects_unbound_handoff() -> None:
         "CODE",
         analysis.request,
     )
-    import pytest
-
     with pytest.raises(ValueError, match="not bound"):
         build_implementation_context_from_development(_context_map(), analysis, invalid)
+
+
+def test_no_grounded_contract_scope_resolves_only_the_registered_contract() -> None:
+    analysis = _analysis()
+    intent = DevelopmentTaskIntentV1(
+        DevelopmentTaskIntentKindV1.IMPLEMENTATION,
+        DevelopmentTaskIntentSourceV1.EXPLICIT,
+        "explicit_implementation",
+        analysis.evidence.evidence_digest,
+        analysis.context_map.context_digest,
+    )
+    blocked = replace(
+        analysis,
+        reason_code="NO_GROUNDED_CONTRACT_SCOPE",
+        readiness=DevelopmentAnalysisReadinessV1.INSUFFICIENT_EVIDENCE,
+        affected_contracts=(),
+        task_intent=intent,
+    )
+    result = recover_targeted_contract_context(
+        blocked,
+        RepositorySnapshotV1(COMMIT, True),
+        Path.cwd(),
+    )
+    assert result.status == "RESOLVED"
+    assert result.missing_request is not None
+    assert result.missing_request.requested_kind.value == "CONTRACT"
+    assert (
+        result.missing_request.exact_target
+        == "app.development_analysis.models.DevelopmentDiffReviewV1"
+    )
+    assert result.attachment is not None
+    assert result.attachment.source_path == "app/development_analysis/models.py"
+    assert (
+        targeted_context_attachment_from_payload(result.attachment.payload()) == result.attachment
+    )
+    malformed = result.attachment.payload()
+    malformed["source_commit"] = 1
+    with pytest.raises(ValueError, match="targeted context attachment is invalid"):
+        targeted_context_attachment_from_payload(malformed)
+
+
+def test_targeted_recovery_rejects_other_blockers_and_dirty_snapshots() -> None:
+    analysis = _analysis()
+    assert (
+        recover_targeted_contract_context(
+            analysis, RepositorySnapshotV1(COMMIT, True), Path.cwd()
+        ).reason_code
+        == "RECOVERY_NOT_SUPPORTED"
+    )
+    intent = DevelopmentTaskIntentV1(
+        DevelopmentTaskIntentKindV1.IMPLEMENTATION,
+        DevelopmentTaskIntentSourceV1.EXPLICIT,
+        "explicit_implementation",
+        analysis.evidence.evidence_digest,
+        analysis.context_map.context_digest,
+    )
+    blocked = replace(
+        analysis,
+        reason_code="NO_GROUNDED_CONTRACT_SCOPE",
+        task_intent=intent,
+    )
+    assert (
+        recover_targeted_contract_context(
+            blocked, RepositorySnapshotV1(COMMIT, False), Path.cwd()
+        ).reason_code
+        == "REPOSITORY_NOT_CLEAN"
+    )
+    assert (
+        recover_targeted_contract_context(
+            blocked, RepositorySnapshotV1("c" * 40, True), Path.cwd()
+        ).reason_code
+        == "SOURCE_COMMIT_MISMATCH"
+    )

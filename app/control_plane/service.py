@@ -532,6 +532,7 @@ class ChappieControlPlaneV1:
         requested_role: str,
         requested_intent: str | None = None,
         workspace_context: object | None = None,
+        targeted_context_attachment: object | None = None,
         acceptance_diagnostics_sink: Callable[[object], None] | None = None,
     ):
         """Return bounded read-only analysis; no implementation or repository mutation path exists."""
@@ -551,7 +552,21 @@ class ChappieControlPlaneV1:
                 if requested_intent is not None
                 else None
             )
-            value = DevelopmentAnalysisRequestV1(request, role, context, requested_intent=intent)
+            if targeted_context_attachment is not None:
+                from app.development_analysis.context_recovery import (
+                    targeted_context_attachment_from_payload,
+                )
+
+                targeted_context_attachment = targeted_context_attachment_from_payload(
+                    targeted_context_attachment
+                )
+            value = DevelopmentAnalysisRequestV1(
+                request,
+                role,
+                context,
+                targeted_context_attachment=targeted_context_attachment,
+                requested_intent=intent,
+            )
         except (TypeError, ValueError):
             from app.development_analysis import DevelopmentAnalysisStateV1, DevelopmentAnalysisV1
 
@@ -572,6 +587,27 @@ class ChappieControlPlaneV1:
                 self._paths, item, knowledge, evidence
             ),
         ).analyze(value)
+
+    def gather_development_context(self, analysis: object):
+        """Resolve one user-approved, bounded Development recovery request."""
+        from app.development_analysis import development_analysis_from_payload
+        from app.development_analysis.context_recovery import recover_targeted_contract_context
+        from app.knowledge import committed_snapshot
+
+        try:
+            return recover_targeted_contract_context(
+                development_analysis_from_payload(analysis),
+                committed_snapshot(self._paths.root),
+                self._paths.root,
+            )
+        except (TypeError, ValueError, OSError):
+            from app.development_analysis.context_recovery import (
+                DevelopmentTargetedContextRecoveryV1,
+            )
+
+            return DevelopmentTargetedContextRecoveryV1(
+                "", "", "", None, "REJECTED", "RECOVERY_INVALID", None
+            )
 
     def prepare_development_task(self, analysis: object):
         """Validate and project an advisory task; it never invokes Codex or mutates state."""

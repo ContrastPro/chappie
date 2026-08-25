@@ -299,10 +299,12 @@ class ChappieControlPlaneServerV1:
         request_id = uuid.uuid4().hex
         development = handler.path == "/v1/development/analyze"
         task = handler.path == "/v1/development/task"
+        recovery = handler.path == "/v1/development/context"
         if handler.path not in {
             "/v1/project/qa",
             "/v1/development/analyze",
             "/v1/development/task",
+            "/v1/development/context",
         }:
             self._method_not_allowed(handler)
             return
@@ -358,13 +360,19 @@ class ChappieControlPlaneServerV1:
         try:
             value = json.loads(handler.rfile.read(content_length))
             allowed = (
-                {"request", "requested_role", "requested_intent", "workspace_context"}
+                {
+                    "request",
+                    "requested_role",
+                    "requested_intent",
+                    "workspace_context",
+                    "targeted_context_attachment",
+                }
                 if development
                 else {"analysis"}
-                if task
+                if task or recovery
                 else {"question", "workspace_context", "requested_model_id", "requested_model_role"}
             )
-            required = "request" if development else "analysis" if task else "question"
+            required = "request" if development else "analysis" if task or recovery else "question"
             if (
                 not isinstance(value, dict)
                 or set(value).difference(allowed)
@@ -372,7 +380,7 @@ class ChappieControlPlaneServerV1:
             ):
                 raise ValueError
             question = value[required]
-            if not task and not isinstance(question, str):
+            if not task and not recovery and not isinstance(question, str):
                 raise TypeError
             if development:
                 from app.ai.model_policy import DevelopmentModelRoleV1
@@ -438,11 +446,19 @@ class ChappieControlPlaneServerV1:
                     return
                 self._write(handler, 200, _envelope(request_id=request_id, data=response.payload()))
                 return
+            if recovery:
+                response = self._control_plane.gather_development_context(question)
+                self._write(handler, 200, _envelope(request_id=request_id, data=response.payload()))
+                return
             if development:
                 development_kwargs = {
                     "requested_role": requested_role,
                     "workspace_context": value.get("workspace_context"),
                 }
+                if value.get("targeted_context_attachment") is not None:
+                    development_kwargs["targeted_context_attachment"] = value[
+                        "targeted_context_attachment"
+                    ]
                 if value.get("requested_intent") is not None:
                     development_kwargs["requested_intent"] = value["requested_intent"]
                 response = self._control_plane.analyze_development(question, **development_kwargs)

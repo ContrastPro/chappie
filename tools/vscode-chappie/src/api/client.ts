@@ -8,6 +8,7 @@ import {
   ControlPlaneStatusV1,
   CodexTaskPreparationRequestV1,
   CodexTaskV1,
+  DevelopmentTargetedContextRecoveryV1,
   DevelopmentAnalysisRequestV1,
   DevelopmentAnalysisV1,
   DevelopmentFailureDiagnosticsV1,
@@ -93,6 +94,9 @@ export class ChappieControlPlaneClient {
   }
   public analyzeDevelopment(request: DevelopmentAnalysisRequestV1): Promise<DevelopmentAnalysisV1> {
     return this.data("/v1/development/analyze", { method: "POST", body: JSON.stringify(request) }, this.developmentAnalysisTimeoutMs).then(parseDevelopmentAnalysis);
+  }
+  public gatherDevelopmentContext(analysis: DevelopmentAnalysisV1): Promise<DevelopmentTargetedContextRecoveryV1> {
+    return this.data("/v1/development/context", { method: "POST", body: JSON.stringify({ analysis }) }, this.projectQaTimeoutMs).then(parseDevelopmentTargetedContextRecovery);
   }
   public prepareCodexTask(request: CodexTaskPreparationRequestV1): Promise<CodexTaskV1> {
     return this.data("/v1/development/task", { method: "POST", body: JSON.stringify(request) }, this.projectQaTimeoutMs).then(parseCodexTask);
@@ -200,6 +204,22 @@ function parseDevelopmentAnalysis(value: unknown): DevelopmentAnalysisV1 {
     throw new ControlPlaneClientError("Control Plane returned invalid Development lifecycle telemetry");
   }
   return value as unknown as DevelopmentAnalysisV1;
+}
+
+function parseDevelopmentTargetedContextRecovery(value: unknown): DevelopmentTargetedContextRecoveryV1 {
+  if (!isRecord(value) || value.identity !== "chappie_development_targeted_context_recovery/1.0.0" || typeof value.original_request !== "string" || typeof value.requested_role !== "string" || typeof value.requested_intent !== "string" || !["RESOLVED", "REJECTED"].includes(String(value.status)) || (value.reason_code !== null && typeof value.reason_code !== "string") || (value.missing_request !== null && !isRecord(value.missing_request)) || (value.attachment !== null && !isTargetedContextAttachment(value.attachment))) {
+    throw new ControlPlaneClientError("Control Plane returned an invalid targeted Development context recovery response");
+  }
+  if (value.status === "RESOLVED" && value.attachment === null) {
+    throw new ControlPlaneClientError("Control Plane returned an incomplete targeted Development context recovery response");
+  }
+  return value as unknown as DevelopmentTargetedContextRecoveryV1;
+}
+
+function isTargetedContextAttachment(value: unknown): boolean {
+  if (!isRecord(value) || value.identity !== "chappie_development_targeted_context_attachment/1.0.0") return false;
+  const strings = ["source_commit", "knowledge_identity", "knowledge_manifest_digest", "original_evidence_digest", "original_context_digest", "contract_identifier", "source_path", "declaration_kind", "declaration_shape", "targeted_context_digest", "attachment_digest"];
+  return strings.every((key) => typeof value[key] === "string") && value.contract_identifier === "app.development_analysis.models.DevelopmentDiffReviewV1" && value.source_path === "app/development_analysis/models.py" && value.declaration_kind === "CLASS";
 }
 
 function isDevelopmentOutcome(value: unknown): boolean {

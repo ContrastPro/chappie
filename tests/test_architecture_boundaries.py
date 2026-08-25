@@ -292,6 +292,7 @@ PACKAGE_OWNERSHIP = {
                 "app.implementation_context",
                 "app.knowledge",
                 "app.repository_inventory",
+                "app.targeted_context",
             }
         ),
     },

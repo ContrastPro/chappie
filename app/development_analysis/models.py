@@ -253,6 +253,7 @@ class DevelopmentAnalysisRequestV1:
     workspace_context: object | None = None
     repository_inventory_attachment: object | None = None
     requested_intent: DevelopmentTaskIntentKindV1 | None = None
+    targeted_context_attachment: object | None = None
 
     def __post_init__(self) -> None:
         if not self.request.strip() or len(self.request) > MAX_DEVELOPMENT_REQUEST_CHARACTERS:
