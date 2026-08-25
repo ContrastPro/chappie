@@ -29,7 +29,9 @@ from app.control_plane.transport import (
     _development_diagnostics,
     _log_development_lifecycle,
 )
+from app.development_analysis import AgentTaskContextResponseV1, AgentTaskContextStateV1
 from app.development_analysis.models import DevelopmentAnalysisStateV1, DevelopmentAnalysisV1
+from app.implementation_context import AuthorityBoundaryV1, ImplementationContextV1
 from app.platform.bootstrap import (
     ChappieLocalConfigV1,
     ChappiePaths,
@@ -126,6 +128,39 @@ class _FakeControlPlane:
             non_goals=("No mutation.",),
             acceptance_criteria=("criterion",),
             validation_status="VALID",
+        )
+
+    def get_agent_task_context(
+        self,
+        task: str,
+        *,
+        requested_role: str,
+        requested_intent: str,
+        workspace_context: object | None = None,
+    ) -> AgentTaskContextResponseV1:
+        _ = requested_role, requested_intent, workspace_context
+        context = ImplementationContextV1(
+            goal=task,
+            source_commit="a" * 40,
+            repository_clean=True,
+            knowledge_identity="chappie_knowledge/1.0.0",
+            knowledge_manifest_digest="b" * 64,
+            knowledge_context_digest="c" * 64,
+            evidence_digest="d" * 64,
+            canonical_owner="app.tools",
+            direct_files=("app/tools/paper_monitor.py", "tests/test_paper_monitor.py"),
+            authority=AuthorityBoundaryV1(
+                ("prepare read-only implementation context",),
+                ("No exchange execution or credential access.",),
+                "HUMAN_APPROVAL_REQUIRED",
+            ),
+        )
+        return AgentTaskContextResponseV1(
+            AgentTaskContextStateV1.NEEDS_CONTEXT,
+            context,
+            "INSUFFICIENT",
+            None,
+            ("CONTRACT_CONTEXT_MISSING",),
         )
 
 
@@ -310,6 +345,53 @@ def test_development_analysis_transport_round_trip_is_read_only(server) -> None:
     assert diagnostic["status"] == "COMPLETED"
     assert diagnostic["reason_code"] is None
     assert diagnostic["failed_stage"] is None
+
+
+def test_agent_context_transport_is_machine_readable_and_excludes_internal_payloads(server) -> None:
+    status, _headers, body = _request(
+        server,
+        "POST",
+        "/v1/agent/context",
+        json.dumps(
+            {
+                "task": "Add a read-only JSON projection.",
+                "requested_role": "CODE",
+                "requested_intent": "IMPLEMENTATION",
+            }
+        ),
+    )
+    assert status == 200
+    context = body["data"]["implementation_context"]
+    assert body["data"]["identity"] == "chappie_agent_task_context/1.0.0"
+    assert body["data"]["state"] == "NEEDS_CONTEXT"
+    assert body["data"]["context_digest"]
+    assert body["data"]["serialized_context_bytes"] > 0
+    assert body["data"]["serialized_context_characters"] > 0
+    assert body["data"]["readiness"] is None
+    assert context["identity"] == "chappie_implementation_context/1.0.0"
+    assert context["direct_files"] == ["app/tools/paper_monitor.py", "tests/test_paper_monitor.py"]
+    assert context["authority"]["approval_requirement"] == "HUMAN_APPROVAL_REQUIRED"
+    rendered = json.dumps(body["data"])
+    assert "context_map" not in rendered
+    assert "inventory" not in rendered
+    assert "lifecycle" not in rendered
+
+
+def test_agent_context_transport_forwards_explicit_intent_without_workbench(server) -> None:
+    status, _headers, body = _request(
+        server,
+        "POST",
+        "/v1/agent/context",
+        json.dumps(
+            {
+                "task": "Explain architecture.",
+                "requested_role": "CODE",
+                "requested_intent": "QUESTION",
+            }
+        ),
+    )
+    assert status == 200
+    assert body["data"]["state"] == "NEEDS_CONTEXT"
 
 
 def test_invalid_development_request_is_retained_as_a_typed_transport_failure(server) -> None:

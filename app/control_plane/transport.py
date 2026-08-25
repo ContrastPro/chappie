@@ -298,6 +298,7 @@ class ChappieControlPlaneServerV1:
     def _handle_post(self, handler: BaseHTTPRequestHandler) -> None:
         request_id = uuid.uuid4().hex
         development = handler.path == "/v1/development/analyze"
+        agent_context = handler.path == "/v1/agent/context"
         task = handler.path == "/v1/development/task"
         recovery = handler.path == "/v1/development/context"
         if handler.path not in {
@@ -305,6 +306,7 @@ class ChappieControlPlaneServerV1:
             "/v1/development/analyze",
             "/v1/development/task",
             "/v1/development/context",
+            "/v1/agent/context",
         }:
             self._method_not_allowed(handler)
             return
@@ -368,11 +370,21 @@ class ChappieControlPlaneServerV1:
                     "targeted_context_attachment",
                 }
                 if development
+                else {"task", "requested_role", "requested_intent", "workspace_context"}
+                if agent_context
                 else {"analysis"}
                 if task or recovery
                 else {"question", "workspace_context", "requested_model_id", "requested_model_role"}
             )
-            required = "request" if development else "analysis" if task or recovery else "question"
+            required = (
+                "request"
+                if development
+                else "task"
+                if agent_context
+                else "analysis"
+                if task or recovery
+                else "question"
+            )
             if (
                 not isinstance(value, dict)
                 or set(value).difference(allowed)
@@ -382,13 +394,20 @@ class ChappieControlPlaneServerV1:
             question = value[required]
             if not task and not recovery and not isinstance(question, str):
                 raise TypeError
-            if development:
+            if development or agent_context:
                 from app.ai.model_policy import DevelopmentModelRoleV1
 
                 requested_role = value.get("requested_role")
                 if not isinstance(requested_role, str):
                     raise TypeError
                 requested_role = DevelopmentModelRoleV1(requested_role).value
+                if agent_context:
+                    from app.development_analysis import DevelopmentTaskIntentKindV1
+
+                    requested_intent = value.get("requested_intent")
+                    if not isinstance(requested_intent, str):
+                        raise TypeError
+                    requested_intent = DevelopmentTaskIntentKindV1(requested_intent).value
                 requested_model_id = requested_model_role = None
             else:
                 requested_role = None
@@ -429,6 +448,15 @@ class ChappieControlPlaneServerV1:
             )
             return
         try:
+            if agent_context:
+                response = self._control_plane.get_agent_task_context(
+                    question,
+                    requested_role=requested_role,
+                    requested_intent=requested_intent,
+                    workspace_context=value.get("workspace_context"),
+                )
+                self._write(handler, 200, _envelope(request_id=request_id, data=response.payload()))
+                return
             if task:
                 response = self._control_plane.prepare_development_task(question)
                 if response.state.value != "ADVISORY":

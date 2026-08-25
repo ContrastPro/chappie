@@ -1,5 +1,13 @@
 """Read-only, evidence-bound development request analysis."""
 
+from app.development_analysis.agent_context import (
+    AGENT_TASK_CONTEXT_IDENTITY,
+    MAX_AGENT_TASK_CONTEXT_SERIALIZED_BYTES,
+    AgentTaskContextRequestV1,
+    AgentTaskContextResponseV1,
+    AgentTaskContextStateV1,
+    project_agent_task_context,
+)
 from app.development_analysis.context_recovery import (
     DEVELOPMENT_TARGETED_CONTEXT_ATTACHMENT_IDENTITY,
     DEVELOPMENT_TARGETED_CONTEXT_RECOVERY_IDENTITY,
@@ -79,6 +87,7 @@ from app.development_analysis.task import (
 )
 
 __all__ = (
+    "AGENT_TASK_CONTEXT_IDENTITY",
     "CODEX_TASK_IDENTITY",
     "DEVELOPMENT_ANALYSIS_IDENTITY",
     "DEVELOPMENT_CONTEXT_REQUIREMENT_IDENTITY",
@@ -87,8 +96,12 @@ __all__ = (
     "DEVELOPMENT_TARGETED_CONTEXT_ATTACHMENT_IDENTITY",
     "DEVELOPMENT_TARGETED_CONTEXT_RECOVERY_IDENTITY",
     "DEVELOPMENT_TASK_INTENT_IDENTITY",
+    "MAX_AGENT_TASK_CONTEXT_SERIALIZED_BYTES",
     "REPOSITORY_INVENTORY_ATTACHMENT_IDENTITY",
     "REVIEW_PROPOSAL_TARGETS_IDENTITY",
+    "AgentTaskContextRequestV1",
+    "AgentTaskContextResponseV1",
+    "AgentTaskContextStateV1",
     "CodexHandoffV1",
     "CodexTaskPreparationRequestV1",
     "CodexTaskStateV1",
@@ -138,6 +151,7 @@ __all__ = (
     "development_context_requirement",
     "prepare_codex_handoff",
     "prepare_codex_task",
+    "project_agent_task_context",
     "project_development_outcome",
     "recover_targeted_contract_context",
     "review_development_diff",

@@ -6,6 +6,11 @@ from pathlib import Path
 import pytest
 
 from app.ai.model_policy import DevelopmentModelRoleV1
+from app.development_analysis.agent_context import (
+    AgentTaskContextRequestV1,
+    AgentTaskContextStateV1,
+    project_agent_task_context,
+)
 from app.development_analysis.context import DevelopmentContextMapV1, DevelopmentEvidenceHandleV1
 from app.development_analysis.context_recovery import (
     recover_targeted_contract_context,
@@ -176,6 +181,29 @@ def test_successful_handoff_projects_a_deterministic_consumer_neutral_context() 
         assess_implementation_context_sufficiency(context).state
         is not ImplementationContextSufficiencyStateV1.INSUFFICIENT
     )
+
+
+def test_agent_context_reuses_implementation_context_with_nonsemantic_size_metadata() -> None:
+    response = project_agent_task_context(_analysis())
+    assert response.state is AgentTaskContextStateV1.NEEDS_CONTEXT
+    assert response.implementation_context is not None
+    assert response.context_digest == response.implementation_context.digest
+    assert response.serialized_context_bytes > 0
+    assert response.serialized_context_characters > 0
+    assert response.readiness == "READY_FOR_TASK"
+    payload = response.payload()
+    assert payload["implementation_context"]["identity"] == "chappie_implementation_context/1.0.0"
+    assert "context_map" not in payload["implementation_context"]
+    assert "lifecycle" not in payload["implementation_context"]
+
+
+def test_agent_context_request_rejects_nonimplementation_intent_before_analysis() -> None:
+    with pytest.raises(ValueError, match="IMPLEMENTATION"):
+        AgentTaskContextRequestV1(
+            "Explain architecture.",
+            DevelopmentModelRoleV1.CODE,
+            DevelopmentTaskIntentKindV1.QUESTION,
+        )
 
 
 def test_planned_diff_review_remains_proposed_and_requires_targeted_expansion() -> None:

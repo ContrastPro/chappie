@@ -588,6 +588,43 @@ class ChappieControlPlaneV1:
             ),
         ).analyze(value)
 
+    def get_agent_task_context(
+        self,
+        task: str,
+        *,
+        requested_role: str,
+        requested_intent: str,
+        workspace_context: object | None = None,
+    ):
+        """Return one read-only, provenance-bound context for an external coding agent."""
+        from app.ai.model_policy import DevelopmentModelRoleV1
+        from app.development_analysis import (
+            AgentTaskContextRequestV1,
+            DevelopmentTaskIntentKindV1,
+            project_agent_task_context,
+        )
+
+        try:
+            request = AgentTaskContextRequestV1(
+                task,
+                DevelopmentModelRoleV1(requested_role),
+                DevelopmentTaskIntentKindV1(requested_intent),
+                workspace_context,
+            )
+        except (TypeError, ValueError):
+            from app.development_analysis import AgentTaskContextResponseV1, AgentTaskContextStateV1
+
+            return AgentTaskContextResponseV1(
+                AgentTaskContextStateV1.TASK_TOO_BROAD, reason_code="INVALID_REQUEST"
+            )
+        analysis = self.analyze_development(
+            request.task,
+            requested_role=request.requested_role.value,
+            requested_intent=request.requested_intent.value,
+            workspace_context=request.workspace_context,
+        )
+        return project_agent_task_context(analysis)
+
     def gather_development_context(self, analysis: object):
         """Resolve one user-approved, bounded Development recovery request."""
         from app.development_analysis import development_analysis_from_payload
