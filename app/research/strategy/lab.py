@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -41,6 +42,19 @@ class StrategyComparisonConfig:
             or not Decimal(0) < self.target_exposure <= 1
         ):
             raise ValueError("comparison financial configuration is invalid")
+
+
+@dataclass(frozen=True, slots=True)
+class ReplayProgress:
+    """Read-only, post-accounting progress for an offline strategy replay."""
+
+    evaluation_processed: int
+    evaluation_total: int
+    last_close_time_ms: int
+    decisions: int
+    fills: int
+    closed_trades: int
+    current_equity: Decimal
 
 
 @dataclass(frozen=True, slots=True)
@@ -87,6 +101,7 @@ def compare_strategy(
     config: StrategyComparisonConfig | None = None,
     *,
     evaluation_start_index: int = 0,
+    progress_observer: Callable[[ReplayProgress], None] | None = None,
 ) -> StrategyComparisonResult:
     config = config or StrategyComparisonConfig()
     if len(candles) < 2:
@@ -189,6 +204,18 @@ def compare_strategy(
         peak = max(peak, equity)
         if peak:
             max_drawdown = max(max_drawdown, (peak - equity) / peak * Decimal(100))
+        if progress_observer is not None:
+            progress_observer(
+                ReplayProgress(
+                    evaluation_processed=index - evaluation_start_index + 1,
+                    evaluation_total=len(candles) - evaluation_start_index,
+                    last_close_time_ms=candle.close_time_ms,
+                    decisions=sum(regimes.values()),
+                    fills=(2 * len(completed)) + (1 if quantity else 0),
+                    closed_trades=len(completed),
+                    current_equity=equity,
+                )
+            )
     ending = cash + quantity * candles[-1].close
     outcomes = [item[0] for item in completed]
     gross_realised = sum((item[1] for item in completed), Decimal(0))
