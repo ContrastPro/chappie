@@ -380,8 +380,11 @@ class PublicKlineDownloader:
             if next_cursor <= cursor:
                 raise ValueError("pagination did not advance")
             cursor = next_cursor
-            if len(page) < MAX_PAGE_SIZE:
+            if cursor >= end_ms:
                 break
+            if len(page) < MAX_PAGE_SIZE:
+                validate_candles(page, interval)
+                raise ValueError("downloaded candles do not cover the requested range")
         else:
             raise ValueError("downloader request bound exhausted")
         candles = validate_candles(all_candles, interval)

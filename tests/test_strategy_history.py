@@ -13,6 +13,7 @@ from app.market.models import Candle
 from app.research.strategy.history import (
     MAX_CANDLES_PER_ACQUISITION,
     MAX_PAGE_SIZE,
+    MAX_REQUESTS,
     HistoricalDataset,
     HistoricalDatasetMetadata,
     PublicKlineDownloader,
@@ -92,6 +93,56 @@ def test_downloader_paginates_and_emits_deterministic_dataset() -> None:
     assert result.metadata.candles_sha256 == candles_sha256(result.candles)
     assert dict(requests[0].url.params)["startTime"] == "0"
     assert dict(requests[1].url.params)["startTime"] == str(MAX_PAGE_SIZE * 300_000)
+
+
+@pytest.mark.parametrize(("count", "succeeds"), [(99_999, True), (100_000, True), (100_001, False)])
+def test_downloader_enforces_exact_request_cap_without_extra_provider_request(
+    count: int, succeeds: bool
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        start = int(dict(request.url.params)["startTime"])
+        index = start // 300_000
+        requests.append(request)
+        page_count = min(MAX_PAGE_SIZE, count - index)
+        payload = [_raw((index + offset) * 300_000) for offset in range(page_count)]
+        return httpx.Response(200, json=payload, request=request)
+
+    with httpx.Client(
+        base_url="https://public.test", transport=httpx.MockTransport(respond)
+    ) as client:
+        downloader = PublicKlineDownloader(client)
+        if succeeds:
+            dataset = downloader.download(
+                symbol="BTCUSDT", interval="5m", start_ms=0, end_ms=count * 300_000
+            )
+            assert dataset.metadata.candle_count == count
+        else:
+            with pytest.raises(ValueError, match="range exceeds"):
+                downloader.download(
+                    symbol="BTCUSDT", interval="5m", start_ms=0, end_ms=count * 300_000
+                )
+    assert len(requests) == (MAX_REQUESTS if succeeds else 0)
+
+
+def test_downloader_rejects_a_short_page_before_the_requested_end() -> None:
+    with (
+        httpx.Client(
+            base_url="https://public.test",
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200,
+                    json=[_raw(index * 300_000) for index in range(MAX_PAGE_SIZE - 1)],
+                    request=request,
+                )
+            ),
+        ) as client,
+        pytest.raises(ValueError, match="do not cover"),
+    ):
+        PublicKlineDownloader(client).download(
+            symbol="BTCUSDT", interval="5m", start_ms=0, end_ms=MAX_PAGE_SIZE * 300_000
+        )
 
 
 @pytest.mark.parametrize(
