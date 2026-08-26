@@ -16,7 +16,6 @@ from typing import Any
 from app.research.strategy.lab import ReplayProgress, StrategyComparisonResult, compare_strategy
 from app.research.strategy.locked_evaluation import PreparedLockedReplay, prepare_locked_replay
 
-ATTEMPT_ID = 2
 AUTHORIZATION_IDENTITY = "chappie_frozen_strategy_execution_authorization/1.0.0"
 PROGRESS_IDENTITY = "chappie_frozen_strategy_oos_progress/1.0.0"
 RESULT_IDENTITY = "chappie_frozen_strategy_oos_result/1.0.0"
@@ -74,7 +73,32 @@ def _atomic_create(path: Path, payload: dict[str, object]) -> None:
         raise
 
 
-def _load_authorization(path: Path, *, execution_head: str) -> tuple[dict[str, object], str]:
+def _validate_attempt_id(value: object) -> int:
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise ValueError("attempt_id must be a positive integer")
+    return value
+
+
+def _validated_history(value: object, *, attempt_id: int) -> tuple[dict[str, object], ...]:
+    if not isinstance(value, list) or len(value) != attempt_id - 1:
+        raise ValueError("attempt history is incomplete")
+    history: list[dict[str, object]] = []
+    for expected_id, item in enumerate(value, start=1):
+        if (
+            not isinstance(item, dict)
+            or item.get("attempt_id") != expected_id
+            or not isinstance(item.get("status"), str)
+            or item.get("result_observed") is not False
+        ):
+            raise ValueError("attempt history is invalid")
+        history.append(dict(item))
+    return tuple(history)
+
+
+def _load_authorization(
+    path: Path, *, execution_head: str, attempt_id: int
+) -> tuple[dict[str, object], str, tuple[dict[str, object], ...]]:
+    attempt_id = _validate_attempt_id(attempt_id)
     raw = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise TypeError("execution authorization is invalid")
@@ -85,14 +109,13 @@ def _load_authorization(path: Path, *, execution_head: str) -> tuple[dict[str, o
         raise ValueError("execution authorization digest mismatch")
     if (
         raw.get("identity") != AUTHORIZATION_IDENTITY
-        or raw.get("attempt_id") != ATTEMPT_ID
+        or raw.get("attempt_id") != attempt_id
         or raw.get("execution_source_commit") != execution_head
-        or raw.get("attempt_1_status") != "INTERRUPTED_BY_HOST_SHUTDOWN"
         or raw.get("oos_executed") is not False
         or raw.get("oos_result_observed") is not False
     ):
-        raise ValueError("execution authorization does not permit attempt two")
-    return raw, digest
+        raise ValueError("execution authorization does not permit this attempt")
+    return raw, digest, _validated_history(raw.get("attempt_history"), attempt_id=attempt_id)
 
 
 def _validate_authority(authorization: dict[str, object], prepared: PreparedLockedReplay) -> None:
@@ -113,6 +136,8 @@ def _validate_authority(authorization: dict[str, object], prepared: PreparedLock
 
 def _progress_payload(
     *,
+    attempt_id: int,
+    attempt_history: tuple[dict[str, object], ...],
     authorization: dict[str, object],
     authorization_digest: str,
     prepared: PreparedLockedReplay,
@@ -130,7 +155,8 @@ def _progress_payload(
     }
     return {
         "identity": PROGRESS_IDENTITY,
-        "attempt_id": ATTEMPT_ID,
+        "attempt_id": attempt_id,
+        "attempt_history": list(attempt_history),
         "authorization_digest": authorization_digest,
         "original_manifest_digest": prepared.manifest_digest,
         "dataset_digest": prepared.dataset.metadata.candles_sha256,
@@ -187,12 +213,14 @@ def run_attempt(
     progress_path: Path,
     result_path: Path,
     execution_head: str,
+    attempt_id: int,
 ) -> Path:
     """Execute exactly one authorized attempt and make files, not stdout, authoritative."""
     if result_path.exists():
         raise FileExistsError(f"immutable result artifact already exists: {result_path}")
-    authorization, authorization_digest = _load_authorization(
-        authorization_path, execution_head=execution_head
+    attempt_id = _validate_attempt_id(attempt_id)
+    authorization, authorization_digest, attempt_history = _load_authorization(
+        authorization_path, execution_head=execution_head, attempt_id=attempt_id
     )
     prepared = prepare_locked_replay(
         manifest_path,
@@ -214,6 +242,8 @@ def run_attempt(
         _atomic_replace(
             progress_path,
             _progress_payload(
+                attempt_id=attempt_id,
+                attempt_history=attempt_history,
                 authorization=authorization,
                 authorization_digest=authorization_digest,
                 prepared=prepared,
@@ -224,7 +254,7 @@ def run_attempt(
         )
         percent = progress.evaluation_processed / progress.evaluation_total * 100
         print(
-            f"EMA Frozen OOS — Attempt {ATTEMPT_ID}: {progress.evaluation_processed}/"
+            f"EMA Frozen OOS — Attempt {attempt_id}: {progress.evaluation_processed}/"
             f"{progress.evaluation_total} ({percent:.1f}%) status=RUNNING",
             flush=True,
         )
@@ -239,8 +269,8 @@ def run_attempt(
     elapsed = time.monotonic() - started
     payload: dict[str, Any] = {
         "identity": RESULT_IDENTITY,
-        "attempt_id": ATTEMPT_ID,
-        "attempt_1_status": "INTERRUPTED_BY_HOST_SHUTDOWN",
+        "attempt_id": attempt_id,
+        "attempt_history": list(attempt_history),
         "authorization_digest": authorization_digest,
         "original_manifest_digest": prepared.manifest_digest,
         "execution_source_commit": execution_head,
@@ -272,7 +302,7 @@ def run_attempt(
     payload["result_digest"] = _digest(payload, version="frozen-oos-result/v1")
     _atomic_create(result_path, payload)
     print(
-        f"EMA Frozen OOS — Attempt {ATTEMPT_ID}: status=COMPLETE result={result_path}", flush=True
+        f"EMA Frozen OOS — Attempt {attempt_id}: status=COMPLETE result={result_path}", flush=True
     )
     return result_path
 
@@ -286,6 +316,7 @@ def main() -> int:
     parser.add_argument("--result", type=Path, required=True)
     parser.add_argument("--failure", type=Path, required=True)
     parser.add_argument("--execution-head", required=True)
+    parser.add_argument("--attempt-id", type=int, required=True)
     arguments = parser.parse_args()
     try:
         run_attempt(
@@ -295,6 +326,7 @@ def main() -> int:
             progress_path=arguments.progress,
             result_path=arguments.result,
             execution_head=arguments.execution_head,
+            attempt_id=arguments.attempt_id,
         )
     except Exception as error:  # noqa: BLE001 - persist every bounded runner failure.
         if not arguments.failure.exists():
@@ -302,14 +334,14 @@ def main() -> int:
                 arguments.failure,
                 {
                     "identity": FAILURE_IDENTITY,
-                    "attempt_id": ATTEMPT_ID,
+                    "attempt_id": arguments.attempt_id,
                     "status": "FAILED",
                     "failure_category": type(error).__name__,
                     "explanation": str(error),
                     "result_observed": False,
                 },
             )
-        print(f"EMA Frozen OOS — Attempt {ATTEMPT_ID}: status=FAILED", flush=True)
+        print(f"EMA Frozen OOS — Attempt {arguments.attempt_id}: status=FAILED", flush=True)
         return 1
     return 0
 

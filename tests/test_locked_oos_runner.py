@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from decimal import Decimal
 from pathlib import Path
 
@@ -17,11 +18,12 @@ from app.research.strategy.history import (
 from app.research.strategy.lab import StrategyComparisonConfig
 from app.research.strategy.locked_evaluation import PreparedLockedReplay
 from app.research.strategy.locked_oos_runner import (
-    ATTEMPT_ID,
     AUTHORIZATION_IDENTITY,
     PROGRESS_IDENTITY,
     RESULT_IDENTITY,
     _digest,
+    _validate_attempt_id,
+    main,
     run_attempt,
 )
 from app.strategies.factory import StrategySettings
@@ -70,11 +72,24 @@ def _prepared() -> PreparedLockedReplay:
     )
 
 
-def _authorization(prepared: PreparedLockedReplay, head: str) -> dict[str, object]:
+def _authorization(
+    prepared: PreparedLockedReplay, head: str, *, attempt_id: int
+) -> dict[str, object]:
     payload: dict[str, object] = {
         "identity": AUTHORIZATION_IDENTITY,
-        "attempt_id": ATTEMPT_ID,
-        "attempt_1_status": "INTERRUPTED_BY_HOST_SHUTDOWN",
+        "attempt_id": attempt_id,
+        "attempt_history": [
+            {
+                "attempt_id": index,
+                "status": (
+                    "INTERRUPTED_BY_HOST_SHUTDOWN"
+                    if index == 1
+                    else "INTERRUPTED_BY_TERMINAL_CLOSE"
+                ),
+                "result_observed": False,
+            }
+            for index in range(1, attempt_id)
+        ],
         "execution_source_commit": head,
         "original_manifest_digest": prepared.manifest_digest,
         "dataset_digest": prepared.dataset.metadata.candles_sha256,
@@ -99,7 +114,9 @@ def test_synthetic_attempt_writes_atomic_progress_and_immutable_result(
     prepared = _prepared()
     head = "b" * 40
     authorization = tmp_path / "authorization.json"
-    authorization.write_text(json.dumps(_authorization(prepared, head)), encoding="utf-8")
+    authorization.write_text(
+        json.dumps(_authorization(prepared, head, attempt_id=2)), encoding="utf-8"
+    )
     monkeypatch.setattr(
         "app.research.strategy.locked_oos_runner.prepare_locked_replay",
         lambda *_args, **_kwargs: prepared,
@@ -113,6 +130,7 @@ def test_synthetic_attempt_writes_atomic_progress_and_immutable_result(
             progress_path=progress,
             result_path=result,
             execution_head=head,
+            attempt_id=2,
         )
         == result
     )
@@ -132,6 +150,7 @@ def test_synthetic_attempt_writes_atomic_progress_and_immutable_result(
             progress_path=progress,
             result_path=result,
             execution_head=head,
+            attempt_id=2,
         )
 
 
@@ -139,7 +158,7 @@ def test_synthetic_attempt_rejects_tampered_authorization(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     prepared = _prepared()
-    authorization = _authorization(prepared, "b" * 40)
+    authorization = _authorization(prepared, "b" * 40, attempt_id=2)
     authorization["dataset_digest"] = "wrong"
     path = tmp_path / "authorization.json"
     path.write_text(json.dumps(authorization), encoding="utf-8")
@@ -155,4 +174,80 @@ def test_synthetic_attempt_rejects_tampered_authorization(
             progress_path=tmp_path / "progress.json",
             result_path=tmp_path / "result.json",
             execution_head="b" * 40,
+            attempt_id=2,
         )
+
+
+def test_attempt_three_preserves_history_and_labels_all_artifacts(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepared = _prepared()
+    head = "c" * 40
+    authorization = tmp_path / "authorization.json"
+    authorization.write_text(
+        json.dumps(_authorization(prepared, head, attempt_id=3)), encoding="utf-8"
+    )
+    monkeypatch.setattr(
+        "app.research.strategy.locked_oos_runner.prepare_locked_replay",
+        lambda *_args, **_kwargs: prepared,
+    )
+    progress, result = tmp_path / "progress.json", tmp_path / "result.json"
+    run_attempt(
+        manifest_path=tmp_path / "manifest.json",
+        dataset_path=tmp_path / "dataset.json",
+        authorization_path=authorization,
+        progress_path=progress,
+        result_path=result,
+        execution_head=head,
+        attempt_id=3,
+    )
+    assert json.loads(progress.read_text(encoding="utf-8"))["attempt_id"] == 3
+    result_payload = json.loads(result.read_text(encoding="utf-8"))
+    assert result_payload["attempt_id"] == 3
+    assert (
+        result_payload["attempt_history"]
+        == _authorization(prepared, head, attempt_id=3)["attempt_history"]
+    )
+
+
+@pytest.mark.parametrize("value", (None, 0, -1, True, "3"))
+def test_attempt_id_rejects_missing_malformed_or_non_positive(value: object) -> None:
+    with pytest.raises(ValueError, match="attempt_id"):
+        _validate_attempt_id(value)
+
+
+def test_attempt_id_mismatch_writes_matching_failure_label(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    prepared = _prepared()
+    head = "d" * 40
+    authorization = tmp_path / "authorization.json"
+    authorization.write_text(
+        json.dumps(_authorization(prepared, head, attempt_id=2)), encoding="utf-8"
+    )
+    failure = tmp_path / "failure.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "runner",
+            "--manifest",
+            str(tmp_path / "manifest.json"),
+            "--dataset",
+            str(tmp_path / "dataset.json"),
+            "--authorization",
+            str(authorization),
+            "--progress",
+            str(tmp_path / "progress.json"),
+            "--result",
+            str(tmp_path / "result.json"),
+            "--failure",
+            str(failure),
+            "--execution-head",
+            head,
+            "--attempt-id",
+            "3",
+        ],
+    )
+    assert main() == 1
+    assert json.loads(failure.read_text(encoding="utf-8"))["attempt_id"] == 3
