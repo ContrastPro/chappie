@@ -8,6 +8,8 @@ from app.ai.schemas import digest
 MARKET_PRECURSOR_DATASET_IDENTITY = "chappie_market_precursor_dataset/1.0.0"
 FEATURE_CONTRACT_IDENTITY = "chappie_market_precursor_features/1.0.0"
 LABEL_CONTRACT_IDENTITY = "chappie_market_precursor_labels/1.0.0"
+CONTEXT_FEATURE_CONTRACT_IDENTITY = "chappie_market_precursor_context_features/1.0.0"
+CONTEXT_FEATURE_DATASET_IDENTITY = "chappie_market_precursor_context_dataset/1.0.0"
 
 
 @dataclass(frozen=True, slots=True)
@@ -190,4 +192,100 @@ class MarketPrecursorManifestV1:
             "dataset_digest": self.dataset_digest,
             "rows_path": self.rows_path,
             "context_sources": (),
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class MarketPrecursorContextFeatureConfigV1:
+    """Fixed, causal configuration for the BTC/ETH/SOL context sidecar."""
+
+    return_windows: tuple[int, ...] = (5, 15, 60)
+    volume_window: int = 60
+    atr_window: int = 14
+
+    def __post_init__(self) -> None:
+        if self.return_windows != (5, 15, 60):
+            raise ValueError("context V1 return windows are fixed")
+        if self.volume_window != 60 or self.atr_window != 14:
+            raise ValueError("context V1 rolling windows are fixed")
+
+    @property
+    def warmup(self) -> int:
+        return max(*self.return_windows, self.volume_window, self.atr_window)
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "identity": CONTEXT_FEATURE_CONTRACT_IDENTITY,
+            "return_windows": self.return_windows,
+            "volume_baseline": "PRECEDING_60_CLOSED_CANDLES",
+            "atr_window": self.atr_window,
+            "direction_horizon": 5,
+            "zero_direction": "NO_AGREEMENT",
+        }
+
+    @property
+    def contract_digest(self) -> str:
+        return digest(self.payload())
+
+
+@dataclass(frozen=True, slots=True)
+class MarketPrecursorContextRowV1:
+    close_time_ms: int
+    target_symbol: str
+    target_interval: str
+    authority_manifest_identity: str
+    authority_manifest_digest: str
+    btc_source_digests: tuple[str, str]
+    eth_source_digest: str
+    sol_source_digest: str
+    feature_contract_identity: str
+    features: dict[str, Decimal]
+    row_digest: str
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "close_time_ms": self.close_time_ms,
+            "target_symbol": self.target_symbol,
+            "target_interval": self.target_interval,
+            "authority_manifest_identity": self.authority_manifest_identity,
+            "authority_manifest_digest": self.authority_manifest_digest,
+            "btc_source_digests": list(self.btc_source_digests),
+            "eth_source_digest": self.eth_source_digest,
+            "sol_source_digest": self.sol_source_digest,
+            "feature_contract_identity": self.feature_contract_identity,
+            "features": {key: str(value) for key, value in sorted(self.features.items())},
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class MarketPrecursorContextManifestV1:
+    authority_manifest_digest: str
+    target_symbol: str
+    target_interval: str
+    source_start_ms: int
+    source_end_ms: int
+    feature_config: MarketPrecursorContextFeatureConfigV1
+    row_count: int
+    drop_counts: dict[str, int]
+    row_sequence_digest: str
+    dataset_digest: str
+    rows_path: str
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "identity": CONTEXT_FEATURE_DATASET_IDENTITY,
+            "authority_manifest_identity": "chappie_multi_market_context_dataset/1.0.0",
+            "authority_manifest_digest": self.authority_manifest_digest,
+            "target_symbol": self.target_symbol,
+            "target_interval": self.target_interval,
+            "source_start_ms": self.source_start_ms,
+            "source_end_ms": self.source_end_ms,
+            "feature_contract_identity": CONTEXT_FEATURE_CONTRACT_IDENTITY,
+            "feature_contract_digest": self.feature_config.contract_digest,
+            "warmup": self.feature_config.warmup,
+            "row_count": self.row_count,
+            "drop_counts": dict(sorted(self.drop_counts.items())),
+            "row_sequence_digest": self.row_sequence_digest,
+            "dataset_digest": self.dataset_digest,
+            "rows_path": self.rows_path,
         }

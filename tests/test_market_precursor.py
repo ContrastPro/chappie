@@ -1,15 +1,22 @@
+import hashlib
 import json
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
 from app.market.models import Candle
 from app.research.market_precursor import (
+    CONTEXT_FEATURE_CONTRACT_IDENTITY,
     MARKET_PRECURSOR_DATASET_IDENTITY,
     MarketPrecursorBuilderV1,
+    MarketPrecursorContextBuilderV1,
     iter_materialized_rows,
+    validate_context_authority,
+    validate_materialized_context_dataset,
     validate_materialized_dataset,
 )
+from app.research.market_precursor.context import _features
 from app.research.strategy.history import (
     HistoricalDataset,
     HistoricalDatasetMetadata,
@@ -233,3 +240,198 @@ def test_streaming_validator_rejects_same_count_valid_row_substitution(tmp_path)
     rows.write_text("\n".join(lines) + "\n", encoding="utf-8")
     with pytest.raises(ValueError):
         validate_materialized_dataset(rows)
+
+
+def _context_dataset(symbol, start, count):
+    candles = tuple(
+        Candle(
+            open_time_ms=(start + index) * 60000,
+            close_time_ms=(start + index) * 60000 + 59999,
+            open=Decimal(100 + index),
+            high=Decimal(102 + index),
+            low=Decimal(99 + index),
+            close=Decimal(100 + index),
+            volume=Decimal(10 + index % 11),
+        )
+        for index in range(count)
+    )
+    return HistoricalDataset(
+        HistoricalDatasetMetadata(
+            symbol,
+            "1m",
+            start * 60000,
+            (start + count) * 60000,
+            candles[0].open_time_ms,
+            candles[-1].open_time_ms,
+            count,
+            "fixture",
+            "https://data-api.binance.vision",
+            candles_sha256(candles),
+        ),
+        candles,
+    )
+
+
+def _write_context_authority(tmp_path, btc_a, btc_b, eth, sol):
+    def provenance(dataset, segments):
+        semantic = {
+            "identity": "chappie_segmented_historical_acquisition/1.0.0",
+            "symbol": dataset.metadata.symbol,
+            "interval": "1m",
+            "requested_start_ms": dataset.metadata.requested_start_ms,
+            "requested_end_ms": dataset.metadata.requested_end_ms,
+            "segment_count": 2,
+            "segments": segments,
+            "merged_candles_sha256": dataset.metadata.candles_sha256,
+        }
+        semantic["provenance_digest"] = hashlib.sha256(
+            json.dumps(semantic, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        path = tmp_path / f"{dataset.metadata.symbol}.provenance.json"
+        path.write_text(json.dumps(semantic, sort_keys=True), encoding="utf-8")
+        return path, semantic["provenance_digest"]
+
+    segments = [
+        {"start_ms": 0, "end_ms": 40 * 60000, "candle_count": 40},
+        {"start_ms": 40 * 60000, "end_ms": 80 * 60000, "candle_count": 40},
+    ]
+    eth_path, eth_digest = provenance(eth, segments)
+    sol_path, sol_digest = provenance(sol, segments)
+    semantic = {
+        "identity": "chappie_multi_market_context_dataset/1.0.0",
+        "target": {
+            "symbol": "BTCUSDT",
+            "interval": "1m",
+            "requested_start_ms": btc_a.metadata.requested_start_ms,
+            "requested_end_ms": btc_b.metadata.requested_end_ms,
+            "datasets": [
+                {
+                    "candles_sha256": btc_a.metadata.candles_sha256,
+                    "candle_count": len(btc_a.candles),
+                },
+                {
+                    "candles_sha256": btc_b.metadata.candles_sha256,
+                    "candle_count": len(btc_b.candles),
+                },
+            ],
+        },
+        "context_datasets": [
+            {
+                "symbol": "ETHUSDT",
+                "interval": "1m",
+                "candles_sha256": eth.metadata.candles_sha256,
+                "candle_count": len(eth.candles),
+                "segmented_provenance_path": str(eth_path),
+                "segmented_provenance_digest": eth_digest,
+            },
+            {
+                "symbol": "SOLUSDT",
+                "interval": "1m",
+                "candles_sha256": sol.metadata.candles_sha256,
+                "candle_count": len(sol.candles),
+                "segmented_provenance_path": str(sol_path),
+                "segmented_provenance_digest": sol_digest,
+            },
+        ],
+        "alignment": {
+            "btc_eth_common_timestamps": 80,
+            "btc_eth_missing_timestamps": 0,
+            "btc_eth_extra_timestamps": 0,
+            "btc_sol_common_timestamps": 80,
+            "btc_sol_missing_timestamps": 0,
+            "btc_sol_extra_timestamps": 0,
+            "eth_segment_a_aligned_timestamps": 40,
+            "eth_segment_b_aligned_timestamps": 40,
+            "sol_segment_a_aligned_timestamps": 40,
+            "sol_segment_b_aligned_timestamps": 40,
+        },
+        "source_validation": {
+            "provider": "https://data-api.binance.vision",
+            "interval_ms": 60000,
+            "ordered": True,
+            "zero_gaps": True,
+            "zero_duplicates": True,
+            "reload_digest_verified": True,
+        },
+        "context_ready": True,
+    }
+    semantic["manifest_digest"] = hashlib.sha256(
+        json.dumps(semantic, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    path = tmp_path / "authority.json"
+    path.write_text(json.dumps(semantic, sort_keys=True), encoding="utf-8")
+    return path, semantic["manifest_digest"]
+
+
+def _context_sources(tmp_path):
+    btc_a = _context_dataset("BTCUSDT", 0, 40)
+    btc_b = _context_dataset("BTCUSDT", 40, 40)
+    eth = _context_dataset("ETHUSDT", 0, 80)
+    sol = _context_dataset("SOLUSDT", 0, 80)
+    return (btc_a, btc_b, eth, sol, *_write_context_authority(tmp_path, btc_a, btc_b, eth, sol))
+
+
+def test_context_sidecar_is_causal_and_streaming(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.research.market_precursor.context.EXPECTED_COMMON_TIMESTAMPS", 80)
+    btc_a, btc_b, eth, sol, authority_path, authority_digest = _context_sources(tmp_path)
+    builder = MarketPrecursorContextBuilderV1(authority_digest)
+    rows_path = tmp_path / "context.ndjson"
+    manifest = builder.materialize(authority_path, btc_a, btc_b, eth, sol, rows_path)
+    assert manifest.row_count == 20
+    assert manifest.drop_counts == {"INSUFFICIENT_CONTEXT_FEATURE_HISTORY": 60}
+    validate_materialized_context_dataset(rows_path, expected_authority_digest=authority_digest)
+    row = json.loads(rows_path.read_text(encoding="utf-8").splitlines()[0])
+    assert row["feature_contract_identity"] == CONTEXT_FEATURE_CONTRACT_IDENTITY
+    assert len(row["features"]) == 19
+
+
+def test_context_authority_and_timestamp_binding_fail_closed(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.research.market_precursor.context.EXPECTED_COMMON_TIMESTAMPS", 80)
+    btc_a, btc_b, eth, sol, authority_path, authority_digest = _context_sources(tmp_path)
+    validate_context_authority(authority_path, authority_digest, btc_a, btc_b, eth, sol)
+    with pytest.raises(ValueError):
+        validate_context_authority(authority_path, "0" * 64, btc_a, btc_b, eth, sol)
+    wrong_sol = _context_dataset("SOLUSDT", 1, 80)
+    with pytest.raises(ValueError):
+        validate_context_authority(authority_path, authority_digest, btc_a, btc_b, eth, wrong_sol)
+    authority = json.loads(authority_path.read_text(encoding="utf-8"))
+    provenance = Path(authority["context_datasets"][0]["segmented_provenance_path"])
+    payload = json.loads(provenance.read_text(encoding="utf-8"))
+    payload["provenance_digest"] = "0" * 64
+    provenance.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    with pytest.raises(ValueError):
+        validate_context_authority(authority_path, authority_digest, btc_a, btc_b, eth, sol)
+
+
+def test_context_features_do_not_read_t_plus_one_but_read_past_context():
+    btc = _context_dataset("BTCUSDT", 0, 62).candles
+    eth = _context_dataset("ETHUSDT", 0, 62).candles
+    sol = _context_dataset("SOLUSDT", 0, 62).candles
+    baseline = _features(btc, eth, sol, 60)
+    changed_future_eth = (*eth[:61], eth[61].model_copy(update={"close": Decimal(9999)}))
+    assert _features(btc, changed_future_eth, sol, 60) == baseline
+    changed_future_sol = (*sol[:61], sol[61].model_copy(update={"close": Decimal(9999)}))
+    changed_future_btc = (*btc[:61], btc[61].model_copy(update={"close": Decimal(9999)}))
+    assert _features(btc, eth, changed_future_sol, 60) == baseline
+    assert _features(changed_future_btc, eth, sol, 60) == baseline
+    changed_past_eth = (*eth[:59], eth[59].model_copy(update={"close": Decimal(1)}), *eth[60:])
+    assert _features(btc, changed_past_eth, sol, 60) != baseline
+    zero_volume_eth = tuple(item.model_copy(update={"volume": Decimal(0)}) for item in eth)
+    with pytest.raises(ValueError, match="volume baseline"):
+        _features(btc, zero_volume_eth, sol, 60)
+
+
+def test_context_streaming_validator_rejects_corrupted_row(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.research.market_precursor.context.EXPECTED_COMMON_TIMESTAMPS", 80)
+    btc_a, btc_b, eth, sol, authority_path, authority_digest = _context_sources(tmp_path)
+    rows_path = tmp_path / "context.ndjson"
+    MarketPrecursorContextBuilderV1(authority_digest).materialize(
+        authority_path, btc_a, btc_b, eth, sol, rows_path
+    )
+    lines = rows_path.read_text(encoding="utf-8").splitlines()
+    row = json.loads(lines[0])
+    row["features"]["eth.return_5m"] = "0"
+    lines[0] = json.dumps(row, sort_keys=True, separators=(",", ":"))
+    rows_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError):
+        validate_materialized_context_dataset(rows_path, expected_authority_digest=authority_digest)
