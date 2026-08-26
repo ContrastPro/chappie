@@ -16,6 +16,7 @@ from pathlib import Path
 from app.research.strategy.history import HistoricalDataset, load_dataset
 from app.research.strategy.lab import StrategyComparisonConfig
 from app.strategies.factory import StrategySettings, build_strategy
+from app.strategies.trend_filtered import TREND_FILTERED_STATE_IDENTITY, TrendFilteredConfig
 
 IDENTITY = "chappie_frozen_strategy_evaluation/1.0.0"
 
@@ -63,9 +64,11 @@ def _require_span(dataset: HistoricalDataset, span: object, *, offset: int) -> i
     if count <= 0 or offset + count > len(dataset.candles):
         raise ValueError("locked split count is invalid")
     segment = dataset.candles[offset : offset + count]
-    if segment[0].open_time_ms != _utc_ms(span.get("first_open_utc")) or segment[
-        -1
-    ].close_time_ms != _utc_ms(span.get("last_close_utc")):
+    last_boundary = _utc_ms(span.get("last_close_utc"))
+    if segment[0].open_time_ms != _utc_ms(span.get("first_open_utc")) or last_boundary not in {
+        segment[-1].close_time_ms,
+        segment[-1].close_time_ms + 1,
+    }:
         raise ValueError("locked split boundary is absent")
     return offset + count
 
@@ -119,32 +122,62 @@ def prepare_locked_replay(
         raise ValueError("locked complete dataset span is invalid")
 
     parameters = strategy_raw.get("parameters")
-    if (
-        not isinstance(parameters, dict)
-        or strategy_raw.get("name") != "ema_crossover"
-        or strategy_raw.get("version") != "1.0.0"
-        or set(parameters) != {"fast_window", "slow_window"}
-        or not all(isinstance(parameters[key], int) for key in parameters)
-    ):
+    if not isinstance(parameters, dict) or strategy_raw.get("version") != "1.0.0":
         raise ValueError("locked strategy identity or parameters mismatch")
-    expected_fingerprint = _canonical_sha256(
-        {
-            "kind": "strategy",
-            "configuration": {
-                "name": "ema_crossover",
-                "version": "1.0.0",
-                "parameters": parameters,
+    if strategy_raw.get("name") == "ema_crossover":
+        if set(parameters) != {"fast_window", "slow_window"} or not all(
+            isinstance(parameters[key], int) for key in parameters
+        ):
+            raise ValueError("locked strategy identity or parameters mismatch")
+        expected_fingerprint = _canonical_sha256(
+            {
+                "kind": "strategy",
+                "configuration": {
+                    "name": "ema_crossover",
+                    "version": "1.0.0",
+                    "parameters": parameters,
+                },
             },
-        },
-        algorithm_version="config/v1",
-    )
+            algorithm_version="config/v1",
+        )
+        settings = StrategySettings(
+            name="ema_crossover",
+            ema_fast_window=parameters["fast_window"],
+            ema_slow_window=parameters["slow_window"],
+        )
+    elif strategy_raw.get("name") == "trend_filtered":
+        expected_parameters = {
+            "fast_window": 12,
+            "slow_window": 26,
+            "atr_window": 14,
+            "minimum_spread_bps": "8",
+            "minimum_atr_bps": "5",
+        }
+        if parameters != expected_parameters:
+            raise ValueError("locked trend strategy parameters mismatch")
+        if raw.get("experiment_identity") != "TREND_FILTERED_BASELINE_001":
+            raise ValueError("locked trend experiment identity mismatch")
+        stateful_replay = raw.get("stateful_replay")
+        if (
+            not isinstance(stateful_replay, dict)
+            or stateful_replay.get("state_identity") != TREND_FILTERED_STATE_IDENTITY
+        ):
+            raise ValueError("locked trend state identity mismatch")
+        settings = StrategySettings(
+            name="trend_filtered",
+            ema_fast_window=12,
+            ema_slow_window=26,
+            trend_atr_window=14,
+            trend_minimum_spread_bps=Decimal(8),
+            trend_minimum_atr_bps=Decimal(5),
+        )
+        expected_fingerprint = TrendFilteredConfig().strategy_name
+        trend = build_strategy(settings, _NoIds())
+        expected_fingerprint = trend._config_fingerprint()  # type: ignore[attr-defined]
+    else:
+        raise ValueError("locked strategy identity or parameters mismatch")
     if strategy_raw.get("config_fingerprint") != expected_fingerprint:
         raise ValueError("locked strategy fingerprint mismatch")
-    settings = StrategySettings(
-        name="ema_crossover",
-        ema_fast_window=parameters["fast_window"],
-        ema_slow_window=parameters["slow_window"],
-    )
     strategy = build_strategy(settings, _NoIds())
 
     if set(splits) != {"train", "validation", "final_oos"}:
@@ -158,11 +191,52 @@ def prepare_locked_replay(
     oos = splits["final_oos"]
 
     risk = evaluation.get("risk")
+    decision_policy = evaluation.get("decision_policy")
+    if strategy_raw.get("name") == "trend_filtered":
+        decision_policy = raw.get("decision_policy")
+        required_metrics = {
+            "decisions",
+            "fills",
+            "closed_trades",
+            "gross_pnl",
+            "fees",
+            "net_pnl",
+            "wins",
+            "losses",
+            "expectancy",
+            "profit_factor",
+            "max_drawdown",
+            "turnover",
+            "exposure_time",
+            "benchmark_result",
+            "excess_result",
+        }
+        required_churn_metrics = {
+            "fills_per_evaluation_candle",
+            "turnover_per_starting_equity",
+            "fees_per_starting_equity",
+            "average_fee_per_closed_trade",
+            "closed_trades",
+            "gross_pnl_before_fees",
+            "net_pnl_after_fees",
+        }
+        if (
+            set(evaluation.get("metrics", ())) != required_metrics
+            or set(evaluation.get("churn_metrics", ())) != required_churn_metrics
+            or risk
+            != {
+                "long_only": True,
+                "max_fee_rate": "0.001",
+                "max_order_notional": "1000",
+                "max_position_notional": "5000",
+            }
+        ):
+            raise ValueError("locked trend evaluation authority is invalid")
     if (
         not isinstance(evaluation.get("metrics"), list)
         or not evaluation["metrics"]
-        or not isinstance(evaluation.get("decision_policy"), dict)
-        or not evaluation["decision_policy"]
+        or not isinstance(decision_policy, dict)
+        or not decision_policy
         or not isinstance(evaluation.get("benchmark"), str)
         or not evaluation["benchmark"]
         or not isinstance(risk, dict)

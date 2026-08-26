@@ -119,10 +119,28 @@ def _load_authorization(
 
 
 def _validate_authority(authorization: dict[str, object], prepared: PreparedLockedReplay) -> None:
+    strategy_identity = f"{prepared.strategy.name}/1.0.0"
+    parameters: dict[str, object]
+    if prepared.strategy.name == "ema_crossover":
+        parameters = {
+            "fast_window": prepared.strategy.ema_fast_window,
+            "slow_window": prepared.strategy.ema_slow_window,
+        }
+    elif prepared.strategy.name == "trend_filtered":
+        parameters = {
+            "fast_window": prepared.strategy.ema_fast_window,
+            "slow_window": prepared.strategy.ema_slow_window,
+            "atr_window": prepared.strategy.trend_atr_window,
+            "minimum_spread_bps": str(prepared.strategy.trend_minimum_spread_bps),
+            "minimum_atr_bps": str(prepared.strategy.trend_minimum_atr_bps),
+        }
+    else:
+        raise ValueError("execution strategy is not authorized")
     expected = {
         "original_manifest_digest": prepared.manifest_digest,
         "dataset_digest": prepared.dataset.metadata.candles_sha256,
-        "strategy_identity": "ema_crossover/1.0.0",
+        "strategy_identity": strategy_identity,
+        "parameters": parameters,
         "symbol": prepared.dataset.metadata.symbol,
         "interval": prepared.dataset.metadata.interval,
         "oos_start_utc": prepared.oos_start_utc,
@@ -277,7 +295,7 @@ def run_attempt(
         "dataset_digest": prepared.dataset.metadata.candles_sha256,
         "strategy_identity": authorization["strategy_identity"],
         "strategy_config_fingerprint": authorization["strategy_config_fingerprint"],
-        "parameters": {"fast_window": 12, "slow_window": 26},
+        "parameters": authorization["parameters"],
         "symbol": prepared.dataset.metadata.symbol,
         "interval": prepared.dataset.metadata.interval,
         "oos_start_utc": prepared.oos_start_utc,

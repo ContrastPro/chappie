@@ -95,6 +95,7 @@ def _authorization(
         "dataset_digest": prepared.dataset.metadata.candles_sha256,
         "strategy_identity": "ema_crossover/1.0.0",
         "strategy_config_fingerprint": "fingerprint",
+        "parameters": {"fast_window": 2, "slow_window": 3},
         "symbol": "BTCUSDT",
         "interval": "1m",
         "oos_start_utc": prepared.oos_start_utc,
