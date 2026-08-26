@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from app.market.models import Candle, MarketStreamKey
+from app.research.strategy.history import candles_sha256
+from app.strategies.ema_crossover import EmaCrossoverStrategy
 from app.strategies.factory import StrategySettings, build_strategy
 from app.strategies.indicators import simple_regime as _simple_regime
 from app.trading.models import SignalDirection
@@ -102,6 +104,7 @@ def compare_strategy(
     *,
     evaluation_start_index: int = 0,
     progress_observer: Callable[[ReplayProgress], None] | None = None,
+    use_stateful_ema: bool = True,
 ) -> StrategyComparisonResult:
     config = config or StrategyComparisonConfig()
     if len(candles) < 2:
@@ -115,6 +118,23 @@ def compare_strategy(
     if evaluation_start_index and evaluation_start_index < strategy.required_history:
         raise ValueError("insufficient preceding warmup history")
     factory = MarketSnapshotFactory(config.stale_after_ms)
+    stateful_ema = (
+        use_stateful_ema
+        and isinstance(strategy, EmaCrossoverStrategy)
+        and evaluation_start_index > 0
+    )
+    dataset_digest = candles_sha256(candles) if stateful_ema else ""
+    ema_state = (
+        strategy.create_state(
+            candles[:evaluation_start_index],
+            symbol=stream_key.symbol,
+            interval=stream_key.interval,
+            dataset_digest=dataset_digest,
+            boundary_index=evaluation_start_index,
+        )
+        if stateful_ema
+        else None
+    )
     cash, quantity, fees, turnover = config.starting_equity, Decimal(0), Decimal(0), Decimal(0)
     entry_cost = Decimal(0)
     entry_time: int | None = None
@@ -124,21 +144,41 @@ def compare_strategy(
     regimes: dict[str, int] = {}
     observations: dict[str, int] = {}
     previous_time = candles[evaluation_start_index].close_time_ms
-    for index, candle in enumerate(candles):
-        closed = tuple(candles[: index + 1])
-        snapshot = factory.create(
-            stream_key,
-            closed,
-            candle.close_time_ms + 1,
-            f"replay-{index}",
-            correlation_cycle_id=f"replay-{index}",
-        )
-        signal = strategy.generate_signal(snapshot)
+    replay_candles = (
+        enumerate(candles[evaluation_start_index:], start=evaluation_start_index)
+        if stateful_ema
+        else enumerate(candles)
+    )
+    for index, candle in replay_candles:
+        if stateful_ema and index >= evaluation_start_index:
+            direction, _reason, ema_state = strategy.continue_state(
+                ema_state,
+                candle,
+                symbol=stream_key.symbol,
+                interval=stream_key.interval,
+                dataset_digest=dataset_digest,
+                boundary_index=evaluation_start_index,
+            )
+        else:
+            closed = tuple(candles[: index + 1])
+            snapshot = factory.create(
+                stream_key,
+                closed,
+                candle.close_time_ms + 1,
+                f"replay-{index}",
+                correlation_cycle_id=f"replay-{index}",
+            )
+            signal = strategy.generate_signal(snapshot)
+            direction = signal.direction
         # Feed deterministic strategy state with prior candles, but do not
         # account for pre-boundary decisions, fills, exposure, or regimes.
         if index < evaluation_start_index:
             continue
-        if strategy.name == "regime_mean_reversion" and "regime" in signal.metadata:
+        if (
+            not stateful_ema
+            and strategy.name == "regime_mean_reversion"
+            and "regime" in signal.metadata
+        ):
             regime_name = str(signal.metadata["regime"])
             observation = (
                 "candidate_entries_allowed_in_range"
@@ -146,7 +186,11 @@ def compare_strategy(
                 else f"candidate_entries_rejected_in_{regime_name.lower()}"
             )
             observations[observation] = observations.get(observation, 0) + 1
-        if strategy.name == "multi_timeframe_trend" and "higher_confirmed" in signal.metadata:
+        if (
+            not stateful_ema
+            and strategy.name == "multi_timeframe_trend"
+            and "higher_confirmed" in signal.metadata
+        ):
             observation = (
                 "confirmation/"
                 f"higher={signal.metadata['higher_confirmed']}/"
@@ -154,7 +198,7 @@ def compare_strategy(
                 f"lower={signal.metadata['lower_entry']}"
             )
             observations[observation] = observations.get(observation, 0) + 1
-        if strategy.name in {
+        if not stateful_ema and strategy.name in {
             "volatility_continuation",
             "trend_retracement_continuation",
             "compression_expansion_breakout",
@@ -169,7 +213,7 @@ def compare_strategy(
         previous_time = candle.close_time_ms
         regime = simple_regime(candles, index)
         regimes[regime] = regimes.get(regime, 0) + 1
-        if signal.direction is SignalDirection.BUY and quantity == 0:
+        if direction is SignalDirection.BUY and quantity == 0:
             # Match PaperExecutionProvider's quote-asset fee convention: the
             # complete debit is gross notional plus its fee, never a reduction
             # to base quantity or an implicit source of leverage.
@@ -184,7 +228,7 @@ def compare_strategy(
                 entry_cost = gross + fee
                 entry_time = candle.close_time_ms
                 entry_price = price
-        elif signal.direction is SignalDirection.SELL and quantity > 0:
+        elif direction is SignalDirection.SELL and quantity > 0:
             gross = quantity * price
             fee = gross * config.fee_rate
             proceeds = gross - fee

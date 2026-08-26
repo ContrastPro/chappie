@@ -5,13 +5,16 @@ import pytest
 
 from app.market.models import Candle, MarketStreamKey
 from app.strategies.ema_crossover import (
+    EMA_STATE_IDENTITY,
     EmaCrossoverConfig,
+    EmaCrossoverStateV1,
     EmaCrossoverStrategy,
     calculate_ema,
 )
 from app.trading.exceptions import (
     InvalidDecimalValueError,
     InvalidStrategyConfigurationError,
+    StrategyInvariantError,
 )
 from app.trading.models import SignalDirection
 from app.trading.snapshot import MarketSnapshotFactory
@@ -127,6 +130,88 @@ def test_calculate_ema_uses_exact_decimal_sma_seed_and_recursion() -> None:
 
     assert result == (Decimal(2), Decimal(3))
     assert all(isinstance(value, Decimal) for value in result)
+
+
+def test_exact_state_round_trip_and_incremental_signal_match_full_history() -> None:
+    values = [3, 2, 1, 4, 5]
+    stateful = strategy()
+    history = candles(values[:3])
+    state = stateful.create_state(
+        history,
+        symbol="BTCUSDT",
+        interval="1m",
+        dataset_digest="dataset",
+        boundary_index=3,
+    )
+    restored = EmaCrossoverStateV1.from_serialized(state.serialized())
+    direction, reason, advanced = stateful.continue_state(
+        restored,
+        candles(values)[3],
+        symbol="BTCUSDT",
+        interval="1m",
+        dataset_digest="dataset",
+        boundary_index=3,
+    )
+    full = stateful.generate_signal(make_snapshot(values[:4]))
+
+    assert state.identity == EMA_STATE_IDENTITY
+    assert restored == state
+    assert state.state_digest == restored.state_digest
+    assert direction is full.direction
+    assert reason == full.reason_code
+    assert advanced.fast_ema == full.metadata["current_fast"]
+    assert advanced.slow_ema == full.metadata["current_slow"]
+
+
+@pytest.mark.parametrize(
+    ("symbol", "interval", "dataset_digest", "boundary_index"),
+    [
+        ("ETHUSDT", "1m", "dataset", 3),
+        ("BTCUSDT", "5m", "dataset", 3),
+        ("BTCUSDT", "1m", "other", 3),
+        ("BTCUSDT", "1m", "dataset", 4),
+    ],
+)
+def test_stateful_continuation_rejects_stale_authority(
+    symbol: str, interval: str, dataset_digest: str, boundary_index: int
+) -> None:
+    stateful = strategy()
+    state = stateful.create_state(
+        candles([3, 2, 1]),
+        symbol="BTCUSDT",
+        interval="1m",
+        dataset_digest="dataset",
+        boundary_index=3,
+    )
+    with pytest.raises(StrategyInvariantError, match="EMA state binding"):
+        stateful.continue_state(
+            state,
+            candles([3, 2, 1, 4])[3],
+            symbol=symbol,
+            interval=interval,
+            dataset_digest=dataset_digest,
+            boundary_index=boundary_index,
+        )
+
+
+def test_stateful_continuation_rejects_stale_strategy_configuration() -> None:
+    state = strategy().create_state(
+        candles([3, 2, 1]),
+        symbol="BTCUSDT",
+        interval="1m",
+        dataset_digest="dataset",
+        boundary_index=3,
+    )
+    changed = EmaCrossoverStrategy(EmaCrossoverConfig(3, 4), SequentialSignalIdFactory())
+    with pytest.raises(StrategyInvariantError, match="EMA state binding"):
+        changed.continue_state(
+            state,
+            candles([3, 2, 1, 4])[3],
+            symbol="BTCUSDT",
+            interval="1m",
+            dataset_digest="dataset",
+            boundary_index=3,
+        )
 
 
 def test_manual_ema_control_values_for_two_windows() -> None:

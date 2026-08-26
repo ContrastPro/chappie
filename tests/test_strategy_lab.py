@@ -134,3 +134,52 @@ def test_boundary_replay_fails_closed_without_required_prior_history() -> None:
             StrategySettings(name="ema_crossover"),
             evaluation_start_index=26,
         )
+
+
+def test_stateful_ema_replay_is_exactly_equivalent_and_skips_prefix_snapshots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    values = [100 + ((index * 17) % 23) - 11 for index in range(180)]
+    candles = _candles(values)
+    settings = StrategySettings(name="ema_crossover")
+    reference = compare_strategy(
+        candles,
+        settings,
+        evaluation_start_index=80,
+        use_stateful_ema=False,
+    )
+    calls = 0
+    original = MarketSnapshotFactory.create
+
+    def counted_create(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(MarketSnapshotFactory, "create", counted_create)
+    stateful = compare_strategy(candles, settings, evaluation_start_index=80)
+
+    assert stateful == reference
+    assert calls == 0
+    assert compare_strategy(candles, settings, evaluation_start_index=80) == stateful
+
+
+@pytest.mark.parametrize(
+    ("values", "boundary"),
+    [
+        ([100] * 80, 27),
+        ([100 + ((index * 19) % 29) - 14 for index in range(180)], 77),
+        ([100 + ((index * 13) % 31) - 15 for index in range(220)], 120),
+    ],
+)
+def test_stateful_ema_replay_matches_reference_across_boundaries(
+    values: list[int], boundary: int
+) -> None:
+    candles = _candles(values)
+    settings = StrategySettings(name="ema_crossover")
+    assert compare_strategy(candles, settings, evaluation_start_index=boundary) == compare_strategy(
+        candles,
+        settings,
+        evaluation_start_index=boundary,
+        use_stateful_ema=False,
+    )
