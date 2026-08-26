@@ -183,3 +183,41 @@ def test_stateful_ema_replay_matches_reference_across_boundaries(
         evaluation_start_index=boundary,
         use_stateful_ema=False,
     )
+
+
+@pytest.mark.parametrize(
+    ("values", "boundary"),
+    [
+        ([100] * 80, 27),
+        ([100 + ((index * 19) % 29) - 14 for index in range(180)], 77),
+        ([100 + ((index * 13) % 31) - 15 for index in range(220)], 120),
+    ],
+)
+def test_stateful_trend_filtered_replay_matches_full_history_reference(
+    values: list[int], boundary: int
+) -> None:
+    candles = _candles(values)
+    settings = StrategySettings(name="trend_filtered")
+    assert compare_strategy(candles, settings, evaluation_start_index=boundary) == compare_strategy(
+        candles,
+        settings,
+        evaluation_start_index=boundary,
+        use_stateful_trend_filtered=False,
+    )
+
+
+def test_stateful_trend_filtered_replay_does_not_create_snapshots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candles = _candles([100 + ((index * 19) % 29) - 14 for index in range(180)])
+    calls = 0
+    original = MarketSnapshotFactory.create
+
+    def counted_create(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(MarketSnapshotFactory, "create", counted_create)
+    compare_strategy(candles, StrategySettings(name="trend_filtered"), evaluation_start_index=80)
+    assert calls == 0

@@ -11,6 +11,7 @@ from app.research.strategy.history import candles_sha256
 from app.strategies.ema_crossover import EmaCrossoverStrategy
 from app.strategies.factory import StrategySettings, build_strategy
 from app.strategies.indicators import simple_regime as _simple_regime
+from app.strategies.trend_filtered import TrendFilteredStrategy
 from app.trading.models import SignalDirection
 from app.trading.snapshot import MarketSnapshotFactory
 from app.trading.strategy import SignalIdFactory, Strategy
@@ -105,6 +106,7 @@ def compare_strategy(
     evaluation_start_index: int = 0,
     progress_observer: Callable[[ReplayProgress], None] | None = None,
     use_stateful_ema: bool = True,
+    use_stateful_trend_filtered: bool = True,
 ) -> StrategyComparisonResult:
     config = config or StrategyComparisonConfig()
     if len(candles) < 2:
@@ -123,7 +125,13 @@ def compare_strategy(
         and isinstance(strategy, EmaCrossoverStrategy)
         and evaluation_start_index > 0
     )
-    dataset_digest = candles_sha256(candles) if stateful_ema else ""
+    stateful_trend_filtered = (
+        use_stateful_trend_filtered
+        and isinstance(strategy, TrendFilteredStrategy)
+        and evaluation_start_index > 0
+    )
+    stateful_strategy = stateful_ema or stateful_trend_filtered
+    dataset_digest = candles_sha256(candles) if stateful_strategy else ""
     ema_state = (
         strategy.create_state(
             candles[:evaluation_start_index],
@@ -133,6 +141,17 @@ def compare_strategy(
             boundary_index=evaluation_start_index,
         )
         if stateful_ema
+        else None
+    )
+    trend_state = (
+        strategy.create_state(
+            candles[:evaluation_start_index],
+            symbol=stream_key.symbol,
+            interval=stream_key.interval,
+            dataset_digest=dataset_digest,
+            boundary_index=evaluation_start_index,
+        )
+        if stateful_trend_filtered
         else None
     )
     cash, quantity, fees, turnover = config.starting_equity, Decimal(0), Decimal(0), Decimal(0)
@@ -146,7 +165,7 @@ def compare_strategy(
     previous_time = candles[evaluation_start_index].close_time_ms
     replay_candles = (
         enumerate(candles[evaluation_start_index:], start=evaluation_start_index)
-        if stateful_ema
+        if stateful_strategy
         else enumerate(candles)
     )
     for index, candle in replay_candles:
@@ -159,6 +178,17 @@ def compare_strategy(
                 dataset_digest=dataset_digest,
                 boundary_index=evaluation_start_index,
             )
+        elif stateful_trend_filtered and index >= evaluation_start_index:
+            continuation = strategy.continue_state(
+                trend_state,
+                candle,
+                symbol=stream_key.symbol,
+                interval=stream_key.interval,
+                dataset_digest=dataset_digest,
+                boundary_index=evaluation_start_index,
+            )
+            direction = continuation.direction
+            trend_state = continuation.state
         else:
             closed = tuple(candles[: index + 1])
             snapshot = factory.create(
@@ -175,7 +205,7 @@ def compare_strategy(
         if index < evaluation_start_index:
             continue
         if (
-            not stateful_ema
+            not stateful_strategy
             and strategy.name == "regime_mean_reversion"
             and "regime" in signal.metadata
         ):
@@ -187,7 +217,7 @@ def compare_strategy(
             )
             observations[observation] = observations.get(observation, 0) + 1
         if (
-            not stateful_ema
+            not stateful_strategy
             and strategy.name == "multi_timeframe_trend"
             and "higher_confirmed" in signal.metadata
         ):
@@ -198,7 +228,7 @@ def compare_strategy(
                 f"lower={signal.metadata['lower_entry']}"
             )
             observations[observation] = observations.get(observation, 0) + 1
-        if not stateful_ema and strategy.name in {
+        if not stateful_strategy and strategy.name in {
             "volatility_continuation",
             "trend_retracement_continuation",
             "compression_expansion_breakout",
