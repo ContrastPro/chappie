@@ -12,6 +12,7 @@ from app.strategies.ema_crossover import EmaCrossoverStrategy
 from app.strategies.factory import StrategySettings, build_strategy
 from app.strategies.indicators import simple_regime as _simple_regime
 from app.strategies.trend_filtered import TrendFilteredStrategy
+from app.strategies.trend_filtered_v2 import TrendFilteredV2Strategy
 from app.trading.models import SignalDirection
 from app.trading.snapshot import MarketSnapshotFactory
 from app.trading.strategy import SignalIdFactory, Strategy
@@ -107,6 +108,7 @@ def compare_strategy(
     progress_observer: Callable[[ReplayProgress], None] | None = None,
     use_stateful_ema: bool = True,
     use_stateful_trend_filtered: bool = True,
+    use_stateful_trend_filtered_v2: bool = True,
 ) -> StrategyComparisonResult:
     config = config or StrategyComparisonConfig()
     if len(candles) < 2:
@@ -130,7 +132,12 @@ def compare_strategy(
         and isinstance(strategy, TrendFilteredStrategy)
         and evaluation_start_index > 0
     )
-    stateful_strategy = stateful_ema or stateful_trend_filtered
+    stateful_trend_filtered_v2 = (
+        use_stateful_trend_filtered_v2
+        and isinstance(strategy, TrendFilteredV2Strategy)
+        and evaluation_start_index > 0
+    )
+    stateful_strategy = stateful_ema or stateful_trend_filtered or stateful_trend_filtered_v2
     dataset_digest = candles_sha256(candles) if stateful_strategy else ""
     ema_state = (
         strategy.create_state(
@@ -152,6 +159,17 @@ def compare_strategy(
             boundary_index=evaluation_start_index,
         )
         if stateful_trend_filtered
+        else None
+    )
+    trend_v2_state = (
+        strategy.create_state(
+            candles[:evaluation_start_index],
+            symbol=stream_key.symbol,
+            interval=stream_key.interval,
+            dataset_digest=dataset_digest,
+            boundary_index=evaluation_start_index,
+        )
+        if stateful_trend_filtered_v2
         else None
     )
     cash, quantity, fees, turnover = config.starting_equity, Decimal(0), Decimal(0), Decimal(0)
@@ -189,6 +207,17 @@ def compare_strategy(
             )
             direction = continuation.direction
             trend_state = continuation.state
+        elif stateful_trend_filtered_v2 and index >= evaluation_start_index:
+            continuation = strategy.continue_state(
+                trend_v2_state,
+                candle,
+                symbol=stream_key.symbol,
+                interval=stream_key.interval,
+                dataset_digest=dataset_digest,
+                boundary_index=evaluation_start_index,
+            )
+            direction = continuation.direction
+            trend_v2_state = continuation.state
         else:
             closed = tuple(candles[: index + 1])
             snapshot = factory.create(

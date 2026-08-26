@@ -221,3 +221,24 @@ def test_stateful_trend_filtered_replay_does_not_create_snapshots(
     monkeypatch.setattr(MarketSnapshotFactory, "create", counted_create)
     compare_strategy(candles, StrategySettings(name="trend_filtered"), evaluation_start_index=80)
     assert calls == 0
+
+
+def test_stateful_trend_filtered_v2_replay_matches_reference_without_snapshots(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candles = _candles([100 + ((index * 19) % 29) - 14 for index in range(180)])
+    settings = StrategySettings(name="trend_filtered_v2", trend_confirmation_window_candles=2)
+    reference = compare_strategy(
+        candles, settings, evaluation_start_index=80, use_stateful_trend_filtered_v2=False
+    )
+    calls = 0
+    original = MarketSnapshotFactory.create
+
+    def counted_create(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(MarketSnapshotFactory, "create", counted_create)
+    assert compare_strategy(candles, settings, evaluation_start_index=80) == reference
+    assert calls == 0

@@ -21,6 +21,7 @@ from app.strategies.regime_mean_reversion import (
     RegimeMeanReversionStrategy,
 )
 from app.strategies.trend_filtered import TrendFilteredConfig, TrendFilteredStrategy
+from app.strategies.trend_filtered_v2 import TrendFilteredV2Config, TrendFilteredV2Strategy
 from app.strategies.trend_retracement_continuation import (
     TrendRetracementContinuationConfig,
     TrendRetracementContinuationStrategy,
@@ -35,6 +36,7 @@ from app.trading.strategy import SignalIdFactory, Strategy
 StrategyName = Literal[
     "ema_crossover",
     "trend_filtered",
+    "trend_filtered_v2",
     "breakout",
     "mean_reversion",
     "cost_aware_momentum",
@@ -54,6 +56,8 @@ class StrategySettings:
     trend_atr_window: int = 14
     trend_minimum_spread_bps: Decimal = Decimal(8)
     trend_minimum_atr_bps: Decimal = Decimal(5)
+    # Factory default only; no research selection authority is implied.
+    trend_confirmation_window_candles: int = 1
     breakout_lookback: int = 20
     breakout_atr_window: int = 14
     breakout_minimum_atr_bps: Decimal = Decimal(5)
@@ -99,6 +103,18 @@ def build_strategy(config: StrategySettings, signal_id_factory: SignalIdFactory)
                 config.trend_atr_window,
                 config.trend_minimum_spread_bps,
                 config.trend_minimum_atr_bps,
+            ),
+            signal_id_factory,
+        )
+    if config.name == "trend_filtered_v2":
+        return TrendFilteredV2Strategy(
+            TrendFilteredV2Config(
+                config.ema_fast_window,
+                config.ema_slow_window,
+                config.trend_atr_window,
+                config.trend_minimum_spread_bps,
+                config.trend_minimum_atr_bps,
+                config.trend_confirmation_window_candles,
             ),
             signal_id_factory,
         )
