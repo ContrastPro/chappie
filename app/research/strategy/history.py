@@ -25,6 +25,58 @@ from app.market.models import Candle
 PUBLIC_MARKET_DATA_URL = "https://data-api.binance.vision"
 MAX_PAGE_SIZE = 1_000
 MAX_REQUESTS = 100
+MAX_CANDLES_PER_ACQUISITION = MAX_PAGE_SIZE * MAX_REQUESTS
+
+
+@dataclass(frozen=True, slots=True)
+class HistoricalRangeSegment:
+    """One exact, downloader-safe portion of a requested historical range."""
+
+    symbol: str
+    interval: str
+    start_ms: int
+    end_ms: int
+    candle_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class SegmentedHistoricalAcquisitionV1:
+    """Bounded acquisition provenance; the merged dataset remains canonical."""
+
+    symbol: str
+    interval: str
+    requested_start_ms: int
+    requested_end_ms: int
+    segments: tuple[HistoricalRangeSegment, ...]
+    segment_digests: tuple[str, ...]
+    dataset: HistoricalDataset
+
+    def provenance_payload(self) -> dict[str, object]:
+        semantic = {
+            "identity": "chappie_segmented_historical_acquisition/1.0.0",
+            "acquisition_method": "SEGMENTED",
+            "symbol": self.symbol,
+            "interval": self.interval,
+            "requested_start_ms": self.requested_start_ms,
+            "requested_end_ms": self.requested_end_ms,
+            "segment_count": len(self.segments),
+            "segments": [
+                {
+                    "start_ms": segment.start_ms,
+                    "end_ms": segment.end_ms,
+                    "candle_count": segment.candle_count,
+                    "candles_sha256": segment_digest,
+                }
+                for segment, segment_digest in zip(self.segments, self.segment_digests, strict=True)
+            ],
+            "merged_candles_sha256": self.dataset.metadata.candles_sha256,
+        }
+        return {
+            **semantic,
+            "provenance_digest": hashlib.sha256(
+                json.dumps(semantic, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest(),
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +172,144 @@ def validate_candles(candles: Sequence[Candle], interval: str) -> tuple[Candle, 
                 raise ValueError("gap detected between candles")
         previous = candle
     return result
+
+
+def plan_historical_segments(
+    *,
+    symbol: str,
+    interval: str,
+    start_ms: int,
+    end_ms: int,
+    max_candles: int = MAX_CANDLES_PER_ACQUISITION,
+) -> tuple[HistoricalRangeSegment, ...]:
+    """Plan exact contiguous ranges without changing downloader request limits."""
+    normalized_symbol = symbol.strip().upper()
+    if not normalized_symbol.isascii() or not normalized_symbol.isalnum():
+        raise ValueError("symbol must be normalized ASCII letters and digits")
+    interval_ms = fixed_binance_spot_interval_ms(interval)
+    if start_ms < 0 or end_ms <= start_ms or (end_ms - start_ms) % interval_ms:
+        raise ValueError("requested range must contain an exact number of interval candles")
+    if (
+        not isinstance(max_candles, int)
+        or isinstance(max_candles, bool)
+        or not 0 < max_candles <= MAX_CANDLES_PER_ACQUISITION
+    ):
+        raise ValueError("max candles must be a positive integer")
+    result: list[HistoricalRangeSegment] = []
+    cursor = start_ms
+    while cursor < end_ms:
+        count = min(max_candles, (end_ms - cursor) // interval_ms)
+        next_cursor = cursor + count * interval_ms
+        result.append(
+            HistoricalRangeSegment(normalized_symbol, interval, cursor, next_cursor, count)
+        )
+        cursor = next_cursor
+    return tuple(result)
+
+
+def _validate_segment_dataset(segment: HistoricalRangeSegment, dataset: HistoricalDataset) -> None:
+    metadata = dataset.metadata
+    interval_ms = fixed_binance_spot_interval_ms(segment.interval)
+    candles = validate_candles(dataset.candles, segment.interval)
+    if (
+        metadata.symbol != segment.symbol
+        or metadata.interval != segment.interval
+        or metadata.requested_start_ms != segment.start_ms
+        or metadata.requested_end_ms != segment.end_ms
+        or metadata.actual_first_open_ms != segment.start_ms
+        or metadata.actual_last_open_ms + interval_ms != segment.end_ms
+        or metadata.candle_count != segment.candle_count
+        or len(candles) != segment.candle_count
+        or candles_sha256(candles) != metadata.candles_sha256
+    ):
+        raise ValueError("downloaded segment does not match its planned range")
+
+
+def merge_historical_datasets(segments: Sequence[HistoricalDataset]) -> HistoricalDataset:
+    """Merge only exact compatible contiguous canonical datasets."""
+    if not segments:
+        raise ValueError("at least one historical dataset is required")
+    result = tuple(segments)
+    first = result[0].metadata
+    interval_ms = fixed_binance_spot_interval_ms(first.interval)
+    all_candles: list[Candle] = []
+    previous_end: int | None = None
+    for dataset in result:
+        metadata = dataset.metadata
+        candles = validate_candles(dataset.candles, metadata.interval)
+        if (
+            metadata.symbol != first.symbol
+            or metadata.interval != first.interval
+            or metadata.source != first.source
+            or metadata.candle_count != len(candles)
+            or candles_sha256(candles) != metadata.candles_sha256
+        ):
+            raise ValueError("historical dataset merge compatibility mismatch")
+        if metadata.actual_first_open_ms != metadata.requested_start_ms:
+            raise ValueError("historical dataset segment does not start at its requested boundary")
+        if metadata.actual_last_open_ms + interval_ms != metadata.requested_end_ms:
+            raise ValueError("historical dataset segment does not end at its requested boundary")
+        if previous_end is not None and metadata.requested_start_ms != previous_end:
+            raise ValueError("historical dataset segments are not contiguous")
+        all_candles.extend(candles)
+        previous_end = metadata.requested_end_ms
+    merged = validate_candles(all_candles, first.interval)
+    return HistoricalDataset(
+        HistoricalDatasetMetadata(
+            symbol=first.symbol,
+            interval=first.interval,
+            requested_start_ms=first.requested_start_ms,
+            requested_end_ms=result[-1].metadata.requested_end_ms,
+            actual_first_open_ms=merged[0].open_time_ms,
+            actual_last_open_ms=merged[-1].open_time_ms,
+            candle_count=len(merged),
+            downloaded_at_utc=result[-1].metadata.downloaded_at_utc,
+            source=first.source,
+            candles_sha256=candles_sha256(merged),
+        ),
+        merged,
+    )
+
+
+def download_segmented(
+    downloader: PublicKlineDownloader,
+    *,
+    symbol: str,
+    interval: str,
+    start_ms: int,
+    end_ms: int,
+    max_candles: int = MAX_CANDLES_PER_ACQUISITION,
+) -> SegmentedHistoricalAcquisitionV1:
+    """Sequentially download bounded segments and publish no result on a failed segment."""
+    if max_candles > MAX_CANDLES_PER_ACQUISITION:
+        raise ValueError("segmented acquisition cannot exceed the downloader candle capacity")
+    plan = plan_historical_segments(
+        symbol=symbol,
+        interval=interval,
+        start_ms=start_ms,
+        end_ms=end_ms,
+        max_candles=max_candles,
+    )
+    downloaded: list[HistoricalDataset] = []
+    for segment in plan:
+        dataset = downloader.download(
+            symbol=segment.symbol,
+            interval=segment.interval,
+            start_ms=segment.start_ms,
+            end_ms=segment.end_ms,
+        )
+        _validate_segment_dataset(segment, dataset)
+        downloaded.append(dataset)
+    merged = merge_historical_datasets(downloaded)
+    return SegmentedHistoricalAcquisitionV1(
+        plan[0].symbol,
+        interval,
+        start_ms,
+        end_ms,
+        plan,
+        tuple(item.metadata.candles_sha256 for item in downloaded),
+        merged,
+    )
 
 
 def _parse_kline(raw: Any, index: int) -> Candle:
@@ -243,6 +433,30 @@ def write_dataset_atomic(path: Path, dataset: HistoricalDataset) -> None:
     except FileExistsError:
         os.unlink(temporary)
         raise FileExistsError(f"research dataset already exists: {path}") from None
+    except BaseException:
+        try:
+            os.unlink(temporary)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def write_segmented_provenance_atomic(
+    path: Path, acquisition: SegmentedHistoricalAcquisitionV1
+) -> None:
+    """Publish bounded acquisition provenance before its canonical final dataset."""
+    payload = json.dumps(acquisition.provenance_payload(), sort_keys=True, indent=2) + "\n"
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.link(temporary, path)
+        os.unlink(temporary)
+    except FileExistsError:
+        os.unlink(temporary)
+        raise FileExistsError(f"segmented acquisition provenance already exists: {path}") from None
     except BaseException:
         try:
             os.unlink(temporary)
