@@ -149,7 +149,7 @@ def test_metadata_records_frozen_provider_blockers_and_cmc_semantics() -> None:
     cmc = next(
         item for item in PROVIDER_AUTHORITIES_V1 if item.provider_id == "COINMARKETCAP_GLOBAL_DAILY"
     )
-    assert cmc.metadata_status == "CMC_ENTITLEMENT_REQUIRES_MANUAL_CONFIRMATION"
+    assert cmc.metadata_status == "CMC_DAILY_ENTITLEMENT_DOCUMENTED_ACCOUNT_PENDING"
     assert cmc.dominance_semantics == "PROVIDER_SUPPLIED_SAME_SNAPSHOT"
     assert "dominance" in next(
         item.formula_identity.lower()
@@ -161,7 +161,7 @@ def test_metadata_records_frozen_provider_blockers_and_cmc_semantics() -> None:
 def test_daily_vix_fred_stablecoin_and_binance_authorities_have_required_semantics() -> None:
     authorities = {item.provider_id: item for item in PROVIDER_AUTHORITIES_V1}
     assert authorities["DEFILLAMA_STABLECOINS"].request_parameters == (
-        ("assets", "1:USDT,2:USDC,3:DAI"),
+        ("assets", "1:USDT,2:USDC,5:DAI"),
     )
     assert authorities["CBOE_VIX_DAILY"].native_frequency == "daily"
     assert (
@@ -169,6 +169,5 @@ def test_daily_vix_fred_stablecoin_and_binance_authorities_have_required_semanti
         in authorities["FRED_ALFRED_DAILY"].revision_or_vintage_semantics
     )
     assert (
-        authorities["BINANCE_SPOT_BREADTH"].metadata_status
-        == "BREADTH_HISTORY_VERIFICATION_PENDING"
+        authorities["BINANCE_SPOT_BREADTH"].metadata_status == "BREADTH_HISTORY_METADATA_VERIFIED"
     )

@@ -41,7 +41,7 @@ PROVIDER_AUTHORITIES_V1 = (
     ProviderAuthorityV1(
         "COINMARKETCAP_GLOBAL_DAILY",
         "/v1/global-metrics/quotes/historical",
-        "Startup daily history entitlement pending manual confirmation",
+        "Startup daily history entitlement documented; local account entitlement pending",
         "daily",
         "USD / percent",
         "UTC",
@@ -52,7 +52,7 @@ PROVIDER_AUTHORITIES_V1 = (
         "commercial API; internal durable retention requires confirmation",
         "PROVIDER_SUPPLIED_SAME_SNAPSHOT",
         (("interval", "daily"),),
-        "CMC_ENTITLEMENT_REQUIRES_MANUAL_CONFIRMATION",
+        "CMC_DAILY_ENTITLEMENT_DOCUMENTED_ACCOUNT_PENDING",
         "CMC_RETENTION_REQUIRES_MANUAL_CONFIRMATION",
         "startup entitlement and durable retention not public-conclusive",
     ),
@@ -69,7 +69,7 @@ PROVIDER_AUTHORITIES_V1 = (
         "provider revisions and chain classification",
         "documented API terms/rate limits require confirmation",
         None,
-        (("assets", "1:USDT,2:USDC,3:DAI"),),
+        (("assets", "1:USDT,2:USDC,5:DAI"),),
         "METADATA_VERIFIED",
         "RETENTION_REQUIRES_MANUAL_CONFIRMATION",
         "rate-limit and retention terms require confirmation",
@@ -140,9 +140,9 @@ PROVIDER_AUTHORITIES_V1 = (
         "public data terms; retain archive checksum",
         None,
         (("interval", "1m"),),
-        "BREADTH_HISTORY_VERIFICATION_PENDING",
+        "BREADTH_HISTORY_METADATA_VERIFIED",
         "RETENTION_REQUIRES_MANUAL_CONFIRMATION",
-        "complete symbol coverage not proven without archive inspection",
+        "archive payload checksum/content validation is deferred to authorized acquisition",
     ),
 )
 
