@@ -50,6 +50,14 @@ from .analysis import (
     project_observation_for_horizon,
     rank_precursor_candidates,
 )
+from .authority import (
+    REQUIRED_DISCOVERY_FEATURES_V1,
+    REQUIRED_EQUALITY_FEATURE_V1,
+    REQUIRED_QUANTILE_FEATURES_V1,
+    AuthoritativeObservationAdapterEvidenceV1,
+    AuthoritativeObservationSplitV1,
+    load_authoritative_observation_split,
+)
 from .builder import MarketPrecursorBuilderV1, iter_materialized_rows, validate_materialized_dataset
 from .context import (
     MarketPrecursorContextBuilderV1,
@@ -115,10 +123,15 @@ __all__ = [
     "PRECURSOR_DISCOVERY_REPORT_IDENTITY",
     "PRIMARY_DISCOVERY_HORIZONS_V1",
     "QUANTILE_POLICY_IDENTITY_V1",
+    "REQUIRED_DISCOVERY_FEATURES_V1",
+    "REQUIRED_EQUALITY_FEATURE_V1",
+    "REQUIRED_QUANTILE_FEATURES_V1",
     "SAMPLE_POLICY_IDENTITY_V1",
     "STRONG_VALIDATION_ABSOLUTE_LIFT_THRESHOLD_V1",
     "STRONG_VALIDATION_RETENTION_THRESHOLD_V1",
     "AllOfConditionV1",
+    "AuthoritativeObservationAdapterEvidenceV1",
+    "AuthoritativeObservationSplitV1",
     "CandidateAssessmentReasonV1",
     "ConditionTemporalConcentrationV1",
     "ConditionalEffectV1",
@@ -178,6 +191,7 @@ __all__ = [
     "iter_materialized_context_rows",
     "iter_materialized_context_rows_v2",
     "iter_materialized_rows",
+    "load_authoritative_observation_split",
     "no_validated_precursor_found",
     "precursor_discovery_report_payload",
     "primary_event_definitions_v1",

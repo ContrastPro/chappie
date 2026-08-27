@@ -13,18 +13,26 @@ from app.research.market_precursor import (
     CONTEXT_FEATURE_CONTRACT_IDENTITY_V2,
     MARKET_PRECURSOR_DATASET_IDENTITY,
     NUMERIC_CONTEXT_FEATURES_V2,
+    REQUIRED_DISCOVERY_FEATURES_V1,
+    REQUIRED_QUANTILE_FEATURES_V1,
     EqualityFeatureConditionV1,
+    FrozenHorizonOutcomeV1,
     MarketPrecursorBuilderV1,
     MarketPrecursorContextBuilderV1,
     MarketPrecursorContextBuilderV2,
+    MultiHorizonFrozenConditionObservationV1,
     iter_materialized_context_rows_v2,
     iter_materialized_rows,
+    load_authoritative_observation_split,
     validate_context_authority,
     validate_materialized_context_dataset,
     validate_materialized_context_dataset_v2,
     validate_materialized_dataset,
 )
+from app.research.market_precursor.authority import _join_validated_rows
 from app.research.market_precursor.context import _features
+from app.research.market_precursor.context_v2 import MarketPrecursorContextRowV2
+from app.research.market_precursor.models import MarketPrecursorRowV1
 from app.research.strategy.history import (
     HistoricalDataset,
     HistoricalDatasetMetadata,
@@ -299,9 +307,15 @@ def _write_context_authority(tmp_path, btc_a, btc_b, eth, sol):
         path.write_text(json.dumps(semantic, sort_keys=True), encoding="utf-8")
         return path, semantic["provenance_digest"]
 
+    split = len(btc_a.candles)
+    total = split + len(btc_b.candles)
     segments = [
-        {"start_ms": 0, "end_ms": 40 * 60000, "candle_count": 40},
-        {"start_ms": 40 * 60000, "end_ms": 80 * 60000, "candle_count": 40},
+        {"start_ms": 0, "end_ms": split * 60000, "candle_count": split},
+        {
+            "start_ms": split * 60000,
+            "end_ms": total * 60000,
+            "candle_count": len(btc_b.candles),
+        },
     ]
     eth_path, eth_digest = provenance(eth, segments)
     sol_path, sol_digest = provenance(sol, segments)
@@ -342,16 +356,16 @@ def _write_context_authority(tmp_path, btc_a, btc_b, eth, sol):
             },
         ],
         "alignment": {
-            "btc_eth_common_timestamps": 80,
+            "btc_eth_common_timestamps": total,
             "btc_eth_missing_timestamps": 0,
             "btc_eth_extra_timestamps": 0,
-            "btc_sol_common_timestamps": 80,
+            "btc_sol_common_timestamps": total,
             "btc_sol_missing_timestamps": 0,
             "btc_sol_extra_timestamps": 0,
-            "eth_segment_a_aligned_timestamps": 40,
-            "eth_segment_b_aligned_timestamps": 40,
-            "sol_segment_a_aligned_timestamps": 40,
-            "sol_segment_b_aligned_timestamps": 40,
+            "eth_segment_a_aligned_timestamps": split,
+            "eth_segment_b_aligned_timestamps": len(btc_b.candles),
+            "sol_segment_a_aligned_timestamps": split,
+            "sol_segment_b_aligned_timestamps": len(btc_b.candles),
         },
         "source_validation": {
             "provider": "https://data-api.binance.vision",
@@ -371,11 +385,12 @@ def _write_context_authority(tmp_path, btc_a, btc_b, eth, sol):
     return path, semantic["manifest_digest"]
 
 
-def _context_sources(tmp_path):
-    btc_a = _context_dataset("BTCUSDT", 0, 40)
-    btc_b = _context_dataset("BTCUSDT", 40, 40)
-    eth = _context_dataset("ETHUSDT", 0, 80)
-    sol = _context_dataset("SOLUSDT", 0, 80)
+def _context_sources(tmp_path, count=80):
+    split = count // 2
+    btc_a = _context_dataset("BTCUSDT", 0, split)
+    btc_b = _context_dataset("BTCUSDT", split, count - split)
+    eth = _context_dataset("ETHUSDT", 0, count)
+    sol = _context_dataset("SOLUSDT", 0, count)
     return (btc_a, btc_b, eth, sol, *_write_context_authority(tmp_path, btc_a, btc_b, eth, sol))
 
 
@@ -565,4 +580,262 @@ def test_typed_context_v2_validator_rejects_order_and_manifest_tampering(monkeyp
     with pytest.raises(ValueError):
         validate_materialized_context_dataset_v2(
             rows_path, expected_authority_digest=authority_digest
+        )
+
+
+def _authority_base_row(timestamp, *, features=None, labels=None):
+    base_features = {
+        "breakout_proximity": Decimal("0.123456789"),
+        "return_15m": Decimal("-0.000000001"),
+        "volatility_compression_ratio": Decimal("0.987654321"),
+    }
+    if features:
+        base_features.update(features)
+    base_labels = {
+        f"{name}_{horizon}m": Decimal(f"{sign}{horizon:03d}000001")
+        for horizon in (15, 60, 240)
+        for name, sign in (
+            ("future_return", "0."),
+            ("upside_excursion", "1."),
+            ("downside_excursion", "-0."),
+        )
+    }
+    if labels:
+        base_labels.update(labels)
+    return MarketPrecursorRowV1(
+        timestamp,
+        "BTCUSDT",
+        "1m",
+        "features/1",
+        "source",
+        base_features,
+        base_labels,
+        "row",
+    )
+
+
+def _authority_context_row(timestamp, *, agreement=True, numeric=None, boolean=None):
+    context_numeric = {
+        name: Decimal(f"{index}.0000000001")
+        for index, name in enumerate(
+            sorted(REQUIRED_QUANTILE_FEATURES_V1 - _authority_base_row(0).features.keys()),
+            start=1,
+        )
+    }
+    if numeric:
+        context_numeric.update(numeric)
+    context_boolean = {"cross_market.all_three_direction_agreement": agreement}
+    if boolean:
+        context_boolean.update(boolean)
+    return MarketPrecursorContextRowV2(
+        timestamp,
+        "BTCUSDT",
+        "1m",
+        "authority/1",
+        "authority-digest",
+        ("btc-a", "btc-b"),
+        "eth",
+        "sol",
+        "context/2",
+        context_numeric,
+        context_boolean,
+        "row",
+    )
+
+
+def _joined(base_timestamps, context_timestamps, *, start_ms=0, end_ms=10_000):
+    return _join_validated_rows(
+        tuple(_authority_base_row(value) for value in base_timestamps),
+        tuple(_authority_context_row(value) for value in context_timestamps),
+        start_ms=start_ms,
+        end_ms=end_ms,
+    )
+
+
+def test_authority_adapter_exact_range_leading_and_trailing_semantics():
+    observations, base_leading, context_leading, base_trailing, context_trailing = _joined(
+        (1_000, 2_000, 3_000, 4_000), (2_000, 3_000, 4_000, 5_000)
+    )
+    assert [item.timestamp_ms for item in observations] == [2_000, 3_000, 4_000]
+    assert (base_leading, context_leading, base_trailing, context_trailing) == (1, 0, 0, 1)
+
+    observations, base_leading, context_leading, base_trailing, context_trailing = _joined(
+        (2_000, 3_000, 4_000, 5_000),
+        (1_000, 2_000, 3_000, 4_000),
+        start_ms=2_000,
+        end_ms=5_000,
+    )
+    assert [item.timestamp_ms for item in observations] == [2_000, 3_000, 4_000]
+    assert (base_leading, context_leading, base_trailing, context_trailing) == (0, 0, 0, 0)
+
+    observations, base_leading, context_leading, base_trailing, context_trailing = _joined(
+        (2_000, 3_000, 4_000, 5_000), (1_000, 2_000, 3_000, 4_000)
+    )
+    assert [item.timestamp_ms for item in observations] == [2_000, 3_000, 4_000]
+    assert (base_leading, context_leading, base_trailing, context_trailing) == (0, 1, 1, 0)
+
+
+@pytest.mark.parametrize(
+    "base_timestamps,context_timestamps",
+    [
+        ((1_000, 2_000, 4_000), (1_000, 2_000, 3_000, 4_000)),
+        ((1_000, 2_000, 3_000, 4_000), (1_000, 2_000, 4_000)),
+        ((1_000, 1_000), (1_000, 2_000)),
+        ((1_000, 2_000), (1_000, 1_000)),
+        ((2_000, 1_000), (1_000, 2_000)),
+    ],
+)
+def test_authority_adapter_rejects_internal_holes_duplicates_and_decreasing_order(
+    base_timestamps, context_timestamps
+):
+    with pytest.raises(ValueError):
+        _joined(base_timestamps, context_timestamps)
+
+
+@pytest.mark.parametrize("agreement", [True, False])
+def test_authority_adapter_preserves_exact_features_boolean_and_decimals(agreement):
+    base = _authority_base_row(1_000)
+    context = _authority_context_row(1_000, agreement=agreement)
+    observations, *_counts = _join_validated_rows((base,), (context,), start_ms=0, end_ms=2_000)
+    observation = observations[0]
+    assert isinstance(observation, MultiHorizonFrozenConditionObservationV1)
+    assert set(observation.features) == REQUIRED_DISCOVERY_FEATURES_V1
+    assert type(observation.features["cross_market.all_three_direction_agreement"]) is bool
+    assert observation.features["cross_market.all_three_direction_agreement"] is agreement
+    assert observation.features["breakout_proximity"] is base.features["breakout_proximity"]
+    assert all(
+        type(observation.features[name]) is Decimal for name in REQUIRED_QUANTILE_FEATURES_V1
+    )
+    with pytest.raises(TypeError):
+        observation.features["breakout_proximity"] = Decimal(0)
+
+
+def test_authority_adapter_maps_each_stored_horizon_without_reuse():
+    base = _authority_base_row(1_000)
+    observations, *_counts = _join_validated_rows(
+        (base,), (_authority_context_row(1_000),), start_ms=0, end_ms=2_000
+    )
+    outcomes = observations[0].outcomes
+    assert tuple(item.horizon_minutes for item in outcomes) == (15, 60, 240)
+    for outcome in outcomes:
+        horizon = outcome.horizon_minutes
+        assert outcome == FrozenHorizonOutcomeV1(
+            horizon,
+            base.labels[f"future_return_{horizon}m"],
+            base.labels[f"upside_excursion_{horizon}m"],
+            base.labels[f"downside_excursion_{horizon}m"],
+        )
+
+
+@pytest.mark.parametrize(
+    "base,context,match",
+    [
+        (
+            _authority_base_row(1_000),
+            _authority_context_row(1_000, agreement=Decimal(1)),
+            "exact Boolean",
+        ),
+        (
+            _authority_base_row(1_000, features={"breakout_proximity": None}),
+            _authority_context_row(1_000),
+            "Decimal value",
+        ),
+        (
+            _authority_base_row(1_000, features={"return_15m": Decimal("NaN")}),
+            _authority_context_row(1_000),
+            "Decimal value",
+        ),
+        (
+            _authority_base_row(1_000),
+            _authority_context_row(1_000, numeric={"breakout_proximity": Decimal(1)}),
+            "collide",
+        ),
+    ],
+)
+def test_authority_adapter_rejects_invalid_features(base, context, match):
+    with pytest.raises(ValueError, match=match):
+        _join_validated_rows((base,), (context,), start_ms=0, end_ms=2_000)
+
+
+def test_authority_adapter_rejects_missing_feature_and_label():
+    context = _authority_context_row(1_000)
+    context.numeric_features.pop("eth.atr_14_bps")
+    with pytest.raises(ValueError, match="features are missing"):
+        _join_validated_rows((_authority_base_row(1_000),), (context,), start_ms=0, end_ms=2_000)
+
+    base = _authority_base_row(1_000)
+    del base.labels["future_return_60m"]
+    with pytest.raises(ValueError, match="future_return_60m"):
+        _join_validated_rows((base,), (_authority_context_row(1_000),), start_ms=0, end_ms=2_000)
+
+
+def _materialized_adapter_authorities(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.research.market_precursor.context.EXPECTED_COMMON_TIMESTAMPS", 500)
+    base_path = tmp_path / "base.ndjson"
+    base_manifest = MarketPrecursorBuilderV1().materialize(_dataset(500), base_path)
+    btc_a, btc_b, eth, sol, authority_path, authority_digest = _context_sources(tmp_path, 500)
+    context_path = tmp_path / "context.v2.ndjson"
+    context_manifest = MarketPrecursorContextBuilderV2(authority_digest).materialize(
+        authority_path, btc_a, btc_b, eth, sol, context_path
+    )
+    return base_path, base_manifest, context_path, context_manifest, authority_digest
+
+
+def test_authority_adapter_validates_authorities_and_returns_deterministic_evidence(
+    monkeypatch, tmp_path
+):
+    base_path, base_manifest, context_path, context_manifest, authority_digest = (
+        _materialized_adapter_authorities(monkeypatch, tmp_path)
+    )
+    arguments = {
+        "start_utc": "1970-01-01T00:00:00Z",
+        "end_utc": "1970-01-02T00:00:00Z",
+        "expected_base_digest": base_manifest.dataset_digest,
+        "expected_context_digest": context_manifest.dataset_digest,
+        "expected_context_authority_digest": authority_digest,
+    }
+    first = load_authoritative_observation_split(base_path, context_path, **arguments)
+    second = load_authoritative_observation_split(base_path, context_path, **arguments)
+    assert first == second
+    assert len(first.observations) == 141
+    assert first.evidence.joined_count == 141
+    assert first.evidence.context_leading_rows_skipped == 59
+    assert first.evidence.context_trailing_rows_skipped == 240
+    assert first.evidence.internal_mismatch_count == 0
+    assert first.evidence.required_feature_count == 12
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["expected_base_digest", "expected_context_digest", "expected_context_authority_digest"],
+)
+def test_authority_adapter_rejects_wrong_expected_authority(monkeypatch, tmp_path, name):
+    base_path, base_manifest, context_path, context_manifest, authority_digest = (
+        _materialized_adapter_authorities(monkeypatch, tmp_path)
+    )
+    arguments = {
+        "start_utc": "1970-01-01T00:00:00Z",
+        "end_utc": "1970-01-02T00:00:00Z",
+        "expected_base_digest": base_manifest.dataset_digest,
+        "expected_context_digest": context_manifest.dataset_digest,
+        "expected_context_authority_digest": authority_digest,
+    }
+    arguments[name] = "0" * 64
+    with pytest.raises(ValueError):
+        load_authoritative_observation_split(base_path, context_path, **arguments)
+
+
+def test_authority_adapter_rejects_invalid_temporal_bounds(monkeypatch, tmp_path):
+    base_path, base_manifest, context_path, context_manifest, authority_digest = (
+        _materialized_adapter_authorities(monkeypatch, tmp_path)
+    )
+    with pytest.raises(ValueError, match="start < end"):
+        load_authoritative_observation_split(
+            base_path,
+            context_path,
+            start_utc="1970-01-02T00:00:00Z",
+            end_utc="1970-01-02T00:00:00Z",
+            expected_base_digest=base_manifest.dataset_digest,
+            expected_context_digest=context_manifest.dataset_digest,
+            expected_context_authority_digest=authority_digest,
         )
