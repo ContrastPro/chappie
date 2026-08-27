@@ -74,6 +74,14 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _cleanup_non_authoritative(path: Path) -> None:
+    """Best-effort cleanup that never masks the primary acquisition failure."""
+    try:
+        path.unlink(missing_ok=True)
+    except PermissionError as error:
+        print(f"non-authoritative cleanup deferred for {path}: {error}")
+
+
 def _download_archive(
     client: httpx.Client, symbol: str, month: str, cache: Path
 ) -> tuple[Path, str]:
@@ -89,12 +97,15 @@ def _download_archive(
         print(f"cache verified {symbol} {month}")
         return path, expected
     temporary = path.with_suffix(".partial")
-    with client.stream("GET", url) as response, temporary.open("wb") as handle:
+    with client.stream("GET", url) as response:
         response.raise_for_status()
-        for chunk in response.iter_bytes(1 << 20):
-            handle.write(chunk)
+        with temporary.open("wb") as handle:
+            for chunk in response.iter_bytes(1 << 20):
+                handle.write(chunk)
+            handle.flush()
+            os.fsync(handle.fileno())
     if _sha256(temporary) != expected:
-        temporary.unlink(missing_ok=True)
+        _cleanup_non_authoritative(temporary)
         raise ValueError("archive checksum mismatch")
     os.replace(temporary, path)
     print(f"downloaded and checksum-verified {symbol} {month}")
@@ -167,12 +178,14 @@ def _validate_and_write_symbol(
                             digest.update(line.encode())
                             first = timestamp if count == 0 else first
                             last, previous, count = timestamp, timestamp, count + 1
+            out.flush()
+            os.fsync(out.fileno())
         expected_count = (END_MS - START_MS) // INTERVAL_MS
         if count != expected_count or first != START_MS or last + INTERVAL_MS != END_MS:
             raise ValueError("symbol coverage does not exactly match authorized range")
         os.replace(temporary, destination)
     except BaseException:
-        temporary.unlink(missing_ok=True)
+        _cleanup_non_authoritative(temporary)
         raise
     return SymbolAuthoritySummaryV1(
         symbol,

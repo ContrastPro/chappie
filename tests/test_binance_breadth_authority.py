@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from app.research.capital_flow import binance_breadth_authority as authority
 from app.research.capital_flow.binance_breadth_authority import (
     BINANCE_BREADTH_AUTHORITY_IDENTITY,
     BINANCE_BREADTH_SYMBOLS_V1,
@@ -33,3 +34,17 @@ def test_timestamp_normalization_rejects_wrong_units_and_canonicalizes_once() ->
     with pytest.raises(ValueError, match="unit|magnitude"):
         normalize_native_timestamp("1735689600000", "2025-01")
     assert INTERVAL_MS == 60_000
+
+
+def test_non_authoritative_cleanup_cannot_mask_primary_failure(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    path = tmp_path / "symbol.pending"
+    path.write_text("partial", encoding="utf-8")
+
+    def locked_unlink(self, *, missing_ok=False):
+        raise PermissionError("locked")
+
+    monkeypatch.setattr(type(path), "unlink", locked_unlink)
+    authority._cleanup_non_authoritative(path)
+    assert "cleanup deferred" in capsys.readouterr().out
