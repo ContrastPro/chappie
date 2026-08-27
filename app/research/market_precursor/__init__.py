@@ -1,7 +1,9 @@
 """Causal, read-only market precursor research datasets."""
 
 from .analysis import (
+    AllOfConditionV1,
     ConditionalEffectV1,
+    DiscoverySemanticRoleV1,
     EqualityFeatureConditionV1,
     EventBaselineV1,
     EventDefinitionV1,
@@ -12,6 +14,7 @@ from .analysis import (
     QuantileFeatureConditionV1,
     SampleClassV1,
     baseline,
+    bucket_for_role,
     classify_sample,
     conditional_effect,
     fit_feature_research_quantiles,
@@ -39,7 +42,9 @@ __all__ = [
     "FEATURE_CONTRACT_IDENTITY",
     "LABEL_CONTRACT_IDENTITY",
     "MARKET_PRECURSOR_DATASET_IDENTITY",
+    "AllOfConditionV1",
     "ConditionalEffectV1",
+    "DiscoverySemanticRoleV1",
     "EqualityFeatureConditionV1",
     "EventBaselineV1",
     "EventDefinitionV1",
@@ -54,6 +59,7 @@ __all__ = [
     "QuantileFeatureConditionV1",
     "SampleClassV1",
     "baseline",
+    "bucket_for_role",
     "classify_sample",
     "conditional_effect",
     "fit_feature_research_quantiles",

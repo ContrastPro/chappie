@@ -1,9 +1,13 @@
 from dataclasses import FrozenInstanceError
 from decimal import Decimal
+from inspect import signature
 
 import pytest
 
+from app.research.market_precursor import analysis
 from app.research.market_precursor.analysis import (
+    AllOfConditionV1,
+    DiscoverySemanticRoleV1,
     EqualityFeatureConditionV1,
     EventDefinitionV1,
     EventDirectionV1,
@@ -13,6 +17,7 @@ from app.research.market_precursor.analysis import (
     QuantileFeatureConditionV1,
     SampleClassV1,
     baseline,
+    bucket_for_role,
     classify_sample,
     conditional_effect,
     fit_feature_research_quantiles,
@@ -201,3 +206,89 @@ def test_equality_condition_has_exact_feature_value_and_type_semantics_and_is_fr
     assert not condition.matches("agrees", "true")
     with pytest.raises(FrozenInstanceError):
         condition.expected_value = False
+
+
+def _top_condition(feature_name: str = "level") -> QuantileFeatureConditionV1:
+    quantiles = FrozenFeatureQuantilesV1(
+        feature_name, Decimal(10), Decimal(25), Decimal(75), Decimal(90), 100
+    )
+    return QuantileFeatureConditionV1(feature_name, QuantileBucketV1.TOP_25, quantiles)
+
+
+def test_all_of_matches_two_or_three_true_children_and_repeats_deterministically():
+    two = AllOfConditionV1((_top_condition(), EqualityFeatureConditionV1("agrees", True)))
+    features = {"level": Decimal(80), "agrees": True}
+    assert two.matches(features)
+    assert two.matches(features)
+    three = AllOfConditionV1((*two.children, EqualityFeatureConditionV1("participates", "yes")))
+    assert three.matches({**features, "participates": "yes"})
+
+
+def test_all_of_false_missing_and_invalid_inputs_are_explicit():
+    condition = AllOfConditionV1((_top_condition(), EqualityFeatureConditionV1("agrees", True)))
+    assert not condition.matches({"level": Decimal(80), "agrees": False})
+    with pytest.raises(ValueError, match="required feature is missing"):
+        condition.matches({"level": Decimal(80)})
+    with pytest.raises(ValueError, match="finite Decimal"):
+        condition.matches({"level": Decimal("NaN"), "agrees": False})
+
+
+def test_all_of_rejects_empty_duplicate_and_unsupported_children_and_is_immutable():
+    with pytest.raises(ValueError, match="at least one child"):
+        AllOfConditionV1(())
+    with pytest.raises(ValueError, match="unique child features"):
+        AllOfConditionV1((_top_condition(), EqualityFeatureConditionV1("level", True)))
+    with pytest.raises(ValueError, match="unsupported child"):
+        AllOfConditionV1((object(),))
+    children = [_top_condition(), EqualityFeatureConditionV1("agrees", True)]
+    condition = AllOfConditionV1(children)
+    children.clear()
+    assert len(condition.children) == 2
+    with pytest.raises(FrozenInstanceError):
+        condition.children = ()
+
+
+def test_all_of_preserves_order_for_deterministic_equality():
+    first = _top_condition()
+    second = EqualityFeatureConditionV1("agrees", True)
+    forward = AllOfConditionV1((first, second))
+    reverse = AllOfConditionV1((second, first))
+    assert forward == AllOfConditionV1((first, second))
+    assert forward != reverse
+    features = {"level": Decimal(80), "agrees": True}
+    unchanged = features.copy()
+    assert forward.matches(features) is reverse.matches(features) is True
+    assert features == unchanged
+
+
+def test_discovery_semantic_roles_and_fixed_bucket_policy_are_exact():
+    expected = {
+        DiscoverySemanticRoleV1.STRONG_HIGH: QuantileBucketV1.TOP_10,
+        DiscoverySemanticRoleV1.HIGH: QuantileBucketV1.TOP_25,
+        DiscoverySemanticRoleV1.ELEVATED: QuantileBucketV1.TOP_25,
+        DiscoverySemanticRoleV1.HIGH_PARTICIPATION: QuantileBucketV1.TOP_25,
+        DiscoverySemanticRoleV1.STRONG_LOW: QuantileBucketV1.BOTTOM_10,
+        DiscoverySemanticRoleV1.LOW: QuantileBucketV1.BOTTOM_25,
+        DiscoverySemanticRoleV1.COMPRESSED: QuantileBucketV1.BOTTOM_25,
+        DiscoverySemanticRoleV1.MUTED: QuantileBucketV1.MIDDLE_50,
+    }
+    assert len(DiscoverySemanticRoleV1) == 8
+    assert {role: bucket_for_role(role) for role in DiscoverySemanticRoleV1} == expected
+    assert bucket_for_role(DiscoverySemanticRoleV1.HIGH) is bucket_for_role(
+        DiscoverySemanticRoleV1.HIGH
+    )
+    with pytest.raises(TypeError, match="unknown discovery semantic role"):
+        bucket_for_role("HIGH")
+
+
+def test_role_policy_accepts_no_data_and_no_mining_api_exists():
+    assert tuple(signature(bucket_for_role).parameters) == ("role",)
+    for name in (
+        "generate_combinations",
+        "optimize_roles",
+        "choose_bucket",
+        "best_condition",
+        "search_conditions",
+        "optimize_threshold",
+    ):
+        assert not hasattr(analysis, name)

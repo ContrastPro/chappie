@@ -1,6 +1,6 @@
 """Pure, deterministic statistics for already-causal precursor rows."""
 
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
@@ -25,6 +25,37 @@ class QuantileBucketV1(StrEnum):
     MIDDLE_50 = "MIDDLE_50"
     TOP_25 = "TOP_25"
     TOP_10 = "TOP_10"
+
+
+class DiscoverySemanticRoleV1(StrEnum):
+    STRONG_HIGH = "STRONG_HIGH"
+    HIGH = "HIGH"
+    ELEVATED = "ELEVATED"
+    HIGH_PARTICIPATION = "HIGH_PARTICIPATION"
+    STRONG_LOW = "STRONG_LOW"
+    LOW = "LOW"
+    COMPRESSED = "COMPRESSED"
+    MUTED = "MUTED"
+
+
+def bucket_for_role(role: DiscoverySemanticRoleV1) -> QuantileBucketV1:
+    if not isinstance(role, DiscoverySemanticRoleV1):
+        raise TypeError("unknown discovery semantic role")
+    if role is DiscoverySemanticRoleV1.STRONG_HIGH:
+        return QuantileBucketV1.TOP_10
+    if role in (
+        DiscoverySemanticRoleV1.HIGH,
+        DiscoverySemanticRoleV1.ELEVATED,
+        DiscoverySemanticRoleV1.HIGH_PARTICIPATION,
+    ):
+        return QuantileBucketV1.TOP_25
+    if role is DiscoverySemanticRoleV1.STRONG_LOW:
+        return QuantileBucketV1.BOTTOM_10
+    if role in (DiscoverySemanticRoleV1.LOW, DiscoverySemanticRoleV1.COMPRESSED):
+        return QuantileBucketV1.BOTTOM_25
+    if role is DiscoverySemanticRoleV1.MUTED:
+        return QuantileBucketV1.MIDDLE_50
+    raise ValueError("unknown discovery semantic role")
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,6 +109,35 @@ class EqualityFeatureConditionV1:
         if feature_name != self.feature_name:
             raise ValueError("evaluation feature does not match condition feature")
         return type(value) is type(self.expected_value) and value == self.expected_value
+
+
+@dataclass(frozen=True, slots=True)
+class AllOfConditionV1:
+    """An ordered conjunction with unique, explicitly bound child features."""
+
+    children: tuple[QuantileFeatureConditionV1 | EqualityFeatureConditionV1, ...]
+
+    def __post_init__(self) -> None:
+        children = tuple(self.children)
+        if not children:
+            raise ValueError("all-of condition requires at least one child")
+        if any(
+            not isinstance(child, (QuantileFeatureConditionV1, EqualityFeatureConditionV1))
+            for child in children
+        ):
+            raise ValueError("all-of condition contains an unsupported child")
+        feature_names = tuple(child.feature_name for child in children)
+        if len(set(feature_names)) != len(feature_names):
+            raise ValueError("all-of condition requires unique child features")
+        object.__setattr__(self, "children", children)
+
+    def matches(self, features: Mapping[str, object]) -> bool:
+        results = []
+        for child in self.children:
+            if child.feature_name not in features:
+                raise ValueError(f"required feature is missing: {child.feature_name}")
+            results.append(child.matches(child.feature_name, features[child.feature_name]))
+        return all(results)
 
 
 def _percentile(values: tuple[Decimal, ...], numerator: int) -> Decimal:
