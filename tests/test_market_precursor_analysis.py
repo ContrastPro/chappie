@@ -6,20 +6,25 @@ import pytest
 
 from app.research.market_precursor import analysis
 from app.research.market_precursor.analysis import (
+    DISCOVERY_CONDITION_CATALOGUE_IDENTITY,
     AllOfConditionV1,
+    DiscoveryConditionIdentityV1,
     DiscoverySemanticRoleV1,
+    EqualityConditionSpecV1,
     EqualityFeatureConditionV1,
     EventDefinitionV1,
     EventDirectionV1,
     FrozenFeatureQuantilesV1,
     FutureLabelV1,
     QuantileBucketV1,
+    QuantileConditionSpecV1,
     QuantileFeatureConditionV1,
     SampleClassV1,
     baseline,
     bucket_for_role,
     classify_sample,
     conditional_effect,
+    discovery_condition_catalogue_v1,
     fit_feature_research_quantiles,
 )
 
@@ -290,5 +295,103 @@ def test_role_policy_accepts_no_data_and_no_mining_api_exists():
         "best_condition",
         "search_conditions",
         "optimize_threshold",
+    ):
+        assert not hasattr(analysis, name)
+
+
+def _q(feature_name: str, bucket: QuantileBucketV1) -> QuantileConditionSpecV1:
+    return QuantileConditionSpecV1(feature_name, bucket)
+
+
+def test_discovery_condition_catalogue_identity_cardinality_and_order_are_frozen():
+    catalogue = discovery_condition_catalogue_v1()
+    assert catalogue.identity == "chappie_precursor_condition_catalogue/1.0.0"
+    assert catalogue.identity == DISCOVERY_CONDITION_CATALOGUE_IDENTITY
+    assert tuple(entry.identity for entry in catalogue.entries) == tuple(
+        DiscoveryConditionIdentityV1
+    )
+    assert len(catalogue.entries) == len(DiscoveryConditionIdentityV1) == 8
+    assert catalogue == discovery_condition_catalogue_v1()
+    with pytest.raises(FrozenInstanceError):
+        catalogue.entries = ()
+    with pytest.raises(ValueError, match="identity is invalid"):
+        type(catalogue)("other", catalogue.entries)
+    with pytest.raises(ValueError, match="entries are invalid"):
+        type(catalogue)(catalogue.identity, catalogue.entries[:-1])
+
+
+def test_catalogue_template_and_catalogue_copy_mutable_inputs_to_tuples():
+    template = discovery_condition_catalogue_v1().entries[0]
+    children = list(template.children)
+    copied_template = type(template)(template.identity, children)
+    children.clear()
+    assert copied_template.children == template.children
+    entries = list(discovery_condition_catalogue_v1().entries)
+    copied_catalogue = type(discovery_condition_catalogue_v1())(
+        DISCOVERY_CONDITION_CATALOGUE_IDENTITY, entries
+    )
+    entries.clear()
+    assert copied_catalogue == discovery_condition_catalogue_v1()
+
+
+def test_discovery_condition_catalogue_exact_canonical_specs():
+    entries = discovery_condition_catalogue_v1().entries
+    assert entries[0].children == (
+        _q("cross_market.eth_minus_btc_return_15m", QuantileBucketV1.TOP_10),
+        _q("cross_market.sol_minus_btc_return_15m", QuantileBucketV1.TOP_10),
+    )
+    assert entries[1].children == (
+        _q("cross_market.eth_minus_btc_return_15m", QuantileBucketV1.TOP_10),
+        _q("eth.volume_ratio_60m", QuantileBucketV1.TOP_25),
+    )
+    assert entries[2].children == (
+        _q("cross_market.sol_minus_btc_return_15m", QuantileBucketV1.TOP_10),
+        _q("sol.volume_ratio_60m", QuantileBucketV1.TOP_25),
+    )
+    assert entries[3].children == (
+        _q("cross_market.eth_minus_btc_return_15m", QuantileBucketV1.TOP_25),
+        _q("cross_market.sol_minus_btc_return_15m", QuantileBucketV1.TOP_25),
+        _q("volatility_compression_ratio", QuantileBucketV1.BOTTOM_25),
+    )
+    assert entries[4].children == (
+        EqualityConditionSpecV1("cross_market.all_three_direction_agreement", True),
+        _q("breakout_proximity", QuantileBucketV1.BOTTOM_25),
+    )
+    assert entries[5].children == (
+        _q("eth.acceleration_5m_vs_15m", QuantileBucketV1.TOP_25),
+        _q("sol.acceleration_5m_vs_15m", QuantileBucketV1.TOP_25),
+        _q("return_15m", QuantileBucketV1.MIDDLE_50),
+    )
+    assert entries[6].children == (
+        _q("eth.atr_14_bps", QuantileBucketV1.TOP_25),
+        _q("sol.atr_14_bps", QuantileBucketV1.TOP_25),
+        _q("volatility_compression_ratio", QuantileBucketV1.BOTTOM_25),
+    )
+    assert entries[7].children == (
+        _q("cross_market.eth_minus_btc_return_15m", QuantileBucketV1.BOTTOM_10),
+        _q("cross_market.sol_minus_btc_return_15m", QuantileBucketV1.BOTTOM_10),
+    )
+
+
+def test_catalogue_specs_have_no_thresholds_registration_or_mining_api():
+    catalogue = discovery_condition_catalogue_v1()
+    quantile_specs = tuple(
+        child
+        for entry in catalogue.entries
+        for child in entry.children
+        if isinstance(child, QuantileConditionSpecV1)
+    )
+    assert quantile_specs
+    assert all(set(spec.__slots__) == {"feature_name", "bucket"} for spec in quantile_specs)
+    assert tuple(signature(discovery_condition_catalogue_v1).parameters) == ()
+    for name in (
+        "register_condition",
+        "append_condition",
+        "generate_combinations",
+        "search_conditions",
+        "best_condition",
+        "choose_bucket",
+        "grid_search",
+        "threshold_optimizer",
     ):
         assert not hasattr(analysis, name)

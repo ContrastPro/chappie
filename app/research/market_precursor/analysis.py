@@ -38,6 +38,130 @@ class DiscoverySemanticRoleV1(StrEnum):
     MUTED = "MUTED"
 
 
+class DiscoveryConditionIdentityV1(StrEnum):
+    JOINT_POSITIVE_RELATIVE_MOMENTUM = "JOINT_POSITIVE_RELATIVE_MOMENTUM"
+    ETH_MOMENTUM_WITH_PARTICIPATION = "ETH_MOMENTUM_WITH_PARTICIPATION"
+    SOL_MOMENTUM_WITH_PARTICIPATION = "SOL_MOMENTUM_WITH_PARTICIPATION"
+    JOINT_CONTEXT_LEAD_WITH_BTC_COMPRESSION = "JOINT_CONTEXT_LEAD_WITH_BTC_COMPRESSION"
+    DIRECTION_AGREEMENT_WITH_BREAKOUT_PROXIMITY = "DIRECTION_AGREEMENT_WITH_BREAKOUT_PROXIMITY"
+    CONTEXT_ACCELERATION_WITH_MUTED_BTC = "CONTEXT_ACCELERATION_WITH_MUTED_BTC"
+    CONTEXT_VOLATILITY_WITH_BTC_COMPRESSION = "CONTEXT_VOLATILITY_WITH_BTC_COMPRESSION"
+    JOINT_NEGATIVE_RELATIVE_MOMENTUM = "JOINT_NEGATIVE_RELATIVE_MOMENTUM"
+
+
+DISCOVERY_CONDITION_CATALOGUE_IDENTITY = "chappie_precursor_condition_catalogue/1.0.0"
+
+
+@dataclass(frozen=True, slots=True)
+class QuantileConditionSpecV1:
+    feature_name: str
+    bucket: QuantileBucketV1
+
+
+@dataclass(frozen=True, slots=True)
+class EqualityConditionSpecV1:
+    feature_name: str
+    expected_value: object
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoveryConditionTemplateV1:
+    identity: DiscoveryConditionIdentityV1
+    children: tuple[QuantileConditionSpecV1 | EqualityConditionSpecV1, ...]
+
+    def __post_init__(self) -> None:
+        children = tuple(self.children)
+        if not children or any(
+            not isinstance(child, (QuantileConditionSpecV1, EqualityConditionSpecV1))
+            for child in children
+        ):
+            raise ValueError("discovery condition template children are invalid")
+        object.__setattr__(self, "children", children)
+
+
+@dataclass(frozen=True, slots=True)
+class DiscoveryConditionCatalogueV1:
+    identity: str
+    entries: tuple[DiscoveryConditionTemplateV1, ...]
+
+    def __post_init__(self) -> None:
+        entries = tuple(self.entries)
+        if self.identity != DISCOVERY_CONDITION_CATALOGUE_IDENTITY:
+            raise ValueError("discovery condition catalogue identity is invalid")
+        if tuple(entry.identity for entry in entries) != tuple(DiscoveryConditionIdentityV1):
+            raise ValueError("discovery condition catalogue entries are invalid")
+        object.__setattr__(self, "entries", entries)
+
+
+def discovery_condition_catalogue_v1() -> DiscoveryConditionCatalogueV1:
+    quantile = QuantileConditionSpecV1
+    equality = EqualityConditionSpecV1
+    return DiscoveryConditionCatalogueV1(
+        DISCOVERY_CONDITION_CATALOGUE_IDENTITY,
+        (
+            DiscoveryConditionTemplateV1(
+                DiscoveryConditionIdentityV1.JOINT_POSITIVE_RELATIVE_MOMENTUM,
+                (
+                    quantile("cross_market.eth_minus_btc_return_15m", QuantileBucketV1.TOP_10),
+                    quantile("cross_market.sol_minus_btc_return_15m", QuantileBucketV1.TOP_10),
+                ),
+            ),
+            DiscoveryConditionTemplateV1(
+                DiscoveryConditionIdentityV1.ETH_MOMENTUM_WITH_PARTICIPATION,
+                (
+                    quantile("cross_market.eth_minus_btc_return_15m", QuantileBucketV1.TOP_10),
+                    quantile("eth.volume_ratio_60m", QuantileBucketV1.TOP_25),
+                ),
+            ),
+            DiscoveryConditionTemplateV1(
+                DiscoveryConditionIdentityV1.SOL_MOMENTUM_WITH_PARTICIPATION,
+                (
+                    quantile("cross_market.sol_minus_btc_return_15m", QuantileBucketV1.TOP_10),
+                    quantile("sol.volume_ratio_60m", QuantileBucketV1.TOP_25),
+                ),
+            ),
+            DiscoveryConditionTemplateV1(
+                DiscoveryConditionIdentityV1.JOINT_CONTEXT_LEAD_WITH_BTC_COMPRESSION,
+                (
+                    quantile("cross_market.eth_minus_btc_return_15m", QuantileBucketV1.TOP_25),
+                    quantile("cross_market.sol_minus_btc_return_15m", QuantileBucketV1.TOP_25),
+                    quantile("volatility_compression_ratio", QuantileBucketV1.BOTTOM_25),
+                ),
+            ),
+            DiscoveryConditionTemplateV1(
+                DiscoveryConditionIdentityV1.DIRECTION_AGREEMENT_WITH_BREAKOUT_PROXIMITY,
+                (
+                    equality("cross_market.all_three_direction_agreement", True),
+                    quantile("breakout_proximity", QuantileBucketV1.BOTTOM_25),
+                ),
+            ),
+            DiscoveryConditionTemplateV1(
+                DiscoveryConditionIdentityV1.CONTEXT_ACCELERATION_WITH_MUTED_BTC,
+                (
+                    quantile("eth.acceleration_5m_vs_15m", QuantileBucketV1.TOP_25),
+                    quantile("sol.acceleration_5m_vs_15m", QuantileBucketV1.TOP_25),
+                    quantile("return_15m", QuantileBucketV1.MIDDLE_50),
+                ),
+            ),
+            DiscoveryConditionTemplateV1(
+                DiscoveryConditionIdentityV1.CONTEXT_VOLATILITY_WITH_BTC_COMPRESSION,
+                (
+                    quantile("eth.atr_14_bps", QuantileBucketV1.TOP_25),
+                    quantile("sol.atr_14_bps", QuantileBucketV1.TOP_25),
+                    quantile("volatility_compression_ratio", QuantileBucketV1.BOTTOM_25),
+                ),
+            ),
+            DiscoveryConditionTemplateV1(
+                DiscoveryConditionIdentityV1.JOINT_NEGATIVE_RELATIVE_MOMENTUM,
+                (
+                    quantile("cross_market.eth_minus_btc_return_15m", QuantileBucketV1.BOTTOM_10),
+                    quantile("cross_market.sol_minus_btc_return_15m", QuantileBucketV1.BOTTOM_10),
+                ),
+            ),
+        ),
+    )
+
+
 def bucket_for_role(role: DiscoverySemanticRoleV1) -> QuantileBucketV1:
     if not isinstance(role, DiscoverySemanticRoleV1):
         raise TypeError("unknown discovery semantic role")
