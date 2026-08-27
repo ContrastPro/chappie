@@ -44,7 +44,7 @@ from .analysis import (
     rank_precursor_candidates,
 )
 
-PRECURSOR_DISCOVERY_REPORT_IDENTITY = "chappie_precursor_discovery_report/1.0.0"
+PRECURSOR_DISCOVERY_REPORT_IDENTITY = "chappie_precursor_discovery_report/2.0.0"
 QUANTILE_POLICY_IDENTITY_V1 = "chappie_feature_research_quantiles/1.0.0"
 SAMPLE_POLICY_IDENTITY_V1 = "chappie_precursor_sample_policy/1.0.0"
 CONCENTRATION_POLICY_IDENTITY_V1 = "chappie_precursor_concentration_policy/1.0.0"
@@ -75,6 +75,7 @@ class DiscoveryProvenanceBindingsV1:
     base_precursor_identity: str
     base_precursor_digest: str
     context_feature_identity: str
+    context_dataset_identity: str
     context_feature_digest: str
     context_authority_identity: str
     context_authority_digest: str

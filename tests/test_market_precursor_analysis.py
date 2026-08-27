@@ -1185,16 +1185,38 @@ def test_multi_horizon_projection_does_not_reuse_cross_horizon_values():
     assert project_observation_for_horizon(original, 240).future_return == Decimal("2.40")
 
 
-def _report_provenance():
+def _report_provenance(*, context_dataset_identity="context-dataset/2"):
     return precursor_report.DiscoveryProvenanceBindingsV1(
         "a" * 40,
         "base/1",
         "b" * 64,
         "context/1",
+        context_dataset_identity,
         "c" * 64,
         "authority/1",
         "d" * 64,
     )
+
+
+def test_report_provenance_requires_independent_context_dataset_identity():
+    provenance = _report_provenance()
+    assert provenance.context_feature_identity == "context/1"
+    assert provenance.context_dataset_identity == "context-dataset/2"
+    assert provenance.context_feature_digest == "c" * 64
+    assert provenance.context_authority_identity == "authority/1"
+    assert provenance.context_authority_digest == "d" * 64
+    with pytest.raises(ValueError, match="provenance bindings are incomplete"):
+        replace(provenance, context_dataset_identity="")
+    with pytest.raises(TypeError):
+        precursor_report.DiscoveryProvenanceBindingsV1(
+            source_head="a" * 40,
+            base_precursor_identity="base/1",
+            base_precursor_digest="b" * 64,
+            context_feature_identity="context/1",
+            context_feature_digest="c" * 64,
+            context_authority_identity="authority/1",
+            context_authority_digest="d" * 64,
+        )
 
 
 def _report_observations(
@@ -1248,7 +1270,7 @@ def test_report_engine_exact_matrix_quantiles_baselines_progress_and_digest(monk
     validation = _report_observations(100, validation_shift=Decimal(10_000))
     config = precursor_report.discovery_execution_config_v1("FEATURE_RESEARCH", "VALIDATION")
     assert precursor_report.PRECURSOR_DISCOVERY_REPORT_IDENTITY == (
-        "chappie_precursor_discovery_report/1.0.0"
+        "chappie_precursor_discovery_report/2.0.0"
     )
     assert len(config.event_definitions) == 18
     assert {event.horizon_minutes for event in config.event_definitions} == {15, 60, 240}
@@ -1314,6 +1336,34 @@ def test_report_engine_exact_matrix_quantiles_baselines_progress_and_digest(monk
     assert first.semantic_digest == second.semantic_digest
     assert first.created_at_utc != second.created_at_utc
     assert first.provenance == _report_provenance()
+
+
+def test_report_dataset_identity_is_serialized_and_changes_only_provenance_digest():
+    observations = _report_observations(10)
+    config = precursor_report.discovery_execution_config_v1("research", "validation")
+    first = precursor_report.execute_precursor_discovery_v1(
+        observations,
+        observations,
+        config,
+        _report_provenance(context_dataset_identity="context-dataset/2"),
+        created_at_utc="2026-01-01T00:00:00+00:00",
+    )
+    second = precursor_report.execute_precursor_discovery_v1(
+        observations,
+        observations,
+        config,
+        _report_provenance(context_dataset_identity="context-dataset/other"),
+        created_at_utc="2026-01-01T00:00:00+00:00",
+    )
+    payload = precursor_report.precursor_discovery_report_payload(first)
+    assert payload["provenance"]["context_feature_identity"] == "context/1"
+    assert payload["provenance"]["context_dataset_identity"] == "context-dataset/2"
+    assert precursor_report.precursor_discovery_report_payload(first) == payload
+    assert first.semantic_digest != second.semantic_digest
+    assert first.assessments == second.assessments
+    assert first.classification_counts == second.classification_counts
+    assert first.rankings == second.rankings
+    assert first.no_validated_precursor_found_v1 == second.no_validated_precursor_found_v1
 
 
 def test_report_event_projection_uses_each_horizon_outcome_only():
