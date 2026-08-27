@@ -438,6 +438,75 @@ class FrozenConditionObservationV1:
             raise ValueError("observation label values must be finite Decimals")
 
 
+PRIMARY_DISCOVERY_HORIZONS_V1 = (15, 60, 240)
+
+
+@dataclass(frozen=True, slots=True)
+class FrozenHorizonOutcomeV1:
+    horizon_minutes: int
+    future_return: Decimal
+    favorable_excursion: Decimal
+    adverse_excursion: Decimal
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.horizon_minutes, int)
+            or isinstance(self.horizon_minutes, bool)
+            or self.horizon_minutes <= 0
+        ):
+            raise ValueError("outcome horizon is invalid")
+        if any(
+            not isinstance(value, Decimal) or not value.is_finite()
+            for value in (
+                self.future_return,
+                self.favorable_excursion,
+                self.adverse_excursion,
+            )
+        ):
+            raise ValueError("outcome values must be finite Decimals")
+
+
+@dataclass(frozen=True, slots=True)
+class MultiHorizonFrozenConditionObservationV1:
+    timestamp_ms: int
+    features: Mapping[str, object]
+    outcomes: tuple[FrozenHorizonOutcomeV1, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.timestamp_ms, int) or isinstance(self.timestamp_ms, bool):
+            raise TypeError("observation timestamp is invalid")
+        outcomes = tuple(self.outcomes)
+        if any(not isinstance(outcome, FrozenHorizonOutcomeV1) for outcome in outcomes):
+            raise ValueError("observation outcomes are invalid")
+        horizons = tuple(outcome.horizon_minutes for outcome in outcomes)
+        if len(set(horizons)) != len(horizons):
+            raise ValueError("observation outcome horizons contain duplicates")
+        if set(horizons) != set(PRIMARY_DISCOVERY_HORIZONS_V1):
+            raise ValueError("observation outcome horizons must be exactly 15, 60, and 240")
+        object.__setattr__(self, "features", MappingProxyType(dict(self.features)))
+        object.__setattr__(
+            self,
+            "outcomes",
+            tuple(sorted(outcomes, key=lambda outcome: outcome.horizon_minutes)),
+        )
+
+
+def project_observation_for_horizon(
+    observation: MultiHorizonFrozenConditionObservationV1,
+    horizon_minutes: int,
+) -> FrozenConditionObservationV1:
+    if horizon_minutes not in PRIMARY_DISCOVERY_HORIZONS_V1:
+        raise ValueError("projection horizon is unsupported")
+    outcome = next(item for item in observation.outcomes if item.horizon_minutes == horizon_minutes)
+    return FrozenConditionObservationV1(
+        observation.timestamp_ms,
+        observation.features,
+        outcome.future_return,
+        outcome.favorable_excursion,
+        outcome.adverse_excursion,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class FrozenConditionSplitEvidenceV1:
     split_name: str

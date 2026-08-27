@@ -9,6 +9,7 @@ from app.research.market_precursor import analysis
 from app.research.market_precursor.analysis import (
     DISCOVERY_CONDITION_CATALOGUE_IDENTITY,
     NO_VALIDATED_PRECURSOR_FOUND_V1,
+    PRIMARY_DISCOVERY_HORIZONS_V1,
     STRONG_VALIDATION_ABSOLUTE_LIFT_THRESHOLD_V1,
     STRONG_VALIDATION_RETENTION_THRESHOLD_V1,
     AllOfConditionV1,
@@ -26,7 +27,9 @@ from app.research.market_precursor.analysis import (
     FrozenConditionObservationV1,
     FrozenConditionSplitEvidenceV1,
     FrozenFeatureQuantilesV1,
+    FrozenHorizonOutcomeV1,
     FutureLabelV1,
+    MultiHorizonFrozenConditionObservationV1,
     PairedFrozenConditionEvidenceV1,
     PrecursorCandidateClassificationV1,
     PrecursorRankingCategoryV1,
@@ -47,6 +50,7 @@ from app.research.market_precursor.analysis import (
     evaluate_frozen_condition_stability,
     fit_feature_research_quantiles,
     no_validated_precursor_found,
+    project_observation_for_horizon,
     rank_precursor_candidates,
 )
 
@@ -1071,3 +1075,108 @@ def test_no_validated_precursor_helper_uses_supported_classes_only():
         (_assessment(research_lift=Decimal("0.038"), validation_lift=Decimal("0.019")),)
     )
     assert not no_validated_precursor_found((_assessment(),))
+
+
+def _outcome(horizon: int, value: str | None = None) -> FrozenHorizonOutcomeV1:
+    result = Decimal(value if value is not None else str(horizon))
+    return FrozenHorizonOutcomeV1(
+        horizon,
+        result,
+        result + Decimal("0.1"),
+        result - Decimal("0.1"),
+    )
+
+
+def _multi_observation(outcomes=None, features=None) -> MultiHorizonFrozenConditionObservationV1:
+    return MultiHorizonFrozenConditionObservationV1(
+        123,
+        {"feature": Decimal(1)} if features is None else features,
+        (_outcome(240), _outcome(15), _outcome(60)) if outcomes is None else outcomes,
+    )
+
+
+def test_horizon_outcome_requires_finite_decimals_and_is_immutable():
+    outcome = _outcome(15, "0.01")
+    assert outcome.future_return == Decimal("0.01")
+    with pytest.raises(FrozenInstanceError):
+        outcome.future_return = Decimal(0)
+    for invalid in (Decimal("NaN"), Decimal("Infinity"), Decimal("-Infinity"), 1.0):
+        with pytest.raises(ValueError, match="finite Decimals"):
+            FrozenHorizonOutcomeV1(15, invalid, Decimal(0), Decimal(0))
+
+
+@pytest.mark.parametrize(
+    "horizons",
+    (
+        (60, 240),
+        (15, 240),
+        (15, 60),
+        (5, 15, 60, 240),
+        (15, 60, 240, 300),
+    ),
+)
+def test_multi_horizon_observation_rejects_missing_and_extra_horizons(horizons):
+    with pytest.raises(ValueError, match="exactly 15, 60, and 240"):
+        _multi_observation(tuple(_outcome(horizon) for horizon in horizons))
+
+
+def test_multi_horizon_observation_rejects_duplicate_horizons():
+    with pytest.raises(ValueError, match="duplicates"):
+        _multi_observation((_outcome(15), _outcome(60), _outcome(240), _outcome(15)))
+
+
+def test_multi_horizon_observation_copies_inputs_canonicalizes_and_is_deterministic():
+    assert PRIMARY_DISCOVERY_HORIZONS_V1 == (15, 60, 240)
+    features = {"feature": Decimal(1)}
+    outcomes = [_outcome(240), _outcome(15), _outcome(60)]
+    observation = _multi_observation(outcomes, features)
+    features["feature"] = Decimal(2)
+    outcomes.clear()
+    assert observation.features["feature"] == Decimal(1)
+    assert tuple(item.horizon_minutes for item in observation.outcomes) == (15, 60, 240)
+    assert observation == _multi_observation((_outcome(60), _outcome(240), _outcome(15)))
+    with pytest.raises(TypeError):
+        observation.features["feature"] = Decimal(2)
+    with pytest.raises(FrozenInstanceError):
+        observation.outcomes = ()
+
+
+@pytest.mark.parametrize("horizon", PRIMARY_DISCOVERY_HORIZONS_V1)
+def test_multi_horizon_projection_is_exact_for_each_primary_horizon(horizon):
+    observation = _multi_observation()
+    projected = project_observation_for_horizon(observation, horizon)
+    expected = _outcome(horizon)
+    assert projected.timestamp_ms == observation.timestamp_ms
+    assert dict(projected.features) == dict(observation.features)
+    assert projected.future_return == expected.future_return
+    assert projected.favorable_excursion == expected.favorable_excursion
+    assert projected.adverse_excursion == expected.adverse_excursion
+    with pytest.raises(ValueError, match="unsupported"):
+        project_observation_for_horizon(observation, 5)
+
+
+def test_multi_horizon_projection_does_not_reuse_cross_horizon_values():
+    original = _multi_observation(
+        (_outcome(15, "0.15"), _outcome(60, "0.60"), _outcome(240, "2.40"))
+    )
+    changed_15 = _multi_observation(
+        (_outcome(15, "9.15"), _outcome(60, "0.60"), _outcome(240, "2.40"))
+    )
+    assert project_observation_for_horizon(original, 60) == project_observation_for_horizon(
+        changed_15, 60
+    )
+    changed_60 = _multi_observation(
+        (_outcome(15, "0.15"), _outcome(60, "9.60"), _outcome(240, "2.40"))
+    )
+    assert project_observation_for_horizon(original, 240) == project_observation_for_horizon(
+        changed_60, 240
+    )
+    changed_240 = _multi_observation(
+        (_outcome(15, "0.15"), _outcome(60, "0.60"), _outcome(240, "9.40"))
+    )
+    assert project_observation_for_horizon(original, 15) == project_observation_for_horizon(
+        changed_240, 15
+    )
+    assert project_observation_for_horizon(original, 15).future_return == Decimal("0.15")
+    assert project_observation_for_horizon(original, 60).future_return == Decimal("0.60")
+    assert project_observation_for_horizon(original, 240).future_return == Decimal("2.40")
