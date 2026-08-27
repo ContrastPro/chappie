@@ -604,6 +604,183 @@ class FrozenConditionStabilityEvidenceV1:
     stable_evidence: bool
 
 
+class PrecursorCandidateClassificationV1(StrEnum):
+    NO_EFFECT = "NO_EFFECT"
+    RESEARCH_ONLY = "RESEARCH_ONLY"
+    VALIDATION_SUPPORTED = "VALIDATION_SUPPORTED"
+    STRONG_VALIDATION_CANDIDATE = "STRONG_VALIDATION_CANDIDATE"
+
+
+class PrecursorRankingCategoryV1(StrEnum):
+    UPSIDE_PRECURSORS = "UPSIDE_PRECURSORS"
+    DOWNSIDE_PRECURSORS = "DOWNSIDE_PRECURSORS"
+    VOLATILITY_PRECURSORS = "VOLATILITY_PRECURSORS"
+
+
+class CandidateAssessmentReasonV1(StrEnum):
+    RESEARCH_LIFT_UNAVAILABLE = "RESEARCH_LIFT_UNAVAILABLE"
+    RESEARCH_LIFT_ZERO = "RESEARCH_LIFT_ZERO"
+    RESEARCH_SAMPLE_NOT_INFORMATIVE = "RESEARCH_SAMPLE_NOT_INFORMATIVE"
+    VALIDATION_SAMPLE_NOT_INFORMATIVE = "VALIDATION_SAMPLE_NOT_INFORMATIVE"
+    LIFT_DIRECTION_MISMATCH = "LIFT_DIRECTION_MISMATCH"
+    VALIDATION_LIFT_ZERO = "VALIDATION_LIFT_ZERO"
+    CLUSTER_CONCENTRATED = "CLUSTER_CONCENTRATED"
+    STABLE_EVIDENCE = "STABLE_EVIDENCE"
+    STRONG_LIFT_THRESHOLD_MET = "STRONG_LIFT_THRESHOLD_MET"
+    RETENTION_THRESHOLD_MET = "RETENTION_THRESHOLD_MET"
+
+
+NO_VALIDATED_PRECURSOR_FOUND_V1 = "NO_VALIDATED_PRECURSOR_FOUND_V1"
+STRONG_VALIDATION_ABSOLUTE_LIFT_THRESHOLD_V1 = Decimal("0.02")
+STRONG_VALIDATION_RETENTION_THRESHOLD_V1 = Decimal("0.50")
+
+
+@dataclass(frozen=True, slots=True)
+class PrecursorCandidateAssessmentV1:
+    condition_identity: DiscoveryConditionIdentityV1
+    event_definition: EventDefinitionV1
+    classification: PrecursorCandidateClassificationV1
+    paired_evidence: PairedFrozenConditionEvidenceV1
+    stability_evidence: FrozenConditionStabilityEvidenceV1
+    research_concentration: ConditionTemporalConcentrationV1
+    validation_concentration: ConditionTemporalConcentrationV1
+    ranking_category: PrecursorRankingCategoryV1
+    reasons: tuple[CandidateAssessmentReasonV1, ...]
+
+
+def _ranking_category(event: EventDefinitionV1) -> PrecursorRankingCategoryV1:
+    if event.direction is EventDirectionV1.UP:
+        return PrecursorRankingCategoryV1.UPSIDE_PRECURSORS
+    if event.direction is EventDirectionV1.DOWN:
+        return PrecursorRankingCategoryV1.DOWNSIDE_PRECURSORS
+    return PrecursorRankingCategoryV1.VOLATILITY_PRECURSORS
+
+
+def assess_precursor_candidate(
+    paired_evidence: PairedFrozenConditionEvidenceV1,
+    stability_evidence: FrozenConditionStabilityEvidenceV1,
+    research_concentration: ConditionTemporalConcentrationV1,
+    validation_concentration: ConditionTemporalConcentrationV1,
+) -> PrecursorCandidateAssessmentV1:
+    reasons = []
+    research_lift = stability_evidence.research_absolute_lift
+    validation_lift = stability_evidence.validation_absolute_lift
+    if research_lift is None:
+        reasons.append(CandidateAssessmentReasonV1.RESEARCH_LIFT_UNAVAILABLE)
+    if research_lift == 0:
+        reasons.append(CandidateAssessmentReasonV1.RESEARCH_LIFT_ZERO)
+    if stability_evidence.research_sample_class is not SampleClassV1.INFORMATIVE_SAMPLE:
+        reasons.append(CandidateAssessmentReasonV1.RESEARCH_SAMPLE_NOT_INFORMATIVE)
+    if reasons:
+        classification = PrecursorCandidateClassificationV1.NO_EFFECT
+    elif not stability_evidence.stable_evidence:
+        if not stability_evidence.validation_sample_adequate:
+            reasons.append(CandidateAssessmentReasonV1.VALIDATION_SAMPLE_NOT_INFORMATIVE)
+        if not stability_evidence.lift_direction_agrees:
+            reasons.append(CandidateAssessmentReasonV1.LIFT_DIRECTION_MISMATCH)
+        if not stability_evidence.validation_lift_nonzero:
+            reasons.append(CandidateAssessmentReasonV1.VALIDATION_LIFT_ZERO)
+        if (
+            stability_evidence.research_cluster_concentrated
+            or stability_evidence.validation_cluster_concentrated
+        ):
+            reasons.append(CandidateAssessmentReasonV1.CLUSTER_CONCENTRATED)
+        classification = PrecursorCandidateClassificationV1.RESEARCH_ONLY
+    else:
+        reasons.append(CandidateAssessmentReasonV1.STABLE_EVIDENCE)
+        strong_lift = (
+            validation_lift is not None
+            and abs(validation_lift) >= STRONG_VALIDATION_ABSOLUTE_LIFT_THRESHOLD_V1
+        )
+        strong_retention = (
+            stability_evidence.validation_lift_retention_ratio is not None
+            and stability_evidence.validation_lift_retention_ratio
+            >= STRONG_VALIDATION_RETENTION_THRESHOLD_V1
+        )
+        if strong_lift:
+            reasons.append(CandidateAssessmentReasonV1.STRONG_LIFT_THRESHOLD_MET)
+        if strong_retention:
+            reasons.append(CandidateAssessmentReasonV1.RETENTION_THRESHOLD_MET)
+        classification = (
+            PrecursorCandidateClassificationV1.STRONG_VALIDATION_CANDIDATE
+            if strong_lift and strong_retention
+            else PrecursorCandidateClassificationV1.VALIDATION_SUPPORTED
+        )
+    return PrecursorCandidateAssessmentV1(
+        paired_evidence.condition_identity,
+        paired_evidence.event_definition,
+        classification,
+        paired_evidence,
+        stability_evidence,
+        research_concentration,
+        validation_concentration,
+        _ranking_category(paired_evidence.event_definition),
+        tuple(reasons),
+    )
+
+
+def rank_precursor_candidates(
+    assessments: Iterable[PrecursorCandidateAssessmentV1],
+    category: PrecursorRankingCategoryV1,
+    limit: int = 5,
+) -> tuple[PrecursorCandidateAssessmentV1, ...]:
+    if not isinstance(category, PrecursorRankingCategoryV1):
+        raise TypeError("ranking category is invalid")
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 0:
+        raise ValueError("ranking limit is invalid")
+    eligible = (
+        assessment
+        for assessment in assessments
+        if assessment.ranking_category is category
+        and assessment.classification
+        in (
+            PrecursorCandidateClassificationV1.VALIDATION_SUPPORTED,
+            PrecursorCandidateClassificationV1.STRONG_VALIDATION_CANDIDATE,
+        )
+    )
+
+    def optional_descending(value: Decimal | None) -> tuple[bool, Decimal]:
+        return value is None, Decimal(0) if value is None else -value
+
+    def optional_ascending(value: Decimal | None) -> tuple[bool, Decimal]:
+        return value is None, Decimal(0) if value is None else value
+
+    def key(assessment: PrecursorCandidateAssessmentV1):
+        validation_effect = assessment.paired_evidence.validation.conditional_effect_result
+        stability = assessment.stability_evidence
+        return (
+            0
+            if assessment.classification
+            is PrecursorCandidateClassificationV1.STRONG_VALIDATION_CANDIDATE
+            else 1,
+            -abs(stability.validation_absolute_lift or Decimal(0)),
+            optional_descending(validation_effect.relative_lift),
+            -validation_effect.occurrence_count,
+            optional_descending(stability.validation_lift_retention_ratio),
+            optional_ascending(assessment.validation_concentration.largest_day_share),
+            optional_ascending(assessment.validation_concentration.largest_week_share),
+            assessment.condition_identity.value,
+            assessment.event_definition.direction.value,
+            assessment.event_definition.horizon_minutes,
+            assessment.event_definition.threshold_bps,
+        )
+
+    return tuple(sorted(eligible, key=key)[:limit])
+
+
+def no_validated_precursor_found(
+    assessments: Iterable[PrecursorCandidateAssessmentV1],
+) -> bool:
+    return not any(
+        assessment.classification
+        in (
+            PrecursorCandidateClassificationV1.VALIDATION_SUPPORTED,
+            PrecursorCandidateClassificationV1.STRONG_VALIDATION_CANDIDATE,
+        )
+        for assessment in assessments
+    )
+
+
 def evaluate_frozen_condition_stability(
     paired_evidence: PairedFrozenConditionEvidenceV1,
     research_concentration: ConditionTemporalConcentrationV1,

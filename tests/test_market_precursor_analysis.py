@@ -8,7 +8,11 @@ import pytest
 from app.research.market_precursor import analysis
 from app.research.market_precursor.analysis import (
     DISCOVERY_CONDITION_CATALOGUE_IDENTITY,
+    NO_VALIDATED_PRECURSOR_FOUND_V1,
+    STRONG_VALIDATION_ABSOLUTE_LIFT_THRESHOLD_V1,
+    STRONG_VALIDATION_RETENTION_THRESHOLD_V1,
     AllOfConditionV1,
+    CandidateAssessmentReasonV1,
     ConditionalEffectV1,
     ConditionTemporalConcentrationV1,
     DiscoveryConditionIdentityV1,
@@ -24,10 +28,13 @@ from app.research.market_precursor.analysis import (
     FrozenFeatureQuantilesV1,
     FutureLabelV1,
     PairedFrozenConditionEvidenceV1,
+    PrecursorCandidateClassificationV1,
+    PrecursorRankingCategoryV1,
     QuantileBucketV1,
     QuantileConditionSpecV1,
     QuantileFeatureConditionV1,
     SampleClassV1,
+    assess_precursor_candidate,
     baseline,
     bind_discovery_condition_template,
     bucket_for_role,
@@ -39,6 +46,8 @@ from app.research.market_precursor.analysis import (
     evaluate_frozen_condition_pair,
     evaluate_frozen_condition_stability,
     fit_feature_research_quantiles,
+    no_validated_precursor_found,
+    rank_precursor_candidates,
 )
 
 
@@ -833,3 +842,232 @@ def test_negative_lift_retention_uses_magnitudes_and_zero_research_is_none():
         _concentration(250),
     )
     assert zero.validation_lift_retention_ratio is None
+
+
+def _assessment(
+    identity=DiscoveryConditionIdentityV1.JOINT_POSITIVE_RELATIVE_MOMENTUM,
+    direction=EventDirectionV1.UP,
+    research_lift=Decimal("0.04"),
+    validation_lift=Decimal("0.02"),
+    research_count=250,
+    validation_count=250,
+    research_cluster=False,
+    validation_cluster=False,
+):
+    paired = _paired_stability(research_lift, validation_lift, research_count, validation_count)
+    event = EventDefinitionV1(15, 100, direction)
+    research = replace(paired.feature_research, condition_identity=identity, event_definition=event)
+    validation = replace(paired.validation, condition_identity=identity, event_definition=event)
+    paired = PairedFrozenConditionEvidenceV1(
+        identity, paired.frozen_condition, event, research, validation
+    )
+    research_concentration = _concentration(research_count, research_cluster)
+    validation_concentration = _concentration(validation_count, validation_cluster)
+    stability = evaluate_frozen_condition_stability(
+        paired, research_concentration, validation_concentration
+    )
+    return assess_precursor_candidate(
+        paired, stability, research_concentration, validation_concentration
+    )
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "classification", "reason"),
+    (
+        (
+            {"research_lift": None, "research_count": 0},
+            PrecursorCandidateClassificationV1.NO_EFFECT,
+            CandidateAssessmentReasonV1.RESEARCH_LIFT_UNAVAILABLE,
+        ),
+        (
+            {"research_lift": Decimal(0)},
+            PrecursorCandidateClassificationV1.NO_EFFECT,
+            CandidateAssessmentReasonV1.RESEARCH_LIFT_ZERO,
+        ),
+        (
+            {"research_count": 249},
+            PrecursorCandidateClassificationV1.NO_EFFECT,
+            CandidateAssessmentReasonV1.RESEARCH_SAMPLE_NOT_INFORMATIVE,
+        ),
+        (
+            {"validation_count": 249},
+            PrecursorCandidateClassificationV1.RESEARCH_ONLY,
+            CandidateAssessmentReasonV1.VALIDATION_SAMPLE_NOT_INFORMATIVE,
+        ),
+        (
+            {"validation_lift": Decimal("-0.02")},
+            PrecursorCandidateClassificationV1.RESEARCH_ONLY,
+            CandidateAssessmentReasonV1.LIFT_DIRECTION_MISMATCH,
+        ),
+        (
+            {"validation_lift": Decimal(0)},
+            PrecursorCandidateClassificationV1.RESEARCH_ONLY,
+            CandidateAssessmentReasonV1.VALIDATION_LIFT_ZERO,
+        ),
+        (
+            {"validation_cluster": True},
+            PrecursorCandidateClassificationV1.RESEARCH_ONLY,
+            CandidateAssessmentReasonV1.CLUSTER_CONCENTRATED,
+        ),
+    ),
+)
+def test_candidate_classification_fail_closed_cases(kwargs, classification, reason):
+    assessment = _assessment(**kwargs)
+    assert assessment.classification is classification
+    assert reason in assessment.reasons
+
+
+def test_supported_and_strong_classification_threshold_boundaries_are_frozen():
+    assert STRONG_VALIDATION_ABSOLUTE_LIFT_THRESHOLD_V1 == Decimal("0.02")
+    assert STRONG_VALIDATION_RETENTION_THRESHOLD_V1 == Decimal("0.50")
+    exact = _assessment(research_lift=Decimal("0.04"), validation_lift=Decimal("0.02"))
+    assert exact.classification is PrecursorCandidateClassificationV1.STRONG_VALIDATION_CANDIDATE
+    assert CandidateAssessmentReasonV1.STRONG_LIFT_THRESHOLD_MET in exact.reasons
+    assert CandidateAssessmentReasonV1.RETENTION_THRESHOLD_MET in exact.reasons
+    below_lift = _assessment(research_lift=Decimal("0.038"), validation_lift=Decimal("0.019"))
+    assert below_lift.classification is PrecursorCandidateClassificationV1.VALIDATION_SUPPORTED
+    below_retention = _assessment(research_lift=Decimal("0.041"), validation_lift=Decimal("0.02"))
+    assert below_retention.classification is PrecursorCandidateClassificationV1.VALIDATION_SUPPORTED
+    downside = _assessment(
+        direction=EventDirectionV1.DOWN,
+        research_lift=Decimal("-0.04"),
+        validation_lift=Decimal("-0.02"),
+    )
+    assert downside.classification is PrecursorCandidateClassificationV1.STRONG_VALIDATION_CANDIDATE
+
+
+def test_ranking_categories_eligibility_strength_and_top_n_are_deterministic():
+    strong = _assessment()
+    supported = _assessment(research_lift=Decimal("0.25"), validation_lift=Decimal("0.10"))
+    research_only = _assessment(validation_count=249)
+    no_effect = _assessment(research_lift=Decimal(0))
+    downside = _assessment(direction=EventDirectionV1.DOWN)
+    volatility = _assessment(direction=EventDirectionV1.ABS)
+    assert strong.ranking_category is PrecursorRankingCategoryV1.UPSIDE_PRECURSORS
+    assert downside.ranking_category is PrecursorRankingCategoryV1.DOWNSIDE_PRECURSORS
+    assert volatility.ranking_category is PrecursorRankingCategoryV1.VOLATILITY_PRECURSORS
+    assessments = (supported, research_only, no_effect, strong, downside, volatility)
+    ranked = rank_precursor_candidates(
+        assessments, PrecursorRankingCategoryV1.UPSIDE_PRECURSORS, limit=1
+    )
+    assert ranked == (strong,)
+    assert ranked == rank_precursor_candidates(
+        assessments, PrecursorRankingCategoryV1.UPSIDE_PRECURSORS, limit=1
+    )
+    with pytest.raises(ValueError, match="ranking limit is invalid"):
+        rank_precursor_candidates(
+            assessments, PrecursorRankingCategoryV1.UPSIDE_PRECURSORS, limit=0
+        )
+
+
+def _replace_validation_effect(assessment, **changes):
+    validation = assessment.paired_evidence.validation
+    effect = replace(validation.conditional_effect_result, **changes)
+    validation = replace(validation, conditional_effect_result=effect)
+    paired = replace(assessment.paired_evidence, validation=validation)
+    return replace(assessment, paired_evidence=paired)
+
+
+def test_ranking_numeric_and_identity_tie_breaks_are_exact():
+    low_lift = _assessment(
+        DiscoveryConditionIdentityV1.ETH_MOMENTUM_WITH_PARTICIPATION,
+        research_lift=Decimal("0.04"),
+        validation_lift=Decimal("0.02"),
+    )
+    high_lift = _assessment(
+        DiscoveryConditionIdentityV1.SOL_MOMENTUM_WITH_PARTICIPATION,
+        research_lift=Decimal("0.05"),
+        validation_lift=Decimal("0.03"),
+    )
+    assert (
+        rank_precursor_candidates(
+            (low_lift, high_lift), PrecursorRankingCategoryV1.UPSIDE_PRECURSORS
+        )[0]
+        is high_lift
+    )
+    lower_relative = _replace_validation_effect(low_lift, relative_lift=Decimal("1.1"))
+    higher_relative = _replace_validation_effect(
+        _assessment(DiscoveryConditionIdentityV1.SOL_MOMENTUM_WITH_PARTICIPATION),
+        relative_lift=Decimal("1.2"),
+    )
+    assert (
+        rank_precursor_candidates(
+            (lower_relative, higher_relative), PrecursorRankingCategoryV1.UPSIDE_PRECURSORS
+        )[0]
+        is higher_relative
+    )
+    lower_n = _replace_validation_effect(low_lift, occurrence_count=250)
+    higher_n = _replace_validation_effect(
+        _assessment(DiscoveryConditionIdentityV1.SOL_MOMENTUM_WITH_PARTICIPATION),
+        occurrence_count=300,
+    )
+    assert (
+        rank_precursor_candidates(
+            (lower_n, higher_n), PrecursorRankingCategoryV1.UPSIDE_PRECURSORS
+        )[0]
+        is higher_n
+    )
+    lower_retention = _assessment(
+        DiscoveryConditionIdentityV1.ETH_MOMENTUM_WITH_PARTICIPATION,
+        research_lift=Decimal("0.04"),
+        validation_lift=Decimal("0.02"),
+    )
+    higher_retention = _assessment(
+        DiscoveryConditionIdentityV1.SOL_MOMENTUM_WITH_PARTICIPATION,
+        research_lift=Decimal("0.025"),
+        validation_lift=Decimal("0.02"),
+    )
+    assert (
+        rank_precursor_candidates(
+            (lower_retention, higher_retention), PrecursorRankingCategoryV1.UPSIDE_PRECURSORS
+        )[0]
+        is higher_retention
+    )
+
+
+def test_ranking_dispersion_then_identity_tie_breaks():
+    first = _assessment(DiscoveryConditionIdentityV1.ETH_MOMENTUM_WITH_PARTICIPATION)
+    second = _assessment(DiscoveryConditionIdentityV1.SOL_MOMENTUM_WITH_PARTICIPATION)
+    better_day = replace(
+        second,
+        validation_concentration=replace(
+            second.validation_concentration, largest_day_share=Decimal("0.001")
+        ),
+    )
+    assert (
+        rank_precursor_candidates(
+            (first, better_day), PrecursorRankingCategoryV1.UPSIDE_PRECURSORS
+        )[0]
+        is better_day
+    )
+    better_week = replace(
+        second,
+        validation_concentration=replace(
+            second.validation_concentration,
+            largest_day_share=first.validation_concentration.largest_day_share,
+            largest_week_share=Decimal("0.001"),
+        ),
+    )
+    assert (
+        rank_precursor_candidates(
+            (first, better_week), PrecursorRankingCategoryV1.UPSIDE_PRECURSORS
+        )[0]
+        is better_week
+    )
+    assert (
+        rank_precursor_candidates((second, first), PrecursorRankingCategoryV1.UPSIDE_PRECURSORS)[
+            0
+        ].condition_identity
+        is DiscoveryConditionIdentityV1.ETH_MOMENTUM_WITH_PARTICIPATION
+    )
+
+
+def test_no_validated_precursor_helper_uses_supported_classes_only():
+    assert NO_VALIDATED_PRECURSOR_FOUND_V1 == "NO_VALIDATED_PRECURSOR_FOUND_V1"
+    assert no_validated_precursor_found(
+        (_assessment(research_lift=Decimal(0)), _assessment(validation_count=249))
+    )
+    assert not no_validated_precursor_found(
+        (_assessment(research_lift=Decimal("0.038"), validation_lift=Decimal("0.019")),)
+    )
+    assert not no_validated_precursor_found((_assessment(),))
