@@ -57,6 +57,18 @@ from .context import (
     validate_context_authority,
     validate_materialized_context_dataset,
 )
+from .context_v2 import (
+    BOOLEAN_CONTEXT_FEATURES_V2,
+    CONTEXT_FEATURE_CONTRACT_IDENTITY_V2,
+    CONTEXT_FEATURE_DATASET_IDENTITY_V2,
+    NUMERIC_CONTEXT_FEATURES_V2,
+    MarketPrecursorContextBuilderV2,
+    MarketPrecursorContextFeatureConfigV2,
+    MarketPrecursorContextManifestV2,
+    MarketPrecursorContextRowV2,
+    iter_materialized_context_rows_v2,
+    validate_materialized_context_dataset_v2,
+)
 from .models import (
     CONTEXT_FEATURE_CONTRACT_IDENTITY,
     CONTEXT_FEATURE_DATASET_IDENTITY,
@@ -87,15 +99,19 @@ from .report import (
 )
 
 __all__ = [
+    "BOOLEAN_CONTEXT_FEATURES_V2",
     "CLASSIFICATION_POLICY_IDENTITY_V1",
     "CONCENTRATION_POLICY_IDENTITY_V1",
     "CONTEXT_FEATURE_CONTRACT_IDENTITY",
+    "CONTEXT_FEATURE_CONTRACT_IDENTITY_V2",
     "CONTEXT_FEATURE_DATASET_IDENTITY",
+    "CONTEXT_FEATURE_DATASET_IDENTITY_V2",
     "DISCOVERY_CONDITION_CATALOGUE_IDENTITY",
     "FEATURE_CONTRACT_IDENTITY",
     "LABEL_CONTRACT_IDENTITY",
     "MARKET_PRECURSOR_DATASET_IDENTITY",
     "NO_VALIDATED_PRECURSOR_FOUND_V1",
+    "NUMERIC_CONTEXT_FEATURES_V2",
     "PRECURSOR_DISCOVERY_REPORT_IDENTITY",
     "PRIMARY_DISCOVERY_HORIZONS_V1",
     "QUANTILE_POLICY_IDENTITY_V1",
@@ -129,6 +145,10 @@ __all__ = [
     "FutureLabelV1",
     "MarketPrecursorBuilderV1",
     "MarketPrecursorContextBuilderV1",
+    "MarketPrecursorContextBuilderV2",
+    "MarketPrecursorContextFeatureConfigV2",
+    "MarketPrecursorContextManifestV2",
+    "MarketPrecursorContextRowV2",
     "MarketPrecursorDatasetV1",
     "MarketPrecursorFeatureConfigV1",
     "MultiHorizonFrozenConditionObservationV1",
@@ -156,6 +176,7 @@ __all__ = [
     "execute_precursor_discovery_v1",
     "fit_feature_research_quantiles",
     "iter_materialized_context_rows",
+    "iter_materialized_context_rows_v2",
     "iter_materialized_rows",
     "no_validated_precursor_found",
     "precursor_discovery_report_payload",
@@ -164,6 +185,7 @@ __all__ = [
     "rank_precursor_candidates",
     "validate_context_authority",
     "validate_materialized_context_dataset",
+    "validate_materialized_context_dataset_v2",
     "validate_materialized_dataset",
     "write_precursor_discovery_report",
 ]

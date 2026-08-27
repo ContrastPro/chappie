@@ -1,19 +1,27 @@
 import hashlib
 import json
 from decimal import Decimal
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
 
 from app.market.models import Candle
 from app.research.market_precursor import (
+    BOOLEAN_CONTEXT_FEATURES_V2,
     CONTEXT_FEATURE_CONTRACT_IDENTITY,
+    CONTEXT_FEATURE_CONTRACT_IDENTITY_V2,
     MARKET_PRECURSOR_DATASET_IDENTITY,
+    NUMERIC_CONTEXT_FEATURES_V2,
+    EqualityFeatureConditionV1,
     MarketPrecursorBuilderV1,
     MarketPrecursorContextBuilderV1,
+    MarketPrecursorContextBuilderV2,
+    iter_materialized_context_rows_v2,
     iter_materialized_rows,
     validate_context_authority,
     validate_materialized_context_dataset,
+    validate_materialized_context_dataset_v2,
     validate_materialized_dataset,
 )
 from app.research.market_precursor.context import _features
@@ -435,3 +443,126 @@ def test_context_streaming_validator_rejects_corrupted_row(monkeypatch, tmp_path
     rows_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     with pytest.raises(ValueError):
         validate_materialized_context_dataset(rows_path, expected_authority_digest=authority_digest)
+
+
+def _materialized_context_v2(monkeypatch, tmp_path):
+    monkeypatch.setattr("app.research.market_precursor.context.EXPECTED_COMMON_TIMESTAMPS", 80)
+    btc_a, btc_b, eth, sol, authority_path, authority_digest = _context_sources(tmp_path)
+    rows_path = tmp_path / "context.v2.ndjson"
+    manifest = MarketPrecursorContextBuilderV2(authority_digest).materialize(
+        authority_path, btc_a, btc_b, eth, sol, rows_path
+    )
+    return rows_path, manifest, authority_digest, (btc_a, btc_b, eth, sol, authority_path)
+
+
+def test_typed_context_v2_round_trip_and_v1_numeric_equivalence(monkeypatch, tmp_path):
+    rows_path, manifest, authority_digest, sources = _materialized_context_v2(monkeypatch, tmp_path)
+    validated = validate_materialized_context_dataset_v2(
+        rows_path, expected_authority_digest=authority_digest
+    )
+    rows = tuple(iter_materialized_context_rows_v2(rows_path))
+    assert validated == manifest
+    assert manifest.row_count == 20
+    assert manifest.drop_counts == {"INSUFFICIENT_CONTEXT_FEATURE_HISTORY": 60}
+    assert all(set(row.numeric_features) == NUMERIC_CONTEXT_FEATURES_V2 for row in rows)
+    assert all(set(row.boolean_features) == BOOLEAN_CONTEXT_FEATURES_V2 for row in rows)
+    assert all(type(value) is Decimal for row in rows for value in row.numeric_features.values())
+    assert all(type(value) is bool for row in rows for value in row.boolean_features.values())
+
+    payload = json.loads(rows_path.read_text(encoding="utf-8").splitlines()[0])
+    assert all(type(value) is bool for value in payload["boolean_features"].values())
+    assert all(type(value) is str for value in payload["numeric_features"].values())
+    assert payload["feature_contract_identity"] == CONTEXT_FEATURE_CONTRACT_IDENTITY_V2
+
+    btc_a, btc_b, eth, sol, authority_path = sources
+    v1_rows = tuple(
+        MarketPrecursorContextBuilderV1(authority_digest).iter_rows(
+            authority_path, btc_a, btc_b, eth, sol
+        )
+    )
+    assert [row.numeric_features for row in rows] == [
+        {key: value for key, value in row.features.items() if key in NUMERIC_CONTEXT_FEATURES_V2}
+        for row in v1_rows
+    ]
+
+
+def test_typed_context_v2_boolean_semantics_match_frozen_equality(monkeypatch, tmp_path):
+    rows_path, _manifest, _authority_digest, _sources = _materialized_context_v2(
+        monkeypatch, tmp_path
+    )
+    rows = tuple(iter_materialized_context_rows_v2(rows_path))
+    condition = EqualityFeatureConditionV1("cross_market.all_three_direction_agreement", True)
+    for row in rows:
+        value = row.boolean_features["cross_market.all_three_direction_agreement"]
+        assert condition.matches("cross_market.all_three_direction_agreement", value) is value
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("boolean_features", {"cross_market.all_three_direction_agreement": 1}),
+        ("numeric_features", {"eth.return_5m": True}),
+        ("boolean_features", {"cross_market.all_three_direction_agreement": "true"}),
+        ("numeric_features", {"eth.return_5m": "NaN"}),
+    ],
+)
+def test_typed_context_v2_rejects_malformed_feature_types(monkeypatch, tmp_path, field, value):
+    rows_path, _manifest, authority_digest, _sources = _materialized_context_v2(
+        monkeypatch, tmp_path
+    )
+    lines = rows_path.read_text(encoding="utf-8").splitlines()
+    row = json.loads(lines[0])
+    row[field].update(value)
+    lines[0] = json.dumps(row, sort_keys=True, separators=(",", ":"))
+    rows_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="typed context dataset validation failed"):
+        validate_materialized_context_dataset_v2(
+            rows_path, expected_authority_digest=authority_digest
+        )
+
+
+def test_typed_context_v2_is_deterministic_ordered_and_create_only(monkeypatch, tmp_path):
+    rows_path, first, authority_digest, sources = _materialized_context_v2(monkeypatch, tmp_path)
+    btc_a, btc_b, eth, sol, authority_path = sources
+    second_path = tmp_path / "context-copy.v2.ndjson"
+    second = MarketPrecursorContextBuilderV2(authority_digest).materialize(
+        authority_path, btc_a, btc_b, eth, sol, second_path
+    )
+    assert first.dataset_digest == second.dataset_digest
+    first_rows = tuple(iter_materialized_context_rows_v2(rows_path))
+    second_rows = tuple(iter_materialized_context_rows_v2(second_path))
+    assert first_rows == second_rows
+    assert all(
+        previous.close_time_ms < current.close_time_ms for previous, current in pairwise(first_rows)
+    )
+    with pytest.raises(FileExistsError, match="not clean"):
+        MarketPrecursorContextBuilderV2(authority_digest).materialize(
+            authority_path, btc_a, btc_b, eth, sol, rows_path
+        )
+
+
+def test_typed_context_v2_validator_rejects_order_and_manifest_tampering(monkeypatch, tmp_path):
+    rows_path, _manifest, authority_digest, _sources = _materialized_context_v2(
+        monkeypatch, tmp_path
+    )
+    lines = rows_path.read_text(encoding="utf-8").splitlines()
+    lines[0], lines[1] = lines[1], lines[0]
+    rows_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError):
+        validate_materialized_context_dataset_v2(
+            rows_path, expected_authority_digest=authority_digest
+        )
+
+    manifest_case = tmp_path / "manifest-case"
+    manifest_case.mkdir()
+    rows_path, _manifest, authority_digest, _sources = _materialized_context_v2(
+        monkeypatch, manifest_case
+    )
+    manifest_path = rows_path.with_suffix(rows_path.suffix + ".manifest.json")
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["eth_source_digest"] = "0" * 64
+    manifest_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+    with pytest.raises(ValueError):
+        validate_materialized_context_dataset_v2(
+            rows_path, expected_authority_digest=authority_digest
+        )
