@@ -811,16 +811,20 @@
       "declared_paths": [
         "app/research/capital_flow"
       ],
-      "discovered_file_count": 6,
+      "discovered_file_count": 8,
       "discovered_modules": [
         "app.research.capital_flow",
         "app.research.capital_flow.alignment",
+        "app.research.capital_flow.calendar",
         "app.research.capital_flow.catalogue",
         "app.research.capital_flow.contracts",
+        "app.research.capital_flow.free_source_validation",
         "app.research.capital_flow.free_v1",
         "app.research.capital_flow.providers"
       ],
-      "external_import_roots": [],
+      "external_import_roots": [
+        "exchange_calendars"
+      ],
       "id": "capital_flow_context",
       "internal_dependency_targets": [
         "ai_model_layer"
