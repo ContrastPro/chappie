@@ -56,7 +56,7 @@ workspace "Chappie Architecture Map V1" "Authoritative C4 model for the current 
                 intelligence = component "Research Intelligence" "Offline market, flow, event, behavioral, and macro experiments." "app.research.intelligence" "Experimental,Research"
             }
 
-            capitalFlow = container "Capital Flow & Global Risk Context" "Offline provider contracts, metadata, causal availability, and future capital/global-context sidecar; never runtime or execution authority." "Python" "Partial,Research,Data"
+            capitalFlow = container "Global Risk & Capital Rotation Context" "Offline free-first provider contracts, metadata, causal availability, and future context sidecar; never runtime or execution authority." "Python" "Partial,Research,Data"
             derivatives = container "Derivatives Context" "Future offline OI, funding, liquidation, and basis context owned by Research." "Planned" "Planned,Research"
             orderFlow = container "Order Flow / LOB" "Future offline trade and order-book context owned by Research." "Planned" "Planned,Research"
             newsContext = container "News / Event Context" "Future authoritative offline news/event context owned by Research." "Planned" "Planned,Research"
