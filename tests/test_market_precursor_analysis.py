@@ -6,10 +6,12 @@ from app.research.market_precursor.analysis import (
     EventDefinitionV1,
     EventDirectionV1,
     FutureLabelV1,
+    QuantileBucketV1,
     SampleClassV1,
     baseline,
     classify_sample,
     conditional_effect,
+    fit_feature_research_quantiles,
 )
 
 
@@ -84,3 +86,32 @@ def test_decimal_medians_are_exact_for_odd_even_and_mixed_values():
     assert effect.median_future_return == Decimal("0.00")
     assert effect.median_favorable_excursion == Decimal("0.025")
     assert effect.median_adverse_excursion == Decimal("-0.025")
+
+
+def test_feature_research_quantiles_are_decimal_frozen_and_deterministic():
+    values = tuple(Decimal(value) for value in range(10))
+    fitted = fit_feature_research_quantiles("feature", values)
+    assert tuple(QuantileBucketV1) == (
+        QuantileBucketV1.BOTTOM_10,
+        QuantileBucketV1.BOTTOM_25,
+        QuantileBucketV1.MIDDLE_50,
+        QuantileBucketV1.TOP_25,
+        QuantileBucketV1.TOP_10,
+    )
+    assert (fitted.p10, fitted.p25, fitted.p75, fitted.p90, fitted.sample_count) == (
+        Decimal("0.9"),
+        Decimal("2.25"),
+        Decimal("6.75"),
+        Decimal("8.1"),
+        10,
+    )
+    assert fitted == fit_feature_research_quantiles("feature", values)
+    with pytest.raises(ValueError):
+        fit_feature_research_quantiles("feature", ())
+    with pytest.raises(ValueError):
+        fit_feature_research_quantiles("feature", (Decimal("NaN"),))
+    for invalid in (Decimal("Infinity"), Decimal("-Infinity")):
+        with pytest.raises(ValueError):
+            fit_feature_research_quantiles("feature", (invalid,))
+    identical = fit_feature_research_quantiles("same", (Decimal(2),) * 4)
+    assert identical.p10 == identical.p25 == identical.p75 == identical.p90 == Decimal(2)

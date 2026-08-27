@@ -19,6 +19,53 @@ class SampleClassV1(StrEnum):
     INFORMATIVE_SAMPLE = "INFORMATIVE_SAMPLE"
 
 
+class QuantileBucketV1(StrEnum):
+    BOTTOM_10 = "BOTTOM_10"
+    BOTTOM_25 = "BOTTOM_25"
+    MIDDLE_50 = "MIDDLE_50"
+    TOP_25 = "TOP_25"
+    TOP_10 = "TOP_10"
+
+
+@dataclass(frozen=True, slots=True)
+class FrozenFeatureQuantilesV1:
+    feature_name: str
+    p10: Decimal
+    p25: Decimal
+    p75: Decimal
+    p90: Decimal
+    sample_count: int
+
+
+def _percentile(values: tuple[Decimal, ...], numerator: int) -> Decimal:
+    # Linear interpolation on the inclusive [0, n - 1] rank interval.
+    rank = Decimal(numerator) * Decimal(len(values) - 1) / Decimal(100)
+    lower = int(rank)
+    upper = min(lower + 1, len(values) - 1)
+    return values[lower] + (values[upper] - values[lower]) * (rank - lower)
+
+
+def fit_feature_research_quantiles(
+    feature_name: str, feature_research_values: Iterable[Decimal]
+) -> FrozenFeatureQuantilesV1:
+    if not feature_name:
+        raise ValueError("feature name is required")
+    values = tuple(feature_research_values)
+    if not values or any(
+        not isinstance(value, Decimal) or not value.is_finite() for value in values
+    ):
+        raise ValueError("feature research values are invalid")
+    ordered = tuple(sorted(values))
+    return FrozenFeatureQuantilesV1(
+        feature_name,
+        _percentile(ordered, 10),
+        _percentile(ordered, 25),
+        _percentile(ordered, 75),
+        _percentile(ordered, 90),
+        len(ordered),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class FutureLabelV1:
     timestamp_ms: int
