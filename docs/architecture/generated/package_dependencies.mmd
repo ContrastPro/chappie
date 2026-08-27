@@ -3,6 +3,7 @@ flowchart LR
     ai_model_layer["AI / Model Layer"]
     attribution["Attribution"]
     binance_infrastructure["Binance Infrastructure"]
+    capital_flow_context["Capital Flow & Global Risk Context"]
     cli_tools["CLI / Tools"]
     control_plane["Control Plane"]
     coordination["Decision Coordination"]
@@ -35,6 +36,7 @@ flowchart LR
     attribution --> persistence
     binance_infrastructure --> exchange_execution
     binance_infrastructure --> market
+    capital_flow_context --> ai_model_layer
     cli_tools --> ai_model_layer
     cli_tools --> binance_infrastructure
     cli_tools --> control_plane

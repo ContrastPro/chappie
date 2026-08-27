@@ -808,15 +808,25 @@
       "status": "HISTORICAL"
     },
     {
-      "declared_paths": [],
-      "discovered_file_count": 0,
-      "discovered_modules": [],
+      "declared_paths": [
+        "app/research/capital_flow"
+      ],
+      "discovered_file_count": 5,
+      "discovered_modules": [
+        "app.research.capital_flow",
+        "app.research.capital_flow.alignment",
+        "app.research.capital_flow.catalogue",
+        "app.research.capital_flow.contracts",
+        "app.research.capital_flow.providers"
+      ],
       "external_import_roots": [],
       "id": "capital_flow_context",
-      "internal_dependency_targets": [],
+      "internal_dependency_targets": [
+        "ai_model_layer"
+      ],
       "name": "Capital Flow & Global Risk Context",
       "owner": "Research Platform",
-      "status": "PLANNED"
+      "status": "PARTIAL"
     },
     {
       "declared_paths": [],

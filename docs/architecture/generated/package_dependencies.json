@@ -33,6 +33,10 @@
       "target": "market"
     },
     {
+      "source": "capital_flow_context",
+      "target": "ai_model_layer"
+    },
+    {
       "source": "cli_tools",
       "target": "ai_model_layer"
     },
