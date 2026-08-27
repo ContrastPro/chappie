@@ -1,4 +1,5 @@
 from dataclasses import FrozenInstanceError, replace
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from inspect import signature
 
@@ -8,14 +9,18 @@ from app.research.market_precursor import analysis
 from app.research.market_precursor.analysis import (
     DISCOVERY_CONDITION_CATALOGUE_IDENTITY,
     AllOfConditionV1,
+    ConditionalEffectV1,
+    ConditionTemporalConcentrationV1,
     DiscoveryConditionIdentityV1,
     DiscoveryConditionTemplateV1,
     DiscoverySemanticRoleV1,
     EqualityConditionSpecV1,
     EqualityFeatureConditionV1,
+    EventBaselineV1,
     EventDefinitionV1,
     EventDirectionV1,
     FrozenConditionObservationV1,
+    FrozenConditionSplitEvidenceV1,
     FrozenFeatureQuantilesV1,
     FutureLabelV1,
     PairedFrozenConditionEvidenceV1,
@@ -26,11 +31,13 @@ from app.research.market_precursor.analysis import (
     baseline,
     bind_discovery_condition_template,
     bucket_for_role,
+    calculate_condition_temporal_concentration,
     classify_sample,
     conditional_effect,
     discovery_condition_catalogue_v1,
     evaluate_frozen_condition_on_split,
     evaluate_frozen_condition_pair,
+    evaluate_frozen_condition_stability,
     fit_feature_research_quantiles,
 )
 
@@ -591,3 +598,238 @@ def test_observation_copies_feature_mapping_and_is_immutable():
         observation.features["level"] = Decimal(0)
     with pytest.raises(FrozenInstanceError):
         observation.timestamp_ms = 2
+
+
+def _temporal_observations(day_counts: tuple[tuple[str, int], ...]):
+    observations = []
+    for day, count in day_counts:
+        start = datetime.fromisoformat(day).replace(tzinfo=UTC)
+        observations.extend(
+            FrozenConditionObservationV1(
+                int((start + timedelta(seconds=index)).timestamp() * 1000),
+                {"level": Decimal(80)},
+                Decimal(0),
+                Decimal(0),
+                Decimal(0),
+            )
+            for index in range(count)
+        )
+    return tuple(sorted(observations, key=lambda item: item.timestamp_ms))
+
+
+def test_temporal_concentration_spread_day_thresholds_and_determinism():
+    condition = AllOfConditionV1((_top_condition(),))
+    spread = _temporal_observations(tuple((f"2025-01-{day:02d}", 10) for day in range(1, 11)))
+    evidence = calculate_condition_temporal_concentration(spread, condition)
+    assert evidence == calculate_condition_temporal_concentration(spread, condition)
+    assert (evidence.occurrence_count, evidence.distinct_day_count) == (100, 10)
+    assert evidence.largest_day_share == Decimal("0.1")
+    assert not evidence.cluster_concentrated
+    exact = calculate_condition_temporal_concentration(
+        _temporal_observations(
+            (("2025-01-01", 25), ("2025-01-02", 25), ("2025-01-08", 25), ("2025-01-09", 25))
+        ),
+        condition,
+    )
+    assert exact.largest_day_share == Decimal("0.25")
+    assert not exact.cluster_concentrated
+    above = calculate_condition_temporal_concentration(
+        _temporal_observations(
+            (("2025-01-01", 26), ("2025-01-02", 24), ("2025-01-08", 25), ("2025-01-09", 25))
+        ),
+        condition,
+    )
+    assert above.largest_day_share == Decimal("0.26")
+    assert above.cluster_concentrated
+
+
+def test_temporal_concentration_week_thresholds_use_iso_year_week():
+    condition = AllOfConditionV1((_top_condition(),))
+    exact = calculate_condition_temporal_concentration(
+        _temporal_observations(
+            (
+                ("2025-01-06", 20),
+                ("2025-01-07", 20),
+                ("2025-01-08", 20),
+                ("2025-01-13", 20),
+                ("2025-01-14", 20),
+            )
+        ),
+        condition,
+    )
+    assert (exact.distinct_week_count, exact.largest_week_share) == (2, Decimal("0.6"))
+    assert not exact.cluster_concentrated
+    above = calculate_condition_temporal_concentration(
+        _temporal_observations(
+            (
+                ("2025-01-06", 21),
+                ("2025-01-07", 20),
+                ("2025-01-08", 20),
+                ("2025-01-13", 20),
+                ("2025-01-14", 19),
+            )
+        ),
+        condition,
+    )
+    assert above.largest_week_share == Decimal("0.61")
+    assert above.cluster_concentrated
+    boundary = calculate_condition_temporal_concentration(
+        _temporal_observations((("2024-12-30", 50), ("2025-01-01", 50))), condition
+    )
+    assert boundary.distinct_week_count == 1
+
+
+def test_temporal_concentration_zero_small_sample_utc_days_and_occurrences_only():
+    condition = AllOfConditionV1((_top_condition(),))
+    zero = calculate_condition_temporal_concentration(
+        (
+            FrozenConditionObservationV1(
+                0, {"level": Decimal(0)}, Decimal(1), Decimal(1), Decimal(1)
+            ),
+        ),
+        condition,
+    )
+    assert zero == ConditionTemporalConcentrationV1(0, 0, 0, None, 0, 0, None, False)
+    small = calculate_condition_temporal_concentration(
+        _temporal_observations((("2025-01-01", 99),)), condition
+    )
+    assert small.largest_day_share == Decimal(1)
+    assert not small.cluster_concentrated
+    one_day = calculate_condition_temporal_concentration(
+        _temporal_observations((("2025-01-01", 100),)), condition
+    )
+    assert one_day.cluster_concentrated
+    utc_boundary = calculate_condition_temporal_concentration(
+        _temporal_observations((("2025-01-01T23:59:00", 1), ("2025-01-02T00:00:00", 1))),
+        condition,
+    )
+    assert utc_boundary.distinct_day_count == 2
+    duplicate = _temporal_observations((("2025-01-01", 1),))
+    with pytest.raises(ValueError, match="strictly increasing"):
+        calculate_condition_temporal_concentration((*duplicate, *duplicate), condition)
+    with pytest.raises(ValueError, match="strictly increasing"):
+        calculate_condition_temporal_concentration(
+            (_observation(2, "80", "0"), _observation(1, "80", "0")), condition
+        )
+    missing = FrozenConditionObservationV1(1, {}, Decimal(0), Decimal(0), Decimal(0))
+    with pytest.raises(ValueError, match="required feature is missing"):
+        calculate_condition_temporal_concentration((missing,), condition)
+    invalid = FrozenConditionObservationV1(
+        1, {"level": Decimal("NaN")}, Decimal(0), Decimal(0), Decimal(0)
+    )
+    with pytest.raises(ValueError, match="finite Decimal"):
+        calculate_condition_temporal_concentration((invalid,), condition)
+
+
+def _effect(count: int, lift: Decimal | None) -> ConditionalEffectV1:
+    probability = None if lift is None else Decimal("0.5") + lift
+    return ConditionalEffectV1(
+        count,
+        0,
+        Decimal("0.5"),
+        probability,
+        lift,
+        None if probability is None else probability / Decimal("0.5"),
+        None if probability is None else Decimal(0),
+        None if probability is None else Decimal(0),
+        None if probability is None else Decimal(0),
+        classify_sample(count),
+    )
+
+
+def _concentration(count: int, concentrated: bool = False) -> ConditionTemporalConcentrationV1:
+    if not count:
+        return ConditionTemporalConcentrationV1(0, 0, 0, None, 0, 0, None, False)
+    largest = count if concentrated else 1
+    share = Decimal(largest) / Decimal(count)
+    return ConditionTemporalConcentrationV1(
+        count, count if not concentrated else 1, largest, share, count, largest, share, concentrated
+    )
+
+
+def _paired_stability(research_lift, validation_lift, research_count=250, validation_count=250):
+    identity = DiscoveryConditionIdentityV1.JOINT_POSITIVE_RELATIVE_MOMENTUM
+    condition = AllOfConditionV1((_top_condition(),))
+    event = EventDefinitionV1(15, 100, EventDirectionV1.UP)
+    research_effect = _effect(research_count, research_lift)
+    validation_effect = _effect(validation_count, validation_lift)
+    research = FrozenConditionSplitEvidenceV1(
+        "FEATURE_RESEARCH",
+        identity,
+        condition,
+        event,
+        EventBaselineV1(research_count, 0, Decimal("0.5")),
+        research_effect,
+    )
+    validation = FrozenConditionSplitEvidenceV1(
+        "VALIDATION",
+        identity,
+        condition,
+        event,
+        EventBaselineV1(validation_count, 0, Decimal("0.5")),
+        validation_effect,
+    )
+    return PairedFrozenConditionEvidenceV1(identity, condition, event, research, validation)
+
+
+@pytest.mark.parametrize(
+    ("research_lift", "validation_lift", "agrees"),
+    (
+        (Decimal("0.2"), Decimal("0.1"), True),
+        (Decimal("-0.2"), Decimal("-0.1"), True),
+        (Decimal("0.2"), Decimal("-0.1"), False),
+        (Decimal("-0.2"), Decimal("0.1"), False),
+        (Decimal(0), Decimal("0.1"), False),
+        (None, None, False),
+    ),
+)
+def test_stability_lift_direction_and_retention(research_lift, validation_lift, agrees):
+    count = 0 if research_lift is None else 250
+    validation_count = 0 if validation_lift is None else 250
+    evidence = evaluate_frozen_condition_stability(
+        _paired_stability(research_lift, validation_lift, count, validation_count),
+        _concentration(count),
+        _concentration(validation_count),
+    )
+    assert evidence.lift_direction_agrees is agrees
+    expected_retention = Decimal("0.5") if agrees else None
+    assert evidence.validation_lift_retention_ratio == expected_retention
+
+
+def test_stability_sample_adequacy_clusters_and_stable_evidence_rule():
+    paired = _paired_stability(Decimal("0.2"), Decimal("0.1"))
+    stable = evaluate_frozen_condition_stability(paired, _concentration(250), _concentration(250))
+    assert stable.validation_sample_adequate
+    assert stable.validation_lift_nonzero
+    assert stable.stable_evidence
+    research_weak = _paired_stability(Decimal("0.2"), Decimal("0.1"), 200, 250)
+    assert not evaluate_frozen_condition_stability(
+        research_weak, _concentration(200), _concentration(250)
+    ).stable_evidence
+    validation_weak = _paired_stability(Decimal("0.2"), Decimal("0.1"), 250, 249)
+    weak = evaluate_frozen_condition_stability(
+        validation_weak, _concentration(250), _concentration(249)
+    )
+    assert not weak.validation_sample_adequate
+    assert not weak.stable_evidence
+    assert not evaluate_frozen_condition_stability(
+        paired, _concentration(250, True), _concentration(250)
+    ).stable_evidence
+    assert not evaluate_frozen_condition_stability(
+        paired, _concentration(250), _concentration(250, True)
+    ).stable_evidence
+
+
+def test_negative_lift_retention_uses_magnitudes_and_zero_research_is_none():
+    negative = evaluate_frozen_condition_stability(
+        _paired_stability(Decimal("-0.4"), Decimal("-0.1")),
+        _concentration(250),
+        _concentration(250),
+    )
+    assert negative.validation_lift_retention_ratio == Decimal("0.25")
+    zero = evaluate_frozen_condition_stability(
+        _paired_stability(Decimal(0), Decimal("0.1")),
+        _concentration(250),
+        _concentration(250),
+    )
+    assert zero.validation_lift_retention_ratio is None

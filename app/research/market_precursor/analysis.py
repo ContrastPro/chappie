@@ -1,7 +1,9 @@
 """Pure, deterministic statistics for already-causal precursor rows."""
 
+from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from enum import StrEnum
 from itertools import pairwise
@@ -530,4 +532,124 @@ def evaluate_frozen_condition_pair(
         event_definition,
         research,
         validation,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class ConditionTemporalConcentrationV1:
+    occurrence_count: int
+    distinct_day_count: int
+    largest_day_occurrence_count: int
+    largest_day_share: Decimal | None
+    distinct_week_count: int
+    largest_week_occurrence_count: int
+    largest_week_share: Decimal | None
+    cluster_concentrated: bool
+
+
+def calculate_condition_temporal_concentration(
+    observations: Iterable[FrozenConditionObservationV1],
+    condition: AllOfConditionV1,
+) -> ConditionTemporalConcentrationV1:
+    items = tuple(observations)
+    timestamps = tuple(item.timestamp_ms for item in items)
+    if any(current <= previous for previous, current in pairwise(timestamps)):
+        raise ValueError("observations must have strictly increasing timestamps")
+    epoch = datetime(1970, 1, 1, tzinfo=UTC)
+    matched_datetimes = tuple(
+        epoch + timedelta(milliseconds=item.timestamp_ms)
+        for item in items
+        if condition.matches(item.features)
+    )
+    occurrence_count = len(matched_datetimes)
+    if not occurrence_count:
+        return ConditionTemporalConcentrationV1(0, 0, 0, None, 0, 0, None, False)
+    day_counts = Counter(item.date() for item in matched_datetimes)
+    week_counts = Counter(
+        (iso_year, iso_week)
+        for item in matched_datetimes
+        for iso_year, iso_week, _ in (item.isocalendar(),)
+    )
+    largest_day_count = max(day_counts.values())
+    largest_week_count = max(week_counts.values())
+    largest_day_share = Decimal(largest_day_count) / Decimal(occurrence_count)
+    largest_week_share = Decimal(largest_week_count) / Decimal(occurrence_count)
+    concentrated = occurrence_count >= 100 and (
+        largest_day_share > Decimal("0.25") or largest_week_share > Decimal("0.60")
+    )
+    return ConditionTemporalConcentrationV1(
+        occurrence_count,
+        len(day_counts),
+        largest_day_count,
+        largest_day_share,
+        len(week_counts),
+        largest_week_count,
+        largest_week_share,
+        concentrated,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class FrozenConditionStabilityEvidenceV1:
+    research_sample_class: SampleClassV1
+    validation_sample_class: SampleClassV1
+    research_absolute_lift: Decimal | None
+    validation_absolute_lift: Decimal | None
+    lift_direction_agrees: bool
+    validation_sample_adequate: bool
+    research_cluster_concentrated: bool
+    validation_cluster_concentrated: bool
+    validation_lift_nonzero: bool
+    validation_lift_retention_ratio: Decimal | None
+    stable_evidence: bool
+
+
+def evaluate_frozen_condition_stability(
+    paired_evidence: PairedFrozenConditionEvidenceV1,
+    research_concentration: ConditionTemporalConcentrationV1,
+    validation_concentration: ConditionTemporalConcentrationV1,
+) -> FrozenConditionStabilityEvidenceV1:
+    research_effect = paired_evidence.feature_research.conditional_effect_result
+    validation_effect = paired_evidence.validation.conditional_effect_result
+    if research_concentration.occurrence_count != research_effect.occurrence_count:
+        raise ValueError("research concentration occurrence count is inconsistent")
+    if validation_concentration.occurrence_count != validation_effect.occurrence_count:
+        raise ValueError("validation concentration occurrence count is inconsistent")
+    research_lift = research_effect.absolute_lift
+    validation_lift = validation_effect.absolute_lift
+    direction_agrees = (
+        research_lift is not None
+        and validation_lift is not None
+        and (
+            (research_lift > 0 and validation_lift > 0)
+            or (research_lift < 0 and validation_lift < 0)
+        )
+    )
+    validation_lift_nonzero = validation_lift is not None and validation_lift != 0
+    retention = (
+        abs(validation_lift) / abs(research_lift)
+        if direction_agrees and research_lift not in (None, Decimal(0))
+        else None
+    )
+    validation_adequate = validation_effect.sample_class is SampleClassV1.INFORMATIVE_SAMPLE
+    stable = (
+        research_effect.sample_class is SampleClassV1.INFORMATIVE_SAMPLE
+        and validation_adequate
+        and direction_agrees
+        and validation_lift_nonzero
+        and not research_concentration.cluster_concentrated
+        and not validation_concentration.cluster_concentrated
+    )
+    return FrozenConditionStabilityEvidenceV1(
+        research_effect.sample_class,
+        validation_effect.sample_class,
+        research_lift,
+        validation_lift,
+        direction_agrees,
+        validation_adequate,
+        research_concentration.cluster_concentrated,
+        validation_concentration.cluster_concentrated,
+        validation_lift_nonzero,
+        retention,
+        stable,
     )
