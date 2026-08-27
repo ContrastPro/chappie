@@ -1,5 +1,16 @@
 """Causal, read-only market precursor research datasets."""
 
+from .analysis import (
+    ConditionalEffectV1,
+    EventBaselineV1,
+    EventDefinitionV1,
+    EventDirectionV1,
+    FutureLabelV1,
+    SampleClassV1,
+    baseline,
+    classify_sample,
+    conditional_effect,
+)
 from .builder import MarketPrecursorBuilderV1, iter_materialized_rows, validate_materialized_dataset
 from .context import (
     MarketPrecursorContextBuilderV1,
@@ -23,10 +34,19 @@ __all__ = [
     "FEATURE_CONTRACT_IDENTITY",
     "LABEL_CONTRACT_IDENTITY",
     "MARKET_PRECURSOR_DATASET_IDENTITY",
+    "ConditionalEffectV1",
+    "EventBaselineV1",
+    "EventDefinitionV1",
+    "EventDirectionV1",
+    "FutureLabelV1",
     "MarketPrecursorBuilderV1",
     "MarketPrecursorContextBuilderV1",
     "MarketPrecursorDatasetV1",
     "MarketPrecursorFeatureConfigV1",
+    "SampleClassV1",
+    "baseline",
+    "classify_sample",
+    "conditional_effect",
     "iter_materialized_context_rows",
     "iter_materialized_rows",
     "validate_context_authority",
