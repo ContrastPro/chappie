@@ -37,6 +37,49 @@ class FrozenFeatureQuantilesV1:
     sample_count: int
 
 
+@dataclass(frozen=True, slots=True)
+class QuantileFeatureConditionV1:
+    """A feature-bound condition using pre-fitted, immutable Decimal thresholds."""
+
+    feature_name: str
+    bucket: QuantileBucketV1
+    frozen_quantiles: FrozenFeatureQuantilesV1
+
+    def __post_init__(self) -> None:
+        if self.feature_name != self.frozen_quantiles.feature_name:
+            raise ValueError("condition feature does not match frozen quantiles")
+
+    def matches(self, feature_name: str, value: Decimal) -> bool:
+        if feature_name != self.feature_name:
+            raise ValueError("evaluation feature does not match condition feature")
+        if not isinstance(value, Decimal) or not value.is_finite():
+            raise ValueError("condition value must be a finite Decimal")
+        if self.bucket is QuantileBucketV1.BOTTOM_10:
+            return value <= self.frozen_quantiles.p10
+        if self.bucket is QuantileBucketV1.BOTTOM_25:
+            return value <= self.frozen_quantiles.p25
+        if self.bucket is QuantileBucketV1.MIDDLE_50:
+            return self.frozen_quantiles.p25 <= value <= self.frozen_quantiles.p75
+        if self.bucket is QuantileBucketV1.TOP_25:
+            return value >= self.frozen_quantiles.p75
+        if self.bucket is QuantileBucketV1.TOP_10:
+            return value >= self.frozen_quantiles.p90
+        return False
+
+
+@dataclass(frozen=True, slots=True)
+class EqualityFeatureConditionV1:
+    """A feature-bound condition using exact value-and-type equality."""
+
+    feature_name: str
+    expected_value: object
+
+    def matches(self, feature_name: str, value: object) -> bool:
+        if feature_name != self.feature_name:
+            raise ValueError("evaluation feature does not match condition feature")
+        return type(value) is type(self.expected_value) and value == self.expected_value
+
+
 def _percentile(values: tuple[Decimal, ...], numerator: int) -> Decimal:
     # Linear interpolation on the inclusive [0, n - 1] rank interval.
     rank = Decimal(numerator) * Decimal(len(values) - 1) / Decimal(100)

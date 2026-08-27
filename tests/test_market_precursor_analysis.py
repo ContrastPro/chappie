@@ -1,12 +1,16 @@
+from dataclasses import FrozenInstanceError
 from decimal import Decimal
 
 import pytest
 
 from app.research.market_precursor.analysis import (
+    EqualityFeatureConditionV1,
     EventDefinitionV1,
     EventDirectionV1,
+    FrozenFeatureQuantilesV1,
     FutureLabelV1,
     QuantileBucketV1,
+    QuantileFeatureConditionV1,
     SampleClassV1,
     baseline,
     classify_sample,
@@ -115,3 +119,85 @@ def test_feature_research_quantiles_are_decimal_frozen_and_deterministic():
             fit_feature_research_quantiles("feature", (invalid,))
     identical = fit_feature_research_quantiles("same", (Decimal(2),) * 4)
     assert identical.p10 == identical.p25 == identical.p75 == identical.p90 == Decimal(2)
+
+
+def _quantiles() -> FrozenFeatureQuantilesV1:
+    return FrozenFeatureQuantilesV1(
+        "feature", Decimal(10), Decimal(25), Decimal(75), Decimal(90), 100
+    )
+
+
+@pytest.mark.parametrize(
+    ("bucket", "value", "expected"),
+    (
+        (QuantileBucketV1.BOTTOM_10, "9", True),
+        (QuantileBucketV1.BOTTOM_10, "10", True),
+        (QuantileBucketV1.BOTTOM_10, "11", False),
+        (QuantileBucketV1.BOTTOM_25, "24", True),
+        (QuantileBucketV1.BOTTOM_25, "25", True),
+        (QuantileBucketV1.BOTTOM_25, "26", False),
+        (QuantileBucketV1.MIDDLE_50, "24", False),
+        (QuantileBucketV1.MIDDLE_50, "25", True),
+        (QuantileBucketV1.MIDDLE_50, "50", True),
+        (QuantileBucketV1.MIDDLE_50, "75", True),
+        (QuantileBucketV1.MIDDLE_50, "76", False),
+        (QuantileBucketV1.TOP_25, "74", False),
+        (QuantileBucketV1.TOP_25, "75", True),
+        (QuantileBucketV1.TOP_25, "76", True),
+        (QuantileBucketV1.TOP_10, "89", False),
+        (QuantileBucketV1.TOP_10, "90", True),
+        (QuantileBucketV1.TOP_10, "91", True),
+    ),
+)
+def test_quantile_conditions_match_exact_inclusive_bucket_boundaries(bucket, value, expected):
+    condition = QuantileFeatureConditionV1("feature", bucket, _quantiles())
+    assert condition.matches("feature", Decimal(value)) is expected
+    assert condition.matches("feature", Decimal(value)) is expected
+
+
+def test_quantile_condition_boundary_overlaps_are_preserved():
+    quantiles = _quantiles()
+    assert QuantileFeatureConditionV1("feature", QuantileBucketV1.BOTTOM_25, quantiles).matches(
+        "feature", Decimal(25)
+    )
+    assert QuantileFeatureConditionV1("feature", QuantileBucketV1.MIDDLE_50, quantiles).matches(
+        "feature", Decimal(25)
+    )
+    assert QuantileFeatureConditionV1("feature", QuantileBucketV1.MIDDLE_50, quantiles).matches(
+        "feature", Decimal(75)
+    )
+    assert QuantileFeatureConditionV1("feature", QuantileBucketV1.TOP_25, quantiles).matches(
+        "feature", Decimal(75)
+    )
+
+
+def test_quantile_condition_feature_binding_invalid_decimals_and_immutability():
+    quantiles = _quantiles()
+    with pytest.raises(ValueError, match="does not match"):
+        QuantileFeatureConditionV1("other", QuantileBucketV1.TOP_10, quantiles)
+    condition = QuantileFeatureConditionV1("feature", QuantileBucketV1.TOP_10, quantiles)
+    with pytest.raises(ValueError, match="evaluation feature"):
+        condition.matches("other", Decimal(100))
+    for invalid in (Decimal("NaN"), Decimal("Infinity"), Decimal("-Infinity")):
+        with pytest.raises(ValueError, match="finite Decimal"):
+            condition.matches("feature", invalid)
+    with pytest.raises(ValueError, match="finite Decimal"):
+        condition.matches("feature", 100)
+    with pytest.raises(FrozenInstanceError):
+        condition.feature_name = "other"
+    with pytest.raises(FrozenInstanceError):
+        condition.frozen_quantiles = quantiles
+
+
+def test_equality_condition_has_exact_feature_value_and_type_semantics_and_is_frozen():
+    condition = EqualityFeatureConditionV1("agrees", True)
+    assert condition.matches("agrees", True)
+    assert condition.matches("agrees", True)
+    assert not condition.matches("agrees", False)
+    with pytest.raises(ValueError, match="evaluation feature"):
+        condition.matches("other", True)
+    assert not condition.matches("agrees", 1)
+    assert not EqualityFeatureConditionV1("agrees", False).matches("agrees", 0)
+    assert not condition.matches("agrees", "true")
+    with pytest.raises(FrozenInstanceError):
+        condition.expected_value = False
