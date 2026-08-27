@@ -334,7 +334,7 @@ def normalize_binance_timestamp_to_ms(value: int, *, event_time: datetime) -> in
     if event_time.tzinfo is None or event_time.utcoffset() != UTC.utcoffset(event_time):
         raise ValueError("event_time must be UTC")
     boundary = datetime(2025, 1, 1, tzinfo=UTC)
-    divisor = 1_000 if event_time < boundary else 1_000_000
-    if value <= 0 or value % divisor:
+    expected_digits = 13 if event_time < boundary else 16
+    if value <= 0 or len(str(value)) != expected_digits:
         raise ValueError("Binance timestamp does not match its frozen native unit")
-    return value // divisor
+    return value if event_time < boundary else value // 1_000

@@ -46,6 +46,10 @@
     },
     {
       "source": "cli_tools",
+      "target": "capital_flow_context"
+    },
+    {
+      "source": "cli_tools",
       "target": "control_plane"
     },
     {

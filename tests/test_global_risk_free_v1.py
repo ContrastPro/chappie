@@ -66,9 +66,12 @@ def test_free_authority_semantics_freeze_denominators_assets_and_series() -> Non
 def test_binance_units_and_coupling_fixtures_fail_closed() -> None:
     before = datetime(2024, 12, 31, tzinfo=UTC)
     after = datetime(2025, 1, 1, tzinfo=UTC)
-    assert normalize_binance_timestamp_to_ms(1_735_603_200_000, event_time=before) == 1_735_603_200
     assert (
-        normalize_binance_timestamp_to_ms(1_735_603_200_000_000, event_time=after) == 1_735_603_200
+        normalize_binance_timestamp_to_ms(1_735_603_200_000, event_time=before) == 1_735_603_200_000
+    )
+    assert (
+        normalize_binance_timestamp_to_ms(1_735_603_200_000_000, event_time=after)
+        == 1_735_603_200_000
     )
     target = datetime(2025, 2, 1, tzinfo=UTC)
     point = CouplingFixturePointV1(target, target)
