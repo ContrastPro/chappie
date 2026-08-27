@@ -1,3 +1,5 @@
+import json
+from collections import Counter
 from dataclasses import FrozenInstanceError, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -6,6 +8,7 @@ from inspect import signature
 import pytest
 
 from app.research.market_precursor import analysis
+from app.research.market_precursor import report as precursor_report
 from app.research.market_precursor.analysis import (
     DISCOVERY_CONDITION_CATALOGUE_IDENTITY,
     NO_VALIDATED_PRECURSOR_FOUND_V1,
@@ -1180,3 +1183,210 @@ def test_multi_horizon_projection_does_not_reuse_cross_horizon_values():
     assert project_observation_for_horizon(original, 15).future_return == Decimal("0.15")
     assert project_observation_for_horizon(original, 60).future_return == Decimal("0.60")
     assert project_observation_for_horizon(original, 240).future_return == Decimal("2.40")
+
+
+def _report_provenance():
+    return precursor_report.DiscoveryProvenanceBindingsV1(
+        "a" * 40,
+        "base/1",
+        "b" * 64,
+        "context/1",
+        "c" * 64,
+        "authority/1",
+        "d" * 64,
+    )
+
+
+def _report_observations(
+    count: int, *, validation_shift: Decimal = Decimal(0), correlated_outcomes: bool = False
+):
+    start = datetime(2020, 1, 1, tzinfo=UTC)
+    feature_names = (
+        "breakout_proximity",
+        "cross_market.eth_minus_btc_return_15m",
+        "cross_market.sol_minus_btc_return_15m",
+        "eth.acceleration_5m_vs_15m",
+        "eth.atr_14_bps",
+        "eth.volume_ratio_60m",
+        "return_15m",
+        "sol.acceleration_5m_vs_15m",
+        "sol.atr_14_bps",
+        "sol.volume_ratio_60m",
+        "volatility_compression_ratio",
+    )
+    observations = []
+    for index in range(count):
+        value = Decimal(index) + validation_shift
+        tail = correlated_outcomes and index >= count * 9 // 10
+        outcome_15 = Decimal("0.10") if tail or not correlated_outcomes else Decimal(0)
+        outcome_60 = Decimal("-0.10") if tail or not correlated_outcomes else Decimal(0)
+        outcome_240 = Decimal("0.10") if tail else Decimal(0)
+        features = {name: value for name in feature_names}
+        features["cross_market.all_three_direction_agreement"] = True
+        observations.append(
+            MultiHorizonFrozenConditionObservationV1(
+                int((start + timedelta(days=index)).timestamp() * 1000),
+                features,
+                (
+                    FrozenHorizonOutcomeV1(
+                        15, outcome_15, outcome_15 + Decimal("0.01"), Decimal("-0.01")
+                    ),
+                    FrozenHorizonOutcomeV1(
+                        60, outcome_60, Decimal("0.01"), outcome_60 - Decimal("0.01")
+                    ),
+                    FrozenHorizonOutcomeV1(
+                        240, outcome_240, outcome_240 + Decimal("0.01"), Decimal("-0.01")
+                    ),
+                ),
+            )
+        )
+    return tuple(observations)
+
+
+def test_report_engine_exact_matrix_quantiles_baselines_progress_and_digest(monkeypatch):
+    research = _report_observations(100)
+    validation = _report_observations(100, validation_shift=Decimal(10_000))
+    config = precursor_report.discovery_execution_config_v1("FEATURE_RESEARCH", "VALIDATION")
+    assert precursor_report.PRECURSOR_DISCOVERY_REPORT_IDENTITY == (
+        "chappie_precursor_discovery_report/1.0.0"
+    )
+    assert len(config.event_definitions) == 18
+    assert {event.horizon_minutes for event in config.event_definitions} == {15, 60, 240}
+    calls = Counter()
+    original_fit = precursor_report.fit_feature_research_quantiles
+
+    def counted_fit(feature_name, values):
+        calls[feature_name] += 1
+        return original_fit(feature_name, values)
+
+    monkeypatch.setattr(precursor_report, "fit_feature_research_quantiles", counted_fit)
+    progress = []
+    first = precursor_report.execute_precursor_discovery_v1(
+        research,
+        validation,
+        config,
+        _report_provenance(),
+        created_at_utc="2026-01-01T00:00:00+00:00",
+        progress_callback=progress.append,
+    )
+    assert first.identity == precursor_report.PRECURSOR_DISCOVERY_REPORT_IDENTITY
+    assert len(first.catalogue_condition_identities) == 8
+    assert len(first.assessments) == 144
+    assert len(first.frozen_quantiles) == len(calls) == 11
+    assert set(calls.values()) == {1}
+    assert all(item.sample_count == len(research) for item in first.frozen_quantiles)
+    assert max(item.p90 for item in first.frozen_quantiles) < Decimal(10_000)
+    assert len(first.baselines) == 18
+    baseline_by_event = {item.event_definition: item for item in first.baselines}
+    for assessment in first.assessments:
+        authority = baseline_by_event[assessment.event_definition]
+        assert (
+            assessment.paired_evidence.feature_research.baseline_result
+            == authority.research_baseline
+        )
+        assert (
+            assessment.paired_evidence.validation.baseline_result == authority.validation_baseline
+        )
+    assert sum(count for _, count in first.classification_counts) == 144
+    assert len(first.rankings.upside_precursors) <= 5
+    assert len(first.rankings.downside_precursors) <= 5
+    assert len(first.rankings.volatility_precursors) <= 5
+    assert first.no_validated_precursor_found_v1
+    stages = tuple(dict.fromkeys(item.stage for item in progress))
+    assert stages == tuple(precursor_report.DiscoveryProgressStageV1)
+    assessment_progress = [
+        item
+        for item in progress
+        if item.stage is precursor_report.DiscoveryProgressStageV1.EVALUATE_ASSESSMENTS
+    ]
+    assert (assessment_progress[-1].current, assessment_progress[-1].total) == (144, 144)
+    second = precursor_report.execute_precursor_discovery_v1(
+        research,
+        validation,
+        config,
+        _report_provenance(),
+        created_at_utc="2027-01-01T00:00:00+00:00",
+    )
+    assert first.frozen_quantiles == second.frozen_quantiles
+    assert first.baselines == second.baselines
+    assert first.assessments == second.assessments
+    assert first.rankings == second.rankings
+    assert first.semantic_digest == second.semantic_digest
+    assert first.created_at_utc != second.created_at_utc
+    assert first.provenance == _report_provenance()
+
+
+def test_report_event_projection_uses_each_horizon_outcome_only():
+    report = precursor_report.execute_precursor_discovery_v1(
+        _report_observations(10),
+        _report_observations(10),
+        precursor_report.discovery_execution_config_v1("research", "validation"),
+        _report_provenance(),
+        created_at_utc="2026-01-01T00:00:00+00:00",
+    )
+    baselines = {
+        (item.event_definition.horizon_minutes, item.event_definition.direction): item
+        for item in report.baselines
+        if item.event_definition.threshold_bps == 40
+    }
+    assert baselines[(15, EventDirectionV1.UP)].research_baseline.probability == Decimal(1)
+    assert baselines[(60, EventDirectionV1.DOWN)].research_baseline.probability == Decimal(1)
+    assert baselines[(240, EventDirectionV1.ABS)].research_baseline.probability == Decimal(0)
+
+
+def test_report_atomic_writer_is_create_only_and_failed_run_does_not_publish(tmp_path, monkeypatch):
+    report = precursor_report.execute_precursor_discovery_v1(
+        _report_observations(10),
+        _report_observations(10),
+        precursor_report.discovery_execution_config_v1("research", "validation"),
+        _report_provenance(),
+        created_at_utc="2026-01-01T00:00:00+00:00",
+    )
+    destination = tmp_path / "report.json"
+    assert precursor_report.write_precursor_discovery_report(report, destination) == destination
+    payload = json.loads(destination.read_text(encoding="utf-8"))
+    assert payload["semantic_digest"] == report.semantic_digest
+    with pytest.raises(FileExistsError):
+        precursor_report.write_precursor_discovery_report(report, destination)
+    publication_failure = tmp_path / "publication-failure.json"
+
+    def fail_link(_source, _destination):
+        raise OSError("injected publication failure")
+
+    monkeypatch.setattr(precursor_report.os, "link", fail_link)
+    with pytest.raises(OSError, match="injected publication failure"):
+        precursor_report.write_precursor_discovery_report(report, publication_failure)
+    assert not publication_failure.exists()
+    assert tuple(path.name for path in tmp_path.iterdir()) == ("report.json",)
+    failed_destination = tmp_path / "failed.json"
+    with pytest.raises(ValueError, match="VALIDATION observations are required"):
+        precursor_report.execute_precursor_discovery_v1(
+            _report_observations(10),
+            (),
+            precursor_report.discovery_execution_config_v1("research", "validation"),
+            _report_provenance(),
+        )
+    assert not failed_destination.exists()
+
+
+def test_report_engine_non_null_path_populates_all_three_rankings():
+    observations = _report_observations(2500, correlated_outcomes=True)
+    report = precursor_report.execute_precursor_discovery_v1(
+        observations,
+        observations,
+        precursor_report.discovery_execution_config_v1("research", "validation"),
+        _report_provenance(),
+        created_at_utc="2026-01-01T00:00:00+00:00",
+    )
+    assert not report.no_validated_precursor_found_v1
+    assert report.rankings.upside_precursors
+    assert report.rankings.downside_precursors
+    assert report.rankings.volatility_precursors
+    assert all(
+        len(ranking) <= 5
+        for ranking in (
+            report.rankings.upside_precursors,
+            report.rankings.downside_precursors,
+            report.rankings.volatility_precursors,
+        )
+    )
