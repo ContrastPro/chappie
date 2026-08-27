@@ -1,0 +1,438 @@
+{
+  "edges": [
+    {
+      "source": "ai_model_layer",
+      "target": "knowledge"
+    },
+    {
+      "source": "ai_model_layer",
+      "target": "research_data"
+    },
+    {
+      "source": "ai_model_layer",
+      "target": "research_intelligence"
+    },
+    {
+      "source": "ai_model_layer",
+      "target": "research_platform"
+    },
+    {
+      "source": "ai_model_layer",
+      "target": "runtime_state"
+    },
+    {
+      "source": "attribution",
+      "target": "persistence"
+    },
+    {
+      "source": "binance_infrastructure",
+      "target": "exchange_execution"
+    },
+    {
+      "source": "binance_infrastructure",
+      "target": "market"
+    },
+    {
+      "source": "cli_tools",
+      "target": "ai_model_layer"
+    },
+    {
+      "source": "cli_tools",
+      "target": "binance_infrastructure"
+    },
+    {
+      "source": "cli_tools",
+      "target": "control_plane"
+    },
+    {
+      "source": "cli_tools",
+      "target": "exchange_execution"
+    },
+    {
+      "source": "cli_tools",
+      "target": "exchange_runtime"
+    },
+    {
+      "source": "cli_tools",
+      "target": "foundation"
+    },
+    {
+      "source": "cli_tools",
+      "target": "historical_execution"
+    },
+    {
+      "source": "cli_tools",
+      "target": "knowledge"
+    },
+    {
+      "source": "cli_tools",
+      "target": "market"
+    },
+    {
+      "source": "cli_tools",
+      "target": "persistence"
+    },
+    {
+      "source": "cli_tools",
+      "target": "portfolio"
+    },
+    {
+      "source": "cli_tools",
+      "target": "research_data"
+    },
+    {
+      "source": "cli_tools",
+      "target": "research_intelligence"
+    },
+    {
+      "source": "cli_tools",
+      "target": "research_platform"
+    },
+    {
+      "source": "cli_tools",
+      "target": "risk"
+    },
+    {
+      "source": "cli_tools",
+      "target": "runtime_state"
+    },
+    {
+      "source": "cli_tools",
+      "target": "strategy_research"
+    },
+    {
+      "source": "cli_tools",
+      "target": "trading_domain"
+    },
+    {
+      "source": "control_plane",
+      "target": "ai_model_layer"
+    },
+    {
+      "source": "control_plane",
+      "target": "development_intelligence"
+    },
+    {
+      "source": "control_plane",
+      "target": "foundation"
+    },
+    {
+      "source": "control_plane",
+      "target": "knowledge"
+    },
+    {
+      "source": "coordination",
+      "target": "exchange_runtime"
+    },
+    {
+      "source": "coordination",
+      "target": "market"
+    },
+    {
+      "source": "coordination",
+      "target": "paper"
+    },
+    {
+      "source": "coordination",
+      "target": "runtime_state"
+    },
+    {
+      "source": "coordination",
+      "target": "shadow"
+    },
+    {
+      "source": "coordination",
+      "target": "trading_domain"
+    },
+    {
+      "source": "development_intelligence",
+      "target": "ai_model_layer"
+    },
+    {
+      "source": "development_intelligence",
+      "target": "knowledge"
+    },
+    {
+      "source": "exchange_execution",
+      "target": "market"
+    },
+    {
+      "source": "exchange_execution",
+      "target": "persistence"
+    },
+    {
+      "source": "exchange_runtime",
+      "target": "binance_infrastructure"
+    },
+    {
+      "source": "exchange_runtime",
+      "target": "exchange_execution"
+    },
+    {
+      "source": "exchange_runtime",
+      "target": "foundation"
+    },
+    {
+      "source": "exchange_runtime",
+      "target": "historical_execution"
+    },
+    {
+      "source": "exchange_runtime",
+      "target": "market"
+    },
+    {
+      "source": "exchange_runtime",
+      "target": "paper"
+    },
+    {
+      "source": "exchange_runtime",
+      "target": "persistence"
+    },
+    {
+      "source": "exchange_runtime",
+      "target": "portfolio"
+    },
+    {
+      "source": "exchange_runtime",
+      "target": "risk"
+    },
+    {
+      "source": "exchange_runtime",
+      "target": "trading_domain"
+    },
+    {
+      "source": "foundation",
+      "target": "ai_model_layer"
+    },
+    {
+      "source": "foundation",
+      "target": "knowledge"
+    },
+    {
+      "source": "historical_execution",
+      "target": "exchange_execution"
+    },
+    {
+      "source": "knowledge",
+      "target": "ai_model_layer"
+    },
+    {
+      "source": "market",
+      "target": "runtime_state"
+    },
+    {
+      "source": "market_precursor",
+      "target": "ai_model_layer"
+    },
+    {
+      "source": "market_precursor",
+      "target": "market"
+    },
+    {
+      "source": "market_precursor",
+      "target": "strategies"
+    },
+    {
+      "source": "market_precursor",
+      "target": "strategy_research"
+    },
+    {
+      "source": "paper",
+      "target": "persistence"
+    },
+    {
+      "source": "paper",
+      "target": "portfolio"
+    },
+    {
+      "source": "paper",
+      "target": "risk"
+    },
+    {
+      "source": "paper",
+      "target": "runtime_state"
+    },
+    {
+      "source": "paper",
+      "target": "trading_domain"
+    },
+    {
+      "source": "persistence",
+      "target": "exchange_execution"
+    },
+    {
+      "source": "persistence",
+      "target": "historical_execution"
+    },
+    {
+      "source": "persistence",
+      "target": "market"
+    },
+    {
+      "source": "persistence",
+      "target": "paper"
+    },
+    {
+      "source": "persistence",
+      "target": "portfolio"
+    },
+    {
+      "source": "persistence",
+      "target": "trading_domain"
+    },
+    {
+      "source": "portfolio",
+      "target": "paper"
+    },
+    {
+      "source": "portfolio",
+      "target": "runtime_state"
+    },
+    {
+      "source": "portfolio",
+      "target": "trading_domain"
+    },
+    {
+      "source": "research_data",
+      "target": "ai_model_layer"
+    },
+    {
+      "source": "research_data",
+      "target": "market"
+    },
+    {
+      "source": "research_data",
+      "target": "strategy_research"
+    },
+    {
+      "source": "research_intelligence",
+      "target": "market"
+    },
+    {
+      "source": "research_intelligence",
+      "target": "research_data"
+    },
+    {
+      "source": "research_intelligence",
+      "target": "research_platform"
+    },
+    {
+      "source": "research_platform",
+      "target": "research_data"
+    },
+    {
+      "source": "risk",
+      "target": "exchange_execution"
+    },
+    {
+      "source": "risk",
+      "target": "market"
+    },
+    {
+      "source": "risk",
+      "target": "portfolio"
+    },
+    {
+      "source": "risk",
+      "target": "trading_domain"
+    },
+    {
+      "source": "runtime",
+      "target": "binance_infrastructure"
+    },
+    {
+      "source": "runtime",
+      "target": "coordination"
+    },
+    {
+      "source": "runtime",
+      "target": "exchange_runtime"
+    },
+    {
+      "source": "runtime",
+      "target": "foundation"
+    },
+    {
+      "source": "runtime",
+      "target": "market"
+    },
+    {
+      "source": "runtime",
+      "target": "paper"
+    },
+    {
+      "source": "runtime",
+      "target": "persistence"
+    },
+    {
+      "source": "runtime",
+      "target": "portfolio"
+    },
+    {
+      "source": "runtime",
+      "target": "risk"
+    },
+    {
+      "source": "runtime",
+      "target": "runtime_state"
+    },
+    {
+      "source": "runtime",
+      "target": "shadow"
+    },
+    {
+      "source": "runtime",
+      "target": "strategies"
+    },
+    {
+      "source": "runtime",
+      "target": "trading_domain"
+    },
+    {
+      "source": "runtime_state",
+      "target": "ai_model_layer"
+    },
+    {
+      "source": "runtime_state",
+      "target": "market"
+    },
+    {
+      "source": "runtime_state",
+      "target": "research_data"
+    },
+    {
+      "source": "shadow",
+      "target": "market"
+    },
+    {
+      "source": "shadow",
+      "target": "trading_domain"
+    },
+    {
+      "source": "strategies",
+      "target": "market"
+    },
+    {
+      "source": "strategies",
+      "target": "trading_domain"
+    },
+    {
+      "source": "strategy_research",
+      "target": "market"
+    },
+    {
+      "source": "strategy_research",
+      "target": "strategies"
+    },
+    {
+      "source": "strategy_research",
+      "target": "trading_domain"
+    },
+    {
+      "source": "trading_domain",
+      "target": "market"
+    }
+  ],
+  "schema": "chappie_architecture_dependencies/1.0.0",
+  "scope": "production app Python modules; tests and tooling excluded"
+}

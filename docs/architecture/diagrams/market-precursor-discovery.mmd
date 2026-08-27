@@ -1,0 +1,20 @@
+flowchart LR
+    H[Historical BTC/ETH/SOL authority] --> B[Base Precursor V1]
+    H --> C[Multi-Market Context Authority]
+    C --> T[Typed Context V2]
+    B --> A{Authority Adapter}
+    T --> A
+    A -->|identity/digest/mismatch gate| O[15/60/240 observations]
+    O --> Q[Fit 11 quantile features<br/>FEATURE_RESEARCH only]
+    Q --> K[Frozen 8-condition catalogue]
+    K --> E[Research + Validation evaluation]
+    E --> S[Temporal stability]
+    S --> L[Candidate classification]
+    L --> R[Deterministic ranking]
+    R --> D[chappie_precursor_discovery_report/2.0.0]
+    A -->|fail closed| X[No discovery execution]
+
+    classDef gate fill:#fee2e2,stroke:#b91c1c,stroke-width:2px
+    classDef data fill:#dbeafe,stroke:#1d4ed8
+    class A gate
+    class H,B,C,T,O,Q,K,D data

@@ -1,0 +1,19 @@
+flowchart LR
+    C[Confirmed CandleClosed] --> D[One immutable decision]
+    D --> G{Mandatory Risk}
+    G -->|reject| A[Paper attribution]
+    G -->|approve| E[Deterministic Paper fill]
+    E --> P[Portfolio accounting authority]
+    P --> T{Single SQLite transaction}
+    D --> A
+    G --> A
+    E --> A
+    P --> A
+    A --> T
+    T -->|commit| J[chappie_paper_attribution/1.0.0<br/>+ journal + portfolio transition]
+    T -->|failure| R[Rollback; no partial financial truth]
+
+    classDef gate fill:#fee2e2,stroke:#b91c1c,stroke-width:2px
+    classDef data fill:#dbeafe,stroke:#1d4ed8
+    class G,T gate
+    class A,J data

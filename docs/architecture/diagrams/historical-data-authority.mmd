@@ -1,0 +1,15 @@
+flowchart LR
+    B[Binance public history] -->|bounded download| V{Validate chronology,<br/>OHLCV, interval, Decimal}
+    V -->|fail closed| X[No artifact]
+    V -->|valid| D[Canonical HistoricalDataset]
+    D --> M[Manifest + candle digest]
+    M --> R{Reload and digest verify}
+    R -->|mismatch| X
+    R -->|pass| A[Authoritative research input]
+    A --> S[Strategy Research]
+    A --> P[Market Precursor builders]
+
+    classDef gate fill:#fee2e2,stroke:#b91c1c,stroke-width:2px
+    classDef data fill:#dbeafe,stroke:#1d4ed8
+    class V,R gate
+    class D,M,A data

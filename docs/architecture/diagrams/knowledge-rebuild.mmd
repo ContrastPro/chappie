@@ -1,0 +1,17 @@
+flowchart LR
+    G[Tracked repository snapshot] --> C{Clean commit?}
+    C -->|dirty| X[Fail closed; no Knowledge build]
+    C -->|clean| A{SOURCE_ALLOWLIST}
+    A -->|unapproved source| X
+    A -->|approved sources| B[Deterministic canonical records]
+    B --> M[chappie_knowledge/1.0.0<br/>manifest + content digest]
+    M --> R{Retrieval verifies store,<br/>manifest, provenance}
+    R -->|mismatch/stale| X
+    R -->|valid| K[chappie_knowledge_retrieval/1.3.0]
+    K --> Q[Bounded AI / Development context]
+    Q --> N[Knowledge is not model memory<br/>and grants no mutation authority]
+
+    classDef gate fill:#fee2e2,stroke:#b91c1c,stroke-width:2px
+    classDef data fill:#dbeafe,stroke:#1d4ed8
+    class C,A,R gate
+    class B,M,K data

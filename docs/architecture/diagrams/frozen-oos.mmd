@@ -1,0 +1,14 @@
+flowchart LR
+    D[Canonical historical dataset] --> E[chappie_frozen_strategy_evaluation/1.0.0]
+    E --> G{Validate source, dataset,<br/>config, spans, state identity}
+    A[chappie_frozen_strategy_execution_authorization/1.0.0] --> G
+    G -->|fail closed| F[chappie_frozen_strategy_oos_failure/1.0.0]
+    G -->|authorized| O[Exactly one bounded OOS attempt]
+    O --> P[chappie_frozen_strategy_oos_progress/1.0.0]
+    O --> R[chappie_frozen_strategy_oos_result/1.0.0]
+    R --> N[Research evidence only;<br/>no runtime approval]
+
+    classDef gate fill:#fee2e2,stroke:#b91c1c,stroke-width:2px
+    classDef data fill:#dbeafe,stroke:#1d4ed8
+    class G gate
+    class D,E,A,P,R,F data

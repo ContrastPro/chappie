@@ -1,0 +1,902 @@
+{
+  "components": [
+    {
+      "declared_paths": [
+        "app/runtime",
+        "app/main.py"
+      ],
+      "discovered_file_count": 5,
+      "discovered_modules": [
+        "app.main",
+        "app.runtime",
+        "app.runtime.application",
+        "app.runtime.status",
+        "app.runtime.trader"
+      ],
+      "external_import_roots": [
+        "httpx",
+        "pydantic"
+      ],
+      "id": "runtime",
+      "internal_dependency_targets": [
+        "binance_infrastructure",
+        "coordination",
+        "exchange_runtime",
+        "foundation",
+        "market",
+        "paper",
+        "persistence",
+        "portfolio",
+        "risk",
+        "runtime_state",
+        "shadow",
+        "strategies",
+        "trading_domain"
+      ],
+      "name": "Runtime / Composition",
+      "owner": "Core Runtime",
+      "status": "IMPLEMENTED"
+    },
+    {
+      "declared_paths": [
+        "app/market"
+      ],
+      "discovered_file_count": 10,
+      "discovered_modules": [
+        "app.market",
+        "app.market.binance_provider",
+        "app.market.event_logging",
+        "app.market.events",
+        "app.market.exceptions",
+        "app.market.intervals",
+        "app.market.models",
+        "app.market.polling",
+        "app.market.provider",
+        "app.market.validation"
+      ],
+      "external_import_roots": [
+        "httpx",
+        "pydantic"
+      ],
+      "id": "market",
+      "internal_dependency_targets": [
+        "runtime_state"
+      ],
+      "name": "Market",
+      "owner": "Core Runtime",
+      "status": "IMPLEMENTED"
+    },
+    {
+      "declared_paths": [
+        "app/trading"
+      ],
+      "discovered_file_count": 7,
+      "discovered_modules": [
+        "app.trading",
+        "app.trading.exceptions",
+        "app.trading.intent",
+        "app.trading.models",
+        "app.trading.pipeline",
+        "app.trading.snapshot",
+        "app.trading.strategy"
+      ],
+      "external_import_roots": [],
+      "id": "trading_domain",
+      "internal_dependency_targets": [
+        "market"
+      ],
+      "name": "Trading Domain",
+      "owner": "Core Runtime",
+      "status": "IMPLEMENTED"
+    },
+    {
+      "declared_paths": [
+        "app/strategies"
+      ],
+      "discovered_file_count": 16,
+      "discovered_modules": [
+        "app.strategies",
+        "app.strategies.breakout",
+        "app.strategies.common",
+        "app.strategies.compression_expansion_breakout",
+        "app.strategies.cost_aware_momentum",
+        "app.strategies.ema_crossover",
+        "app.strategies.factory",
+        "app.strategies.indicators",
+        "app.strategies.mean_reversion",
+        "app.strategies.multi_timeframe_trend",
+        "app.strategies.regime_mean_reversion",
+        "app.strategies.research_timeframes",
+        "app.strategies.trend_filtered",
+        "app.strategies.trend_filtered_v2",
+        "app.strategies.trend_retracement_continuation",
+        "app.strategies.volatility_continuation"
+      ],
+      "external_import_roots": [],
+      "id": "strategies",
+      "internal_dependency_targets": [
+        "market",
+        "trading_domain"
+      ],
+      "name": "Strategies",
+      "owner": "Core Runtime",
+      "status": "IMPLEMENTED"
+    },
+    {
+      "declared_paths": [
+        "app/risk"
+      ],
+      "discovered_file_count": 5,
+      "discovered_modules": [
+        "app.risk",
+        "app.risk.exceptions",
+        "app.risk.exchange",
+        "app.risk.manager",
+        "app.risk.models"
+      ],
+      "external_import_roots": [],
+      "id": "risk",
+      "internal_dependency_targets": [
+        "exchange_execution",
+        "market",
+        "portfolio",
+        "trading_domain"
+      ],
+      "name": "Risk",
+      "owner": "Execution / Risk / Paper",
+      "status": "IMPLEMENTED"
+    },
+    {
+      "declared_paths": [
+        "app/portfolio"
+      ],
+      "discovered_file_count": 4,
+      "discovered_modules": [
+        "app.portfolio",
+        "app.portfolio.exceptions",
+        "app.portfolio.models",
+        "app.portfolio.portfolio"
+      ],
+      "external_import_roots": [],
+      "id": "portfolio",
+      "internal_dependency_targets": [
+        "paper",
+        "runtime_state",
+        "trading_domain"
+      ],
+      "name": "Portfolio",
+      "owner": "Execution / Risk / Paper",
+      "status": "IMPLEMENTED"
+    },
+    {
+      "declared_paths": [
+        "app/paper",
+        "app/execution"
+      ],
+      "discovered_file_count": 11,
+      "discovered_modules": [
+        "app.execution",
+        "app.execution.exceptions",
+        "app.execution.models",
+        "app.execution.paper",
+        "app.execution.provider",
+        "app.paper",
+        "app.paper.engine",
+        "app.paper.exceptions",
+        "app.paper.factories",
+        "app.paper.models",
+        "app.paper.observer"
+      ],
+      "external_import_roots": [],
+      "id": "paper",
+      "internal_dependency_targets": [
+        "persistence",
+        "portfolio",
+        "risk",
+        "runtime_state",
+        "trading_domain"
+      ],
+      "name": "Paper",
+      "owner": "Execution / Risk / Paper",
+      "status": "IMPLEMENTED"
+    },
+    {
+      "declared_paths": [
+        "app/paper/attribution.py"
+      ],
+      "discovered_file_count": 1,
+      "discovered_modules": [
+        "app.paper.attribution"
+      ],
+      "external_import_roots": [],
+      "id": "attribution",
+      "internal_dependency_targets": [
+        "persistence"
+      ],
+      "name": "Attribution",
+      "owner": "Execution / Risk / Paper",
+      "status": "IMPLEMENTED"
+    },
+    {
+      "declared_paths": [
+        "app/persistence"
+      ],
+      "discovered_file_count": 12,
+      "discovered_modules": [
+        "app.persistence",
+        "app.persistence.canonical",
+        "app.persistence.exceptions",
+        "app.persistence.exchange",
+        "app.persistence.exchange_models",
+        "app.persistence.keys",
+        "app.persistence.migrations",
+        "app.persistence.models",
+        "app.persistence.ports",
+        "app.persistence.recovery",
+        "app.persistence.runtime",
+        "app.persistence.sqlite"
+      ],
+      "external_import_roots": [],
+      "id": "persistence",
+      "internal_dependency_targets": [
+        "exchange_execution",
+        "historical_execution",
+        "market",
+        "paper",
+        "portfolio",
+        "trading_domain"
+      ],
+      "name": "Persistence",
+      "owner": "Execution / Risk / Paper",
+      "status": "IMPLEMENTED"
+    },
+    {
+      "declared_paths": [
+        "app/exchange_runtime"
+      ],
+      "discovered_file_count": 11,
+      "discovered_modules": [
+        "app.exchange_runtime",
+        "app.exchange_runtime.application_service",
+        "app.exchange_runtime.composition",
+        "app.exchange_runtime.consumer",
+        "app.exchange_runtime.exceptions",
+        "app.exchange_runtime.identity",
+        "app.exchange_runtime.models",
+        "app.exchange_runtime.readiness",
+        "app.exchange_runtime.runtime",
+        "app.exchange_runtime.settlement",
+        "app.exchange_runtime.submission"
+      ],
+      "external_import_roots": [
+        "httpx"
+      ],
+      "id": "exchange_runtime",
+      "internal_dependency_targets": [
+        "binance_infrastructure",
+        "exchange_execution",
+        "foundation",
+        "historical_execution",
+        "market",
+        "paper",
+        "persistence",
+        "portfolio",
+        "risk",
+        "trading_domain"
+      ],
+      "name": "Exchange Runtime",
+      "owner": "Testnet Runtime",
+      "status": "IMPLEMENTED"
+    },
+    {
+      "declared_paths": [
+        "app/exchange_execution"
+      ],
+      "discovered_file_count": 8,
+      "discovered_modules": [
+        "app.exchange_execution",
+        "app.exchange_execution.durable",
+        "app.exchange_execution.exceptions",
+        "app.exchange_execution.factories",
+        "app.exchange_execution.lifecycle",
+        "app.exchange_execution.models",
+        "app.exchange_execution.ports",
+        "app.exchange_execution.reconciliation"
+      ],
+      "external_import_roots": [],
+      "id": "exchange_execution",
+      "internal_dependency_targets": [
+        "market",
+        "persistence"
+      ],
+      "name": "Exchange Execution",
+      "owner": "Testnet Runtime",
+      "status": "IMPLEMENTED"
+    },
+    {
+      "declared_paths": [
+        "app/infrastructure"
+      ],
+      "discovered_file_count": 5,
+      "discovered_modules": [
+        "app.infrastructure",
+        "app.infrastructure.binance",
+        "app.infrastructure.binance.exceptions",
+        "app.infrastructure.binance.signing",
+        "app.infrastructure.binance.testnet_execution"
+      ],
+      "external_import_roots": [
+        "httpx"
+      ],
+      "id": "binance_infrastructure",
+      "internal_dependency_targets": [
+        "exchange_execution",
+        "market"
+      ],
+      "name": "Binance Infrastructure",
+      "owner": "Testnet Runtime",
+      "status": "IMPLEMENTED"
+    },
+    {
+      "declared_paths": [
+        "app/shadow"
+      ],
+      "discovered_file_count": 8,
+      "discovered_modules": [
+        "app.shadow",
+        "app.shadow.consumer",
+        "app.shadow.engine",
+        "app.shadow.exceptions",
+        "app.shadow.factories",
+        "app.shadow.models",
+        "app.shadow.observer",
+        "app.shadow.ports"
+      ],
+      "external_import_roots": [],
+      "id": "shadow",
+      "internal_dependency_targets": [
+        "market",
+        "trading_domain"
+      ],
+      "name": "Shadow",
+      "owner": "Core Runtime",
+      "status": "IMPLEMENTED"
+    },
+    {
+      "declared_paths": [
+        "app/coordination"
+      ],
+      "discovered_file_count": 5,
+      "discovered_modules": [
+        "app.coordination",
+        "app.coordination.exceptions",
+        "app.coordination.factories",
+        "app.coordination.models",
+        "app.coordination.trading"
+      ],
+      "external_import_roots": [],
+      "id": "coordination",
+      "internal_dependency_targets": [
+        "exchange_runtime",
+        "market",
+        "paper",
+        "runtime_state",
+        "shadow",
+        "trading_domain"
+      ],
+      "name": "Decision Coordination",
+      "owner": "Core Runtime",
+      "status": "IMPLEMENTED"
+    },
+    {
+      "declared_paths": [
+        "app/foundation",
+        "app/platform"
+      ],
+      "discovered_file_count": 17,
+      "discovered_modules": [
+        "app.foundation",
+        "app.foundation.config",
+        "app.foundation.logging",
+        "app.platform",
+        "app.platform.bootstrap",
+        "app.platform.ollama",
+        "app.platform.ollama.contracts",
+        "app.platform.ollama.macos",
+        "app.platform.ollama.model_state",
+        "app.platform.ollama.readiness",
+        "app.platform.ollama.start",
+        "app.platform.ollama.windows",
+        "app.platform.setup",
+        "app.platform.setup.ai_smoke",
+        "app.platform.setup.engine",
+        "app.platform.setup.project_qa_smoke",
+        "app.platform.vscode"
+      ],
+      "external_import_roots": [
+        "httpx",
+        "pydantic",
+        "pydantic_settings",
+        "torch"
+      ],
+      "id": "foundation",
+      "internal_dependency_targets": [
+        "ai_model_layer",
+        "knowledge"
+      ],
+      "name": "Foundation",
+      "owner": "Core Runtime",
+      "status": "IMPLEMENTED"
+    },
+    {
+      "declared_paths": [
+        "app/market/cache.py",
+        "app/ai/research/execution_cache.py"
+      ],
+      "discovered_file_count": 2,
+      "discovered_modules": [
+        "app.ai.research.execution_cache",
+        "app.market.cache"
+      ],
+      "external_import_roots": [],
+      "id": "runtime_state",
+      "internal_dependency_targets": [
+        "ai_model_layer",
+        "market",
+        "research_data"
+      ],
+      "name": "Runtime State & Caches",
+      "owner": "Core Runtime",
+      "status": "IMPLEMENTED"
+    },
+    {
+      "declared_paths": [
+        "app/research/__init__.py",
+        "app/research/paths.py",
+        "app/research_methodology.py"
+      ],
+      "discovered_file_count": 3,
+      "discovered_modules": [
+        "app.research",
+        "app.research.paths",
+        "app.research_methodology"
+      ],
+      "external_import_roots": [],
+      "id": "research_platform",
+      "internal_dependency_targets": [
+        "research_data"
+      ],
+      "name": "Research Platform",
+      "owner": "Research Platform",
+      "status": "IMPLEMENTED"
+    },
+    {
+      "declared_paths": [
+        "app/research/data"
+      ],
+      "discovered_file_count": 8,
+      "discovered_modules": [
+        "app.research.data",
+        "app.research.data.alignment",
+        "app.research.data.anomalies",
+        "app.research.data.cache_identity",
+        "app.research.data.event_bridge",
+        "app.research.data.legacy_json",
+        "app.research.data.outcomes",
+        "app.research.data.store"
+      ],
+      "external_import_roots": [],
+      "id": "research_data",
+      "internal_dependency_targets": [
+        "ai_model_layer",
+        "market",
+        "strategy_research"
+      ],
+      "name": "Research Data Authority",
+      "owner": "Research Platform",
+      "status": "IMPLEMENTED"
+    },
+    {
+      "declared_paths": [
+        "app/research/strategy"
+      ],
+      "discovered_file_count": 7,
+      "discovered_modules": [
+        "app.research.strategy",
+        "app.research.strategy.history",
+        "app.research.strategy.lab",
+        "app.research.strategy.locked_evaluation",
+        "app.research.strategy.locked_oos_runner",
+        "app.research.strategy.long_history",
+        "app.research.strategy.walk_forward"
+      ],
+      "external_import_roots": [
+        "httpx"
+      ],
+      "id": "strategy_research",
+      "internal_dependency_targets": [
+        "market",
+        "strategies",
+        "trading_domain"
+      ],
+      "name": "Strategy Research",
+      "owner": "Research Platform",
+      "status": "IMPLEMENTED"
+    },
+    {
+      "declared_paths": [
+        "app/research/market_precursor"
+      ],
+      "discovered_file_count": 8,
+      "discovered_modules": [
+        "app.research.market_precursor",
+        "app.research.market_precursor.analysis",
+        "app.research.market_precursor.authority",
+        "app.research.market_precursor.builder",
+        "app.research.market_precursor.context",
+        "app.research.market_precursor.context_v2",
+        "app.research.market_precursor.models",
+        "app.research.market_precursor.report"
+      ],
+      "external_import_roots": [],
+      "id": "market_precursor",
+      "internal_dependency_targets": [
+        "ai_model_layer",
+        "market",
+        "strategies",
+        "strategy_research"
+      ],
+      "name": "Market Precursor",
+      "owner": "Research Platform",
+      "status": "IMPLEMENTED"
+    },
+    {
+      "declared_paths": [
+        "app/research/intelligence"
+      ],
+      "discovered_file_count": 10,
+      "discovered_modules": [
+        "app.research.intelligence",
+        "app.research.intelligence.behavioral",
+        "app.research.intelligence.capital_rotation",
+        "app.research.intelligence.flow",
+        "app.research.intelligence.leverage_stress",
+        "app.research.intelligence.macro_events",
+        "app.research.intelligence.market",
+        "app.research.intelligence.multi_asset_flow",
+        "app.research.intelligence.news_events",
+        "app.research.intelligence.universe"
+      ],
+      "external_import_roots": [],
+      "id": "research_intelligence",
+      "internal_dependency_targets": [
+        "market",
+        "research_data",
+        "research_platform"
+      ],
+      "name": "Research Intelligence",
+      "owner": "Research Platform",
+      "status": "EXPERIMENTAL"
+    },
+    {
+      "declared_paths": [
+        "app/ai"
+      ],
+      "discovered_file_count": 28,
+      "discovered_modules": [
+        "app.ai",
+        "app.ai.adapters",
+        "app.ai.errors",
+        "app.ai.evaluation",
+        "app.ai.evaluation.benchmark",
+        "app.ai.evaluation.closed_loop_calibration",
+        "app.ai.model_policy",
+        "app.ai.models",
+        "app.ai.project_qa",
+        "app.ai.prompts",
+        "app.ai.provider",
+        "app.ai.providers",
+        "app.ai.providers.mock",
+        "app.ai.providers.ollama",
+        "app.ai.research",
+        "app.ai.research.canonical_storage",
+        "app.ai.research.capabilities",
+        "app.ai.research.evidence_review",
+        "app.ai.research.execution_contracts",
+        "app.ai.research.market_semantics",
+        "app.ai.research.query_compiler",
+        "app.ai.research.query_executor",
+        "app.ai.research.reasoning",
+        "app.ai.router",
+        "app.ai.runtime",
+        "app.ai.schemas",
+        "app.ai.tasks",
+        "app.ai.trace"
+      ],
+      "external_import_roots": [
+        "httpx"
+      ],
+      "id": "ai_model_layer",
+      "internal_dependency_targets": [
+        "knowledge",
+        "research_data",
+        "research_intelligence",
+        "research_platform",
+        "runtime_state"
+      ],
+      "name": "AI / Model Layer",
+      "owner": "AI / Development",
+      "status": "IMPLEMENTED"
+    },
+    {
+      "declared_paths": [
+        "app/knowledge"
+      ],
+      "discovered_file_count": 3,
+      "discovered_modules": [
+        "app.knowledge",
+        "app.knowledge.retrieval",
+        "app.knowledge.store"
+      ],
+      "external_import_roots": [],
+      "id": "knowledge",
+      "internal_dependency_targets": [
+        "ai_model_layer"
+      ],
+      "name": "Knowledge",
+      "owner": "AI / Development",
+      "status": "IMPLEMENTED"
+    },
+    {
+      "declared_paths": [
+        "app/development_analysis",
+        "app/implementation_context",
+        "app/repository_inventory",
+        "app/targeted_context"
+      ],
+      "discovered_file_count": 22,
+      "discovered_modules": [
+        "app.development_analysis",
+        "app.development_analysis.agent_context",
+        "app.development_analysis.context",
+        "app.development_analysis.context_recovery",
+        "app.development_analysis.implementation_context",
+        "app.development_analysis.intent",
+        "app.development_analysis.models",
+        "app.development_analysis.outcome",
+        "app.development_analysis.repository_inventory",
+        "app.development_analysis.review_targets",
+        "app.development_analysis.service",
+        "app.development_analysis.synthesis",
+        "app.development_analysis.task",
+        "app.implementation_context",
+        "app.implementation_context.models",
+        "app.repository_inventory",
+        "app.repository_inventory.builder",
+        "app.repository_inventory.git_source",
+        "app.repository_inventory.models",
+        "app.targeted_context",
+        "app.targeted_context.completion",
+        "app.targeted_context.resolver"
+      ],
+      "external_import_roots": [],
+      "id": "development_intelligence",
+      "internal_dependency_targets": [
+        "ai_model_layer",
+        "knowledge"
+      ],
+      "name": "Development Intelligence",
+      "owner": "AI / Development",
+      "status": "IMPLEMENTED"
+    },
+    {
+      "declared_paths": [
+        "app/control_plane"
+      ],
+      "discovered_file_count": 4,
+      "discovered_modules": [
+        "app.control_plane",
+        "app.control_plane.service",
+        "app.control_plane.transport",
+        "app.control_plane.workspace_context"
+      ],
+      "external_import_roots": [
+        "httpx"
+      ],
+      "id": "control_plane",
+      "internal_dependency_targets": [
+        "ai_model_layer",
+        "development_intelligence",
+        "foundation",
+        "knowledge"
+      ],
+      "name": "Control Plane",
+      "owner": "AI / Development",
+      "status": "IMPLEMENTED"
+    },
+    {
+      "declared_paths": [
+        "app/cli.py",
+        "app/tools"
+      ],
+      "discovered_file_count": 34,
+      "discovered_modules": [
+        "app.cli",
+        "app.tools",
+        "app.tools.behavioral_market_analyze",
+        "app.tools.capital_rotation_analyze",
+        "app.tools.chappie_ai_benchmark",
+        "app.tools.chappie_ai_closed_loop_benchmark",
+        "app.tools.chappie_ai_rde_review",
+        "app.tools.chappie_ai_smoke",
+        "app.tools.chappie_knowledge",
+        "app.tools.chappie_project_qa",
+        "app.tools.leverage_stress_analyze",
+        "app.tools.leverage_stress_download",
+        "app.tools.long_history_analyze",
+        "app.tools.long_history_download",
+        "app.tools.market_history_download",
+        "app.tools.market_intelligence_analyze",
+        "app.tools.market_intelligence_download",
+        "app.tools.market_intelligence_flow_analyze",
+        "app.tools.market_intelligence_flow_download",
+        "app.tools.multi_asset_flow_intelligence_analyze",
+        "app.tools.news_event_macro_ingest",
+        "app.tools.paper_monitor",
+        "app.tools.rde_query_execute",
+        "app.tools.research_data_convert",
+        "app.tools.strategy_compare",
+        "app.tools.strategy_evaluate",
+        "app.tools.strategy_walk_forward",
+        "app.tools.testnet_m410_recovery_proof",
+        "app.tools.testnet_phase1",
+        "app.tools.testnet_phase2",
+        "app.tools.testnet_phase3",
+        "app.tools.testnet_phase4",
+        "app.tools.testnet_phase4_remediate_zero_fee",
+        "app.tools.testnet_stage4_sell"
+      ],
+      "external_import_roots": [
+        "httpx"
+      ],
+      "id": "cli_tools",
+      "internal_dependency_targets": [
+        "ai_model_layer",
+        "binance_infrastructure",
+        "control_plane",
+        "exchange_execution",
+        "exchange_runtime",
+        "foundation",
+        "historical_execution",
+        "knowledge",
+        "market",
+        "persistence",
+        "portfolio",
+        "research_data",
+        "research_intelligence",
+        "research_platform",
+        "risk",
+        "runtime_state",
+        "strategy_research",
+        "trading_domain"
+      ],
+      "name": "CLI / Tools",
+      "owner": "Interfaces",
+      "status": "IMPLEMENTED"
+    },
+    {
+      "declared_paths": [
+        "app/exchange_execution/phase3.py",
+        "app/exchange_execution/stage4_sell.py",
+        "app/exchange_execution/stage4_sell_disposition.py",
+        "app/exchange_execution/stage4_sell_recovery.py"
+      ],
+      "discovered_file_count": 4,
+      "discovered_modules": [
+        "app.exchange_execution.phase3",
+        "app.exchange_execution.stage4_sell",
+        "app.exchange_execution.stage4_sell_disposition",
+        "app.exchange_execution.stage4_sell_recovery"
+      ],
+      "external_import_roots": [],
+      "id": "historical_execution",
+      "internal_dependency_targets": [
+        "exchange_execution"
+      ],
+      "name": "Historical Testnet Milestones",
+      "owner": "Historical",
+      "status": "HISTORICAL"
+    },
+    {
+      "declared_paths": [],
+      "discovered_file_count": 0,
+      "discovered_modules": [],
+      "external_import_roots": [],
+      "id": "capital_flow_context",
+      "internal_dependency_targets": [],
+      "name": "Capital Flow & Global Risk Context",
+      "owner": "Research Platform",
+      "status": "PLANNED"
+    },
+    {
+      "declared_paths": [],
+      "discovered_file_count": 0,
+      "discovered_modules": [],
+      "external_import_roots": [],
+      "id": "derivatives_context",
+      "internal_dependency_targets": [],
+      "name": "Derivatives Context",
+      "owner": "Research Platform",
+      "status": "PLANNED"
+    },
+    {
+      "declared_paths": [],
+      "discovered_file_count": 0,
+      "discovered_modules": [],
+      "external_import_roots": [],
+      "id": "order_flow_context",
+      "internal_dependency_targets": [],
+      "name": "Order Flow / LOB",
+      "owner": "Research Platform",
+      "status": "PLANNED"
+    },
+    {
+      "declared_paths": [],
+      "discovered_file_count": 0,
+      "discovered_modules": [],
+      "external_import_roots": [],
+      "id": "news_event_context",
+      "internal_dependency_targets": [],
+      "name": "News / Event Context",
+      "owner": "Research Platform",
+      "status": "PLANNED"
+    },
+    {
+      "declared_paths": [],
+      "discovered_file_count": 0,
+      "discovered_modules": [],
+      "external_import_roots": [],
+      "id": "macro_context",
+      "internal_dependency_targets": [],
+      "name": "Macro Context",
+      "owner": "Research Platform",
+      "status": "PLANNED"
+    },
+    {
+      "declared_paths": [],
+      "discovered_file_count": 0,
+      "discovered_modules": [],
+      "external_import_roots": [],
+      "id": "onchain_context",
+      "internal_dependency_targets": [],
+      "name": "On-chain Context",
+      "owner": "Research Platform",
+      "status": "PLANNED"
+    },
+    {
+      "declared_paths": [],
+      "discovered_file_count": 0,
+      "discovered_modules": [],
+      "external_import_roots": [],
+      "id": "cloud_models",
+      "internal_dependency_targets": [],
+      "name": "Cloud Model Providers",
+      "owner": "AI / Development",
+      "status": "PLANNED"
+    },
+    {
+      "declared_paths": [],
+      "discovered_file_count": 0,
+      "discovered_modules": [],
+      "external_import_roots": [],
+      "id": "live_exchange",
+      "internal_dependency_targets": [],
+      "name": "LIVE Exchange",
+      "owner": "Testnet Runtime",
+      "status": "PLANNED"
+    }
+  ],
+  "registry_schema": "chappie_architecture_registry/1.0.0",
+  "schema": "chappie_architecture_inventory/1.0.0",
+  "unmapped_paths": []
+}

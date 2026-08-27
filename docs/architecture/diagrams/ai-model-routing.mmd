@@ -1,0 +1,17 @@
+flowchart LR
+    T[Versioned AI task contract] --> R[Bounded facts + information cutoff]
+    R --> P[ModelProfile]
+    P --> M{ModelRouter}
+    M --> O[OllamaProvider<br/>implemented]
+    M -. planned .-> C[Cloud provider adapter<br/>not implemented]
+    O --> S[Structured JSON response]
+    C --> S
+    S --> V{Schema + fact-reference validation}
+    V -->|invalid| X[Reject; sanitized diagnostics only]
+    V -->|valid| A[Advisory ModelResponse]
+    A --> N[No Risk, trading, portfolio,<br/>or execution authority]
+
+    classDef gate fill:#fee2e2,stroke:#b91c1c,stroke-width:2px
+    classDef planned fill:#eff6ff,stroke:#60a5fa,stroke-dasharray:5 5
+    class M,V gate
+    class C planned
