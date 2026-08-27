@@ -1,4 +1,4 @@
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from decimal import Decimal
 from inspect import signature
 
@@ -9,22 +9,28 @@ from app.research.market_precursor.analysis import (
     DISCOVERY_CONDITION_CATALOGUE_IDENTITY,
     AllOfConditionV1,
     DiscoveryConditionIdentityV1,
+    DiscoveryConditionTemplateV1,
     DiscoverySemanticRoleV1,
     EqualityConditionSpecV1,
     EqualityFeatureConditionV1,
     EventDefinitionV1,
     EventDirectionV1,
+    FrozenConditionObservationV1,
     FrozenFeatureQuantilesV1,
     FutureLabelV1,
+    PairedFrozenConditionEvidenceV1,
     QuantileBucketV1,
     QuantileConditionSpecV1,
     QuantileFeatureConditionV1,
     SampleClassV1,
     baseline,
+    bind_discovery_condition_template,
     bucket_for_role,
     classify_sample,
     conditional_effect,
     discovery_condition_catalogue_v1,
+    evaluate_frozen_condition_on_split,
+    evaluate_frozen_condition_pair,
     fit_feature_research_quantiles,
 )
 
@@ -395,3 +401,193 @@ def test_catalogue_specs_have_no_thresholds_registration_or_mining_api():
         "threshold_optimizer",
     ):
         assert not hasattr(analysis, name)
+
+
+def _frozen(feature_name: str) -> FrozenFeatureQuantilesV1:
+    return FrozenFeatureQuantilesV1(
+        feature_name, Decimal(10), Decimal(25), Decimal(75), Decimal(90), 100
+    )
+
+
+def test_catalogue_binder_preserves_specs_order_and_ignores_extras_without_fitting(monkeypatch):
+    entries = discovery_condition_catalogue_v1().entries
+    two_child = entries[0]
+    sources = {
+        "cross_market.eth_minus_btc_return_15m": _frozen("cross_market.eth_minus_btc_return_15m"),
+        "cross_market.sol_minus_btc_return_15m": _frozen("cross_market.sol_minus_btc_return_15m"),
+        "unused": _frozen("unused"),
+    }
+    monkeypatch.setattr(
+        analysis,
+        "fit_feature_research_quantiles",
+        lambda *_args, **_kwargs: pytest.fail("binder must not fit quantiles"),
+    )
+    bound = bind_discovery_condition_template(two_child, sources)
+    assert tuple(child.feature_name for child in bound.children) == tuple(
+        spec.feature_name for spec in two_child.children
+    )
+    assert tuple(child.bucket for child in bound.children) == (
+        QuantileBucketV1.TOP_10,
+        QuantileBucketV1.TOP_10,
+    )
+    assert bound == bind_discovery_condition_template(two_child, sources)
+    assert bound == bind_discovery_condition_template(
+        two_child, {name: source for name, source in sources.items() if name != "unused"}
+    )
+
+
+def test_catalogue_binder_handles_three_children_equality_and_invalid_sources():
+    entries = discovery_condition_catalogue_v1().entries
+    three_child = entries[3]
+    sources = {spec.feature_name: _frozen(spec.feature_name) for spec in three_child.children}
+    bound = bind_discovery_condition_template(three_child, sources)
+    assert len(bound.children) == 3
+    equality_template = entries[4]
+    equality_bound = bind_discovery_condition_template(
+        equality_template, {"breakout_proximity": _frozen("breakout_proximity")}
+    )
+    assert equality_bound.children[0] == EqualityFeatureConditionV1(
+        "cross_market.all_three_direction_agreement", True
+    )
+    with pytest.raises(ValueError, match="required frozen quantiles are missing"):
+        bind_discovery_condition_template(three_child, {})
+    wrong = dict(sources)
+    first_name = three_child.children[0].feature_name
+    wrong[first_name] = _frozen("wrong")
+    with pytest.raises(ValueError, match="does not match frozen quantiles"):
+        bind_discovery_condition_template(three_child, wrong)
+
+
+def _observation(timestamp: int, level: str, future_return: str) -> FrozenConditionObservationV1:
+    future = Decimal(future_return)
+    return FrozenConditionObservationV1(
+        timestamp,
+        {"level": Decimal(level)},
+        future,
+        future + Decimal("0.01"),
+        future - Decimal("0.01"),
+    )
+
+
+def test_split_evidence_has_local_baseline_effect_medians_and_sample_policy():
+    condition = AllOfConditionV1((_top_condition(),))
+    event = EventDefinitionV1(15, 100, EventDirectionV1.UP)
+    observations = (
+        _observation(1, "80", "0.02"),
+        _observation(2, "20", "0.02"),
+        _observation(3, "90", "-0.01"),
+        _observation(4, "10", "-0.01"),
+    )
+    evidence = evaluate_frozen_condition_on_split(
+        observations,
+        condition,
+        event,
+        "FEATURE_RESEARCH",
+        DiscoveryConditionIdentityV1.JOINT_POSITIVE_RELATIVE_MOMENTUM,
+    )
+    assert evidence == evaluate_frozen_condition_on_split(
+        observations,
+        condition,
+        event,
+        "FEATURE_RESEARCH",
+        DiscoveryConditionIdentityV1.JOINT_POSITIVE_RELATIVE_MOMENTUM,
+    )
+    assert evidence.frozen_condition is condition
+    assert evidence.baseline_result.probability == Decimal("0.5")
+    effect = evidence.conditional_effect_result
+    assert (effect.occurrence_count, effect.event_count) == (2, 1)
+    assert effect.conditional_probability == Decimal("0.5")
+    assert effect.absolute_lift == Decimal(0)
+    assert effect.relative_lift == Decimal(1)
+    assert effect.median_future_return == Decimal("0.005")
+    assert effect.median_favorable_excursion == Decimal("0.015")
+    assert effect.median_adverse_excursion == Decimal("-0.005")
+    assert effect.sample_class is SampleClassV1.INSUFFICIENT_SAMPLE
+
+
+def test_paired_evidence_freezes_condition_event_and_split_local_baselines():
+    identity = DiscoveryConditionIdentityV1.JOINT_POSITIVE_RELATIVE_MOMENTUM
+    quantiles = fit_feature_research_quantiles("level", (Decimal(value) for value in range(100)))
+    template = DiscoveryConditionTemplateV1(identity, (_q("level", QuantileBucketV1.TOP_25),))
+    condition = bind_discovery_condition_template(template, {"level": quantiles})
+    event = EventDefinitionV1(15, 100, EventDirectionV1.UP)
+    research = (
+        _observation(1, "80", "0.02"),
+        _observation(2, "20", "0.02"),
+        _observation(3, "90", "-0.01"),
+        _observation(4, "10", "-0.01"),
+    )
+    validation = (
+        _observation(10, "80", "0.02"),
+        _observation(11, "90", "0.03"),
+        _observation(12, "10", "-0.01"),
+    )
+    before = condition
+    paired = evaluate_frozen_condition_pair(identity, condition, event, research, validation)
+    assert paired.frozen_condition is condition
+    assert paired.feature_research.frozen_condition is condition
+    assert paired.validation.frozen_condition is condition
+    assert paired.feature_research.event_definition == paired.validation.event_definition == event
+    assert paired.feature_research.baseline_result.probability == Decimal("0.5")
+    assert paired.validation.baseline_result.probability == Decimal(2) / Decimal(3)
+    extreme = tuple(
+        _observation(item.timestamp_ms, "1000", str(item.future_return)) for item in validation
+    )
+    changed = evaluate_frozen_condition_pair(identity, condition, event, research, extreme)
+    assert changed.feature_research == paired.feature_research
+    assert changed.validation != paired.validation
+    assert changed.frozen_condition == before == condition
+    assert condition.children[0].frozen_quantiles == quantiles
+    mismatched_validation = replace(
+        paired.validation,
+        event_definition=EventDefinitionV1(15, 200, EventDirectionV1.UP),
+    )
+    with pytest.raises(ValueError, match="paired evidence identity is inconsistent"):
+        PairedFrozenConditionEvidenceV1(
+            identity,
+            condition,
+            event,
+            paired.feature_research,
+            mismatched_validation,
+        )
+
+
+def test_split_evaluation_rejects_missing_invalid_and_unordered_observations():
+    condition = AllOfConditionV1((_top_condition(),))
+    event = EventDefinitionV1(15, 100, EventDirectionV1.UP)
+    identity = DiscoveryConditionIdentityV1.JOINT_POSITIVE_RELATIVE_MOMENTUM
+    missing = FrozenConditionObservationV1(1, {}, Decimal(0), Decimal(0), Decimal(0))
+    with pytest.raises(ValueError, match="required feature is missing"):
+        evaluate_frozen_condition_on_split((missing,), condition, event, "split", identity)
+    invalid = FrozenConditionObservationV1(
+        1, {"level": Decimal("NaN")}, Decimal(0), Decimal(0), Decimal(0)
+    )
+    with pytest.raises(ValueError, match="finite Decimal"):
+        evaluate_frozen_condition_on_split((invalid,), condition, event, "split", identity)
+    with pytest.raises(ValueError, match="strictly increasing"):
+        evaluate_frozen_condition_on_split(
+            (_observation(2, "80", "0"), _observation(2, "80", "0")),
+            condition,
+            event,
+            "split",
+            identity,
+        )
+    with pytest.raises(ValueError, match="strictly increasing"):
+        evaluate_frozen_condition_on_split(
+            (_observation(3, "80", "0"), _observation(2, "80", "0")),
+            condition,
+            event,
+            "split",
+            identity,
+        )
+
+
+def test_observation_copies_feature_mapping_and_is_immutable():
+    features = {"level": Decimal(80)}
+    observation = FrozenConditionObservationV1(1, features, Decimal(0), Decimal(0), Decimal(0))
+    features["level"] = Decimal(0)
+    assert observation.features["level"] == Decimal(80)
+    with pytest.raises(TypeError):
+        observation.features["level"] = Decimal(0)
+    with pytest.raises(FrozenInstanceError):
+        observation.timestamp_ms = 2

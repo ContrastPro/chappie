@@ -4,7 +4,9 @@ from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from enum import StrEnum
+from itertools import pairwise
 from statistics import median
+from types import MappingProxyType
 
 
 class EventDirectionV1(StrEnum):
@@ -264,6 +266,27 @@ class AllOfConditionV1:
         return all(results)
 
 
+def bind_discovery_condition_template(
+    template: DiscoveryConditionTemplateV1,
+    frozen_quantiles_by_feature: Mapping[str, FrozenFeatureQuantilesV1],
+) -> AllOfConditionV1:
+    children = []
+    for spec in template.children:
+        if isinstance(spec, QuantileConditionSpecV1):
+            if spec.feature_name not in frozen_quantiles_by_feature:
+                raise ValueError(f"required frozen quantiles are missing: {spec.feature_name}")
+            children.append(
+                QuantileFeatureConditionV1(
+                    spec.feature_name,
+                    spec.bucket,
+                    frozen_quantiles_by_feature[spec.feature_name],
+                )
+            )
+        else:
+            children.append(EqualityFeatureConditionV1(spec.feature_name, spec.expected_value))
+    return AllOfConditionV1(tuple(children))
+
+
 def _percentile(values: tuple[Decimal, ...], numerator: int) -> Decimal:
     # Linear interpolation on the inclusive [0, n - 1] rank interval.
     rank = Decimal(numerator) * Decimal(len(values) - 1) / Decimal(100)
@@ -387,4 +410,124 @@ def conditional_effect(
         median(item.favorable_excursion for item in selected),
         median(item.adverse_excursion for item in selected),
         classify_sample(len(selected)),
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class FrozenConditionObservationV1:
+    timestamp_ms: int
+    features: Mapping[str, object]
+    future_return: Decimal
+    favorable_excursion: Decimal
+    adverse_excursion: Decimal
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.timestamp_ms, int) or isinstance(self.timestamp_ms, bool):
+            raise TypeError("observation timestamp is invalid")
+        object.__setattr__(self, "features", MappingProxyType(dict(self.features)))
+        if any(
+            not isinstance(value, Decimal) or not value.is_finite()
+            for value in (
+                self.future_return,
+                self.favorable_excursion,
+                self.adverse_excursion,
+            )
+        ):
+            raise ValueError("observation label values must be finite Decimals")
+
+
+@dataclass(frozen=True, slots=True)
+class FrozenConditionSplitEvidenceV1:
+    split_name: str
+    condition_identity: DiscoveryConditionIdentityV1
+    frozen_condition: AllOfConditionV1
+    event_definition: EventDefinitionV1
+    baseline_result: EventBaselineV1
+    conditional_effect_result: ConditionalEffectV1
+
+
+@dataclass(frozen=True, slots=True)
+class PairedFrozenConditionEvidenceV1:
+    condition_identity: DiscoveryConditionIdentityV1
+    frozen_condition: AllOfConditionV1
+    event_definition: EventDefinitionV1
+    feature_research: FrozenConditionSplitEvidenceV1
+    validation: FrozenConditionSplitEvidenceV1
+
+    def __post_init__(self) -> None:
+        for evidence in (self.feature_research, self.validation):
+            if (
+                evidence.condition_identity is not self.condition_identity
+                or evidence.frozen_condition is not self.frozen_condition
+                or evidence.event_definition != self.event_definition
+            ):
+                raise ValueError("paired evidence identity is inconsistent")
+
+
+def evaluate_frozen_condition_on_split(
+    observations: Iterable[FrozenConditionObservationV1],
+    condition: AllOfConditionV1,
+    event_definition: EventDefinitionV1,
+    split_name: str,
+    condition_identity: DiscoveryConditionIdentityV1,
+) -> FrozenConditionSplitEvidenceV1:
+    items = tuple(observations)
+    if not split_name:
+        raise ValueError("split name is required")
+    timestamps = tuple(item.timestamp_ms for item in items)
+    if any(current <= previous for previous, current in pairwise(timestamps)):
+        raise ValueError("observations must have strictly increasing timestamps")
+    labels = tuple(
+        FutureLabelV1(
+            item.timestamp_ms,
+            item.future_return,
+            item.favorable_excursion,
+            item.adverse_excursion,
+        )
+        for item in items
+    )
+    baseline_result = baseline(labels, event_definition)
+    matches_by_timestamp = {item.timestamp_ms: condition.matches(item.features) for item in items}
+    effect = conditional_effect(
+        labels,
+        event_definition,
+        lambda label: matches_by_timestamp[label.timestamp_ms],
+    )
+    return FrozenConditionSplitEvidenceV1(
+        split_name,
+        condition_identity,
+        condition,
+        event_definition,
+        baseline_result,
+        effect,
+    )
+
+
+def evaluate_frozen_condition_pair(
+    condition_identity: DiscoveryConditionIdentityV1,
+    frozen_condition: AllOfConditionV1,
+    event_definition: EventDefinitionV1,
+    feature_research_observations: Iterable[FrozenConditionObservationV1],
+    validation_observations: Iterable[FrozenConditionObservationV1],
+) -> PairedFrozenConditionEvidenceV1:
+    research = evaluate_frozen_condition_on_split(
+        feature_research_observations,
+        frozen_condition,
+        event_definition,
+        "FEATURE_RESEARCH",
+        condition_identity,
+    )
+    validation = evaluate_frozen_condition_on_split(
+        validation_observations,
+        frozen_condition,
+        event_definition,
+        "VALIDATION",
+        condition_identity,
+    )
+    return PairedFrozenConditionEvidenceV1(
+        condition_identity,
+        frozen_condition,
+        event_definition,
+        research,
+        validation,
     )
