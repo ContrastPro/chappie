@@ -230,6 +230,7 @@ def test_provider_errors_missingness_and_no_implementation_creep_are_contract_on
     assert {path.name for path in package.iterdir() if path.is_file()} == {
         "__init__.py",
         "contracts.py",
+        "raw_evidence.py",
         "request_plan.py",
         "transport.py",
     }
