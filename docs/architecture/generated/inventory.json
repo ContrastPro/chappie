@@ -813,13 +813,14 @@
       "declared_paths": [
         "app/research/capital_flow"
       ],
-      "discovered_file_count": 10,
+      "discovered_file_count": 11,
       "discovered_modules": [
         "app.research.capital_flow",
         "app.research.capital_flow.alignment",
         "app.research.capital_flow.binance_breadth_authority",
         "app.research.capital_flow.calendar",
         "app.research.capital_flow.catalogue",
+        "app.research.capital_flow.cboe_vix_authority",
         "app.research.capital_flow.contracts",
         "app.research.capital_flow.fred_alfred_authority",
         "app.research.capital_flow.free_source_validation",
