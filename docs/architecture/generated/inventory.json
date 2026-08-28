@@ -813,7 +813,7 @@
       "declared_paths": [
         "app/research/capital_flow"
       ],
-      "discovered_file_count": 12,
+      "discovered_file_count": 13,
       "discovered_modules": [
         "app.research.capital_flow",
         "app.research.capital_flow.alignment",
@@ -821,6 +821,7 @@
         "app.research.capital_flow.calendar",
         "app.research.capital_flow.catalogue",
         "app.research.capital_flow.cboe_vix_authority",
+        "app.research.capital_flow.cboe_vix_publication",
         "app.research.capital_flow.cboe_vix_transport",
         "app.research.capital_flow.contracts",
         "app.research.capital_flow.fred_alfred_authority",
