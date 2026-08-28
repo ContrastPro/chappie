@@ -719,7 +719,7 @@
         "app/cli.py",
         "app/tools"
       ],
-      "discovered_file_count": 35,
+      "discovered_file_count": 36,
       "discovered_modules": [
         "app.cli",
         "app.tools",
@@ -732,6 +732,7 @@
         "app.tools.chappie_ai_smoke",
         "app.tools.chappie_knowledge",
         "app.tools.chappie_project_qa",
+        "app.tools.fred_alfred_v2_acquire",
         "app.tools.leverage_stress_analyze",
         "app.tools.leverage_stress_download",
         "app.tools.long_history_analyze",
