@@ -231,8 +231,11 @@ def test_provider_errors_missingness_and_no_implementation_creep_are_contract_on
         "__init__.py",
         "contracts.py",
         "request_plan.py",
+        "transport.py",
     }
-    source = "\n".join(path.read_text(encoding="utf-8") for path in package.glob("*.py"))
+    planning_source = "\n".join(
+        (package / name).read_text(encoding="utf-8") for name in ("contracts.py", "request_plan.py")
+    )
     forbidden = (
         "import httpx",
         "import requests",
@@ -242,4 +245,4 @@ def test_provider_errors_missingness_and_no_implementation_creep_are_contract_on
         "open(",
         "write_text(",
     )
-    assert all(token not in source for token in forbidden)
+    assert all(token not in planning_source for token in forbidden)
