@@ -173,8 +173,9 @@ def _prefix_records(chunks: Iterable[bytes], count: int = 2) -> tuple[dict[str, 
 
 
 def _validate_prefix_schema(records: tuple[dict[str, object], ...]) -> None:
+    required = {"date", "totalCirculating", "totalCirculatingUSD"}
     for record in records:
-        if set(record) != {"date", "totalCirculating", "totalCirculatingUSD"}:
+        if not required.issubset(record):
             raise ValueError("DEFILLAMA_STABLECOIN_FILTER_SEMANTICS_CHANGED")
         if not isinstance(record["totalCirculating"], dict) or not isinstance(
             record["totalCirculatingUSD"], dict
@@ -187,6 +188,20 @@ def _validate_prefix_schema(records: tuple[dict[str, object], ...]) -> None:
             raise ValueError("DEFILLAMA_STABLECOIN_FILTER_SEMANTICS_CHANGED")
 
 
+def _semantic_prefix_records(
+    records: tuple[dict[str, object], ...],
+) -> tuple[dict[str, object], ...]:
+    """Bind filter evidence to required authority semantics, not optional provider fields."""
+    return tuple(
+        {
+            "date": record["date"],
+            "totalCirculating": {"peggedUSD": record["totalCirculating"]["peggedUSD"]},
+            "totalCirculatingUSD": {"peggedUSD": record["totalCirculatingUSD"]["peggedUSD"]},
+        }
+        for record in records
+    )
+
+
 def verify_defillama_stablecoin_filters(
     *, client: DefiLlamaHttpClient, prefix_records: int = 2
 ) -> tuple[DefiLlamaFilterEvidenceV1, ...]:
@@ -197,7 +212,9 @@ def verify_defillama_stablecoin_filters(
         with open_defillama_stablecoin_stream(asset_id, client=client) as chunks:
             records = _prefix_records(chunks, prefix_records)
         _validate_prefix_schema(records)
-        item = filter_evidence_from_prefix(asset_id, symbol, records, fingerprints)
+        item = filter_evidence_from_prefix(
+            asset_id, symbol, _semantic_prefix_records(records), fingerprints
+        )
         fingerprints.add(item.response_fingerprint)
         evidence.append(item)
     return tuple(evidence)

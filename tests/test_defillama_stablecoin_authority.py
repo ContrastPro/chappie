@@ -8,12 +8,18 @@ import pytest
 from app.research.capital_flow.defillama_stablecoin_authority import (
     DEFILLAMA_FILTER_DOCUMENTATION_STATUS,
     DEFILLAMA_STABLECOIN_ASSETS,
+    DefiLlamaStablecoinRowV1,
     filter_evidence_from_prefix,
     parse_bounded_defillama_stablecoin_json,
 )
 
 
-def _record(timestamp: str, usd: str = "10", circulating: str = "10") -> str:
+def _record(
+    timestamp: str,
+    usd: str = "10",
+    circulating: str = "10",
+    extras: str = "",
+) -> str:
     return (
         '{"date":"'
         + timestamp
@@ -21,7 +27,9 @@ def _record(timestamp: str, usd: str = "10", circulating: str = "10") -> str:
         + circulating
         + '},"totalCirculatingUSD":{"peggedUSD":'
         + usd
-        + "}}"
+        + "}"
+        + extras
+        + "}"
     )
 
 
@@ -98,6 +106,50 @@ def test_schema_timestamp_order_and_duplicates() -> None:
             asset_id=1,
             symbol="USDT",
             filter_evidence=evidence,
+        )
+
+
+def test_required_schema_accepts_ignored_top_level_extras_and_semantic_duplicates() -> None:
+    evidence = _evidence(1, "USDT")
+    result = parse_bounded_defillama_stablecoin_json(
+        [
+            "[",
+            _record("1693526400", "10", extras=',"totalUnreleased":{"peggedUSD":1}'),
+            ",",
+            _record(
+                "1693526400",
+                "10",
+                extras=',"totalUnreleased":{"peggedUSD":999},"futureField":null',
+            ),
+            "]",
+        ],
+        asset_id=1,
+        symbol="USDT",
+        filter_evidence=evidence,
+    )
+    assert result.rows == (DefiLlamaStablecoinRowV1(datetime(2023, 9, 1, tzinfo=UTC), Decimal(10)),)
+    assert result.quality.identical_duplicate_count == 1
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        '{"totalCirculating":{"peggedUSD":1},"totalCirculatingUSD":{"peggedUSD":1}}',
+        '{"date":"1693526400","totalCirculatingUSD":{"peggedUSD":1}}',
+        '{"date":"1693526400","totalCirculating":{"peggedUSD":1}}',
+        '{"date":"1693526400","totalCirculating":[],"totalCirculatingUSD":{"peggedUSD":1}}',
+        '{"date":"1693526400","totalCirculating":{"peggedUSD":1},"totalCirculatingUSD":[]}',
+        '{"date":"1693526400","totalCirculating":{},"totalCirculatingUSD":{"peggedUSD":1}}',
+        '{"date":"1693526400","totalCirculating":{"peggedUSD":1},"totalCirculatingUSD":{"peggedUSD":null}}',
+    ],
+)
+def test_required_schema_fields_remain_fail_closed(record: str) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        parse_bounded_defillama_stablecoin_json(
+            ["[", record, "]"],
+            asset_id=1,
+            symbol="USDT",
+            filter_evidence=_evidence(1, "USDT"),
         )
 
 

@@ -179,7 +179,8 @@ def _complete_record(reader: _ArrayReader, fields: dict[str, object]) -> Mapping
 
 
 def _market_cap(fields: Mapping[str, object]) -> Decimal:
-    if set(fields) != {"date", "totalCirculating", "totalCirculatingUSD"}:
+    required = {"date", "totalCirculating", "totalCirculatingUSD"}
+    if not required.issubset(fields):
         raise ValueError("unexpected DefiLlama record schema")
     circulating = fields["totalCirculating"]
     usd = fields["totalCirculatingUSD"]

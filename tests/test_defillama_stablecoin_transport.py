@@ -170,6 +170,28 @@ def test_ignored_filter_schema_and_utf8_fail_closed() -> None:
         pass
 
 
+def test_filter_fingerprint_ignores_optional_top_level_fields() -> None:
+    with_optional = [
+        b"[",
+        record("1511913600", "110105")[:-1] + b',"totalUnreleased":{}}',
+        b",",
+        record("1512000000", "110105")[:-1] + b',"totalUnreleased":{}}',
+    ]
+    optional_evidence = verify_defillama_stablecoin_filters(
+        client=Client(
+            [
+                Response(chunks=with_optional),
+                Response(chunks=prefix(2)),
+                Response(chunks=prefix(5)),
+            ]
+        )
+    )
+    baseline_evidence = verify_defillama_stablecoin_filters(
+        client=Client([Response(chunks=prefix(asset)) for asset in (1, 2, 5)])
+    )
+    assert optional_evidence[0].response_fingerprint == baseline_evidence[0].response_fingerprint
+
+
 def test_parser_cutoff_closes_response_without_future_tail() -> None:
     response = Response(
         chunks=[
