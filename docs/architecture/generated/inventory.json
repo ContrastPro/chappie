@@ -814,7 +814,7 @@
       "declared_paths": [
         "app/research/capital_flow"
       ],
-      "discovered_file_count": 28,
+      "discovered_file_count": 29,
       "discovered_modules": [
         "app.research.capital_flow",
         "app.research.capital_flow.alignment",
@@ -838,6 +838,7 @@
         "app.research.capital_flow.fred_alfred_v2_acquisition.transport",
         "app.research.capital_flow.fred_alfred_v2_availability",
         "app.research.capital_flow.fred_alfred_v2_pit",
+        "app.research.capital_flow.fred_alfred_v2_publication",
         "app.research.capital_flow.fred_alfred_v2_semantic",
         "app.research.capital_flow.free_source_validation",
         "app.research.capital_flow.free_v1",
