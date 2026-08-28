@@ -814,11 +814,12 @@
       "declared_paths": [
         "app/research/capital_flow"
       ],
-      "discovered_file_count": 30,
+      "discovered_file_count": 31,
       "discovered_modules": [
         "app.research.capital_flow",
         "app.research.capital_flow.alignment",
         "app.research.capital_flow.binance_breadth_authority",
+        "app.research.capital_flow.binance_breadth_authority_v2",
         "app.research.capital_flow.calendar",
         "app.research.capital_flow.catalogue",
         "app.research.capital_flow.cboe_vix_authority",
