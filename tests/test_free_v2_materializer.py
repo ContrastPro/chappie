@@ -196,13 +196,14 @@ def test_staleness_transition_is_explicit() -> None:
 def test_publication_round_trip_manifest_last_create_only_and_tamper(tmp_path) -> None:
     rows = materialize_timestamp(_inputs(), T)
     phases = []
-    result = publish_feature_dataset(rows, AUTH, tmp_path, phase_hook=phases.append)
+    root = tmp_path / "dataset"
+    result = publish_feature_dataset(rows, AUTH, root, phase_hook=phases.append)
     assert phases == ["artifacts_verified", "artifacts_published", "manifest_published"]
     assert result.row_count == 15
-    assert verify_feature_dataset(tmp_path, AUTH) == result
+    assert verify_feature_dataset(root, AUTH) == result
     with pytest.raises(FileExistsError):
-        publish_feature_dataset(rows, AUTH, tmp_path)
-    artifact = tmp_path / "features.ndjson"
+        publish_feature_dataset(rows, AUTH, root)
+    artifact = root / "features.ndjson"
     artifact.write_text(artifact.read_text() + json.dumps({"tamper": True}) + "\n")
     with pytest.raises(ValueError, match="artifact digest mismatch"):
-        verify_feature_dataset(tmp_path, AUTH)
+        verify_feature_dataset(root, AUTH)

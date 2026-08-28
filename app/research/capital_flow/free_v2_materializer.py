@@ -375,6 +375,46 @@ def _load_fred_values(root: Path, timestamp: datetime) -> dict[str, tuple[Causal
     return result
 
 
+def _load_fred_values_range(
+    root: Path, start: datetime, end_exclusive: datetime
+) -> dict[str, tuple[CausalValueV1, ...]]:
+    """Load every PIT value whose effective interval overlaps an execution chunk."""
+    result: dict[str, tuple[CausalValueV1, ...]] = {}
+    for series_id in ("NASDAQCOM", "VIXCLS", "DEXJPUS", "DTWEXBGS", "DGS2", "DGS10", "STLFSI4"):
+        path = root / "canonical" / f"canonical_{series_id.lower()}.ndjson"
+        values: list[CausalValueV1] = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            item = json.loads(line)
+            usable = _parse_utc(item["usable_at_utc"])
+            effective = (
+                None
+                if item["effective_until_utc"] is None
+                else _parse_utc(item["effective_until_utc"])
+            )
+            if (
+                usable >= end_exclusive
+                or (effective is not None and effective <= start)
+                or item["value"] is None
+                or item["value_state"] != "OBSERVED_VALUE"
+            ):
+                continue
+            reference = date.fromisoformat(item["reference_date"])
+            values.append(
+                CausalValueV1(
+                    item["selected_vintage_identity"],
+                    reference,
+                    Decimal(item["value"]),
+                    usable,
+                    _fred_stale_after(series_id, reference),
+                    nasdaq_regular_session_close(reference) if series_id == "NASDAQCOM" else None,
+                )
+            )
+        result[series_id] = tuple(
+            sorted(values, key=lambda item: (item.reference_date, item.usable_at_utc))
+        )
+    return result
+
+
 def _load_stablecoin_values(
     root: Path, timestamp: datetime
 ) -> dict[str, tuple[CausalValueV1, ...]]:
@@ -445,10 +485,11 @@ def load_real_materializer_inputs(
     binance_root: Path = BINANCE_BREADTH_V2_ROOT,
     defillama_root: Path = DEFILLAMA_PUBLICATION_ROOT,
     fred_root: Path = FRED_ALFRED_V2_PUBLICATION_ROOT,
+    verified_authorities: tuple[SourceAuthorityBindingV1, ...] | None = None,
 ) -> MaterializerInputsV1:
     """Verify and load only the bounded real authority rows needed at one timestamp."""
     at = validate_feature_timestamp(timestamp)
-    authorities = verify_real_source_authorities(
+    authorities = verified_authorities or verify_real_source_authorities(
         binance_root=binance_root, defillama_root=defillama_root, fred_root=fred_root
     )
     fred = _load_fred_values(fred_root, at)
@@ -458,6 +499,59 @@ def load_real_materializer_inputs(
         _load_stablecoin_values(defillama_root, at),
         fred,
     )
+
+
+def load_real_materializer_chunk_inputs(
+    start: datetime,
+    end_exclusive: datetime,
+    authorities: tuple[SourceAuthorityBindingV1, ...],
+    *,
+    binance_root: Path = BINANCE_BREADTH_V2_ROOT,
+    defillama_root: Path = DEFILLAMA_PUBLICATION_ROOT,
+    fred_root: Path = FRED_ALFRED_V2_PUBLICATION_ROOT,
+) -> MaterializerInputsV1:
+    """Load one bounded execution chunk after authorities were verified once."""
+    first = validate_feature_timestamp(start)
+    if end_exclusive <= first or end_exclusive > FEATURE_TIMELINE_END_EXCLUSIVE:
+        raise ValueError("invalid materializer chunk")
+    last = end_exclusive - timedelta(minutes=1)
+    fred = _load_fred_values_range(fred_root, first, end_exclusive)
+    stablecoins = _load_stablecoin_values(defillama_root, last)
+    lower = first - timedelta(minutes=61)
+    session_opens = {
+        item.source_session_close_utc - timedelta(minutes=1)  # type: ignore[operator]
+        for item in fred.get("NASDAQCOM", ())
+        if item.source_session_close_utc is not None and item.usable_at_utc <= last
+    }
+    last_session_open = max(session_opens, default=lower)
+    result: dict[str, dict[datetime, BinanceCandleV1]] = {}
+    from .free_v2_formulas import CRYPTO_SYMBOLS
+
+    for symbol in CRYPTO_SYMBOLS:
+        selected: dict[datetime, BinanceCandleV1] = {}
+        with (binance_root / "canonical" / f"{symbol}.csv").open(
+            newline="", encoding="utf-8"
+        ) as handle:
+            reader = csv.DictReader(handle)
+            if tuple(reader.fieldnames or ()) != BINANCE_BREADTH_V2_SCHEMA:
+                raise ValueError("Binance V2 canonical schema mismatch")
+            for row in reader:
+                opened = datetime.fromtimestamp(int(row["open_time_ms"]) / 1_000, UTC)
+                needed = lower <= opened < end_exclusive or (
+                    symbol == "BTCUSDT" and opened in session_opens
+                )
+                if needed:
+                    selected[opened] = BinanceCandleV1(
+                        symbol,
+                        opened,
+                        Decimal(row["close"]),
+                        Decimal(row["quote_volume"]),
+                        _digest((BINANCE_V2_AUTHORITY_DIGEST, symbol, row["open_time_ms"])),
+                    )
+                if opened >= end_exclusive and (symbol != "BTCUSDT" or opened > last_session_open):
+                    break
+        result[symbol] = selected
+    return MaterializerInputsV1(authorities, result, stablecoins, fred)
 
 
 def materialize_timestamp(

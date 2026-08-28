@@ -814,7 +814,7 @@
       "declared_paths": [
         "app/research/capital_flow"
       ],
-      "discovered_file_count": 33,
+      "discovered_file_count": 34,
       "discovered_modules": [
         "app.research.capital_flow",
         "app.research.capital_flow.alignment",
@@ -847,6 +847,7 @@
         "app.research.capital_flow.free_v2_formulas",
         "app.research.capital_flow.free_v2_materializer",
         "app.research.capital_flow.free_v2_publication",
+        "app.research.capital_flow.free_v2_streaming_runner",
         "app.research.capital_flow.nasdaq_calendar",
         "app.research.capital_flow.providers"
       ],
