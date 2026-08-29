@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
@@ -340,3 +341,102 @@ def test_final_verification_failure_removes_authoritative_outputs(
         )
     assert not final.exists()
     assert len(tuple((staging / "chunks").glob("*.json"))) == 1
+
+
+def test_read_only_status_cold_verified_and_corrupt(tmp_path: Path, monkeypatch) -> None:
+    staging = tmp_path / "staging"
+    final = tmp_path / "final"
+    cold = runner.inspect_streaming_materialization(
+        run_id="status-run", staging_root=staging, final_root=final, authorities=AUTH
+    )
+    assert cold.dataset_status == "ABSENT"
+    assert cold.processed_minutes == 0
+    assert not staging.exists() and not final.exists()
+
+    chunk = TimelineChunkV1(START, START + timedelta(minutes=2))
+    monkeypatch.setattr(runner, "calendar_month_chunks", lambda _start, _end: (chunk,))
+    staging.mkdir()
+    runner._canonical_json(
+        staging / "run.json",
+        runner._run_contract(
+            "status-run", runner.FEATURE_TIMELINE_START, runner.FEATURE_TIMELINE_END_EXCLUSIVE, AUTH
+        ),
+    )
+    runner._write_checkpoint(chunk, staging, AUTH, _rows)
+    partial = runner.inspect_streaming_materialization(
+        run_id="status-run", staging_root=staging, final_root=final, authorities=AUTH
+    )
+    assert partial.dataset_status == "INCOMPLETE_RESUMABLE"
+    assert partial.chunks[0].status == "VERIFIED" and partial.processed_minutes == 2
+
+    checkpoint = next((staging / "chunks").glob("*.json"))
+    checkpoint.write_text("{}")
+    corrupt = runner.inspect_streaming_materialization(
+        run_id="status-run", staging_root=staging, final_root=final, authorities=AUTH
+    )
+    assert corrupt.dataset_status == "CORRUPT"
+    assert corrupt.chunks[0].status == "INVALID" and corrupt.invalid_chunks
+
+
+def test_read_only_active_run_state_distinguishes_live_and_stale(tmp_path: Path) -> None:
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    lock = staging / "active.lock"
+    assert runner.active_run_state(staging) == "INACTIVE"
+    lock.write_text(f"pid={os.getpid()}\n")
+    assert runner.active_run_state(staging) == "ACTIVE"
+    lock.write_text("pid=999999999\n")
+    assert runner.active_run_state(staging) == "STALE_REQUIRES_MANUAL_INTERVENTION"
+
+
+def test_crash_left_pending_file_is_reported_and_resume_rejected(tmp_path: Path) -> None:
+    staging = tmp_path / "staging"
+    chunks = staging / "chunks"
+    chunks.mkdir(parents=True)
+    partial = chunks / ".20240101T0000-20240201T0000.crash.pending"
+    partial.write_bytes(b"partial")
+    status = runner.inspect_streaming_materialization(
+        run_id="pending-run", staging_root=staging, final_root=tmp_path / "final", authorities=AUTH
+    )
+    assert status.dataset_status == "CORRUPT"
+    assert status.chunks[0].status == "INVALID"
+    assert str(partial) in (status.chunks[0].error or "")
+    assert str(partial) in status.invalid_chunks
+    with pytest.raises(ValueError, match="partial temporary artifacts"):
+        run_streaming_materialization(
+            run_id="pending-run",
+            staging_root=staging,
+            final_root=tmp_path / "final",
+            start=START,
+            end_exclusive=START + timedelta(minutes=1),
+            authorities=AUTH,
+            materialize=_rows,
+        )
+    assert partial.read_bytes() == b"partial"
+
+
+def test_read_only_status_classifies_verified_final_dataset_complete(
+    tmp_path: Path, monkeypatch
+) -> None:
+    staging = tmp_path / "staging"
+    final = tmp_path / "final"
+    run_streaming_materialization(
+        run_id="bounded-complete",
+        staging_root=staging,
+        final_root=final,
+        start=START,
+        end_exclusive=START + timedelta(minutes=1),
+        authorities=AUTH,
+        materialize=_rows,
+    )
+    before = {path: path.read_bytes() for path in (*staging.rglob("*.*"), *final.rglob("*.*"))}
+    monkeypatch.setattr(runner, "verify_feature_dataset", lambda *_args, **_kwargs: object())
+    status = runner.inspect_streaming_materialization(
+        run_id="bounded-complete",
+        staging_root=staging,
+        final_root=final,
+        authorities=AUTH,
+    )
+    after = {path: path.read_bytes() for path in before}
+    assert status.dataset_status == "COMPLETE" and status.final_manifest_present
+    assert before == after

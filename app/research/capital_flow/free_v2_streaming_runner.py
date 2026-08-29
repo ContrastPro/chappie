@@ -55,6 +55,27 @@ class TimelineChunkV1:
         return int((self.end_exclusive - self.start).total_seconds() // 60)
 
 
+@dataclass(frozen=True, slots=True)
+class ChunkStatusV1:
+    chunk: TimelineChunkV1
+    status: str
+    error: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MaterializationStatusV1:
+    dataset_status: str
+    contract_compatible: bool
+    source_authority_status: str
+    chunks: tuple[ChunkStatusV1, ...]
+    processed_minutes: int
+    total_minutes: int
+    final_manifest_present: bool
+    active_run_state: str
+    invalid_chunks: tuple[str, ...]
+    causal_violations: int | None = None
+
+
 def iter_minutes(start: datetime, end_exclusive: datetime) -> Iterator[datetime]:
     if start.tzinfo != UTC or end_exclusive.tzinfo != UTC or start >= end_exclusive:
         raise ValueError("invalid exact UTC timeline")
@@ -125,6 +146,117 @@ def _run_contract(
         "feature_order": list(FEATURE_ORDER),
         **dataset_contract_payload(authorities),
     }
+
+
+def _active_run_state(staging: Path) -> str:
+    lock = staging / "active.lock"
+    if not lock.exists():
+        return "INACTIVE"
+    try:
+        text = lock.read_text(encoding="utf-8").strip()
+        pid = int(text.removeprefix("pid="))
+        os.kill(pid, 0)
+    except (OSError, ValueError):
+        return "STALE_REQUIRES_MANUAL_INTERVENTION"
+    return "ACTIVE"
+
+
+def active_run_state(staging: Path = FREE_V2_STAGING_ROOT) -> str:
+    """Return active/stale/inactive lock state without modifying execution state."""
+    return _active_run_state(staging)
+
+
+def _pending_files(staging: Path) -> tuple[Path, ...]:
+    if not staging.exists():
+        return ()
+    return tuple(sorted(staging.rglob("*.pending")))
+
+
+def inspect_streaming_materialization(
+    *,
+    run_id: str,
+    staging_root: Path = FREE_V2_STAGING_ROOT,
+    final_root: Path = FREE_V2_PUBLICATION_ROOT,
+    authorities: tuple[SourceAuthorityBindingV1, ...] | None = None,
+) -> MaterializationStatusV1:
+    """Inspect production progress without writing, materializing, or finalizing."""
+    verified = authorities or verify_real_source_authorities()
+    chunks = calendar_month_chunks(FEATURE_TIMELINE_START, FEATURE_TIMELINE_END_EXCLUSIVE)
+    expected_contract = json.loads(
+        _bytes(
+            _run_contract(run_id, FEATURE_TIMELINE_START, FEATURE_TIMELINE_END_EXCLUSIVE, verified)
+        )
+    )
+    marker = staging_root / "run.json"
+    compatible = True
+    marker_present = marker.exists()
+    if marker_present:
+        try:
+            compatible = json.loads(marker.read_text(encoding="utf-8")) == expected_contract
+        except Exception:  # noqa: BLE001 - malformed marker is incompatible
+            compatible = False
+    statuses: list[ChunkStatusV1] = []
+    invalid: list[str] = []
+    processed = 0
+    pending_files = _pending_files(staging_root)
+    classified_pending: set[Path] = set()
+    for chunk in chunks:
+        artifact, checkpoint = _chunk_paths(staging_root, chunk)
+        chunk_pending = tuple(path for path in pending_files if artifact.stem in path.name)
+        if chunk_pending:
+            classified_pending.update(chunk_pending)
+            error = "non-authoritative partial temporary artifact: " + ", ".join(
+                str(path) for path in chunk_pending
+            )
+            statuses.append(ChunkStatusV1(chunk, "INVALID", error))
+            invalid.extend(str(path) for path in chunk_pending)
+            continue
+        if not artifact.exists() and not checkpoint.exists():
+            statuses.append(ChunkStatusV1(chunk, "PENDING"))
+            continue
+        try:
+            _verify_checkpoint(chunk, artifact, checkpoint, verified)
+        except Exception as error:  # noqa: BLE001 - any checkpoint parse failure is invalid
+            statuses.append(ChunkStatusV1(chunk, "INVALID", str(error)))
+            invalid.append(chunk.identity)
+        else:
+            statuses.append(ChunkStatusV1(chunk, "VERIFIED"))
+            processed += chunk.minute_count
+    manifest = final_root / "manifest.json"
+    causal_violations: int | None = None
+    if final_root.exists():
+        try:
+            verify_feature_dataset(final_root, verified, require_full_timeline=True)
+            payload = json.loads(manifest.read_text(encoding="utf-8"))
+            causal_violations = sum(
+                int(item["causal_violation_count"]) for item in payload["quality"]
+            )
+            dataset_status = "COMPLETE" if causal_violations == 0 else "CORRUPT"
+        except Exception:  # noqa: BLE001 - any final verification failure is corrupt
+            dataset_status = "CORRUPT"
+    invalid.extend(str(path) for path in pending_files if path not in classified_pending)
+    final_exists = final_root.exists()
+    if final_exists and pending_files:
+        dataset_status = "CORRUPT"
+    elif not final_exists:
+        if invalid or not compatible or (not marker_present and processed):
+            dataset_status = "CORRUPT"
+        elif marker_present or processed:
+            dataset_status = "INCOMPLETE_RESUMABLE"
+        else:
+            dataset_status = "ABSENT"
+    return MaterializationStatusV1(
+        dataset_status,
+        compatible,
+        "VALIDATED",
+        tuple(statuses),
+        processed,
+        FEATURE_TIMELINE_MINUTES,
+        manifest.exists(),
+        _active_run_state(staging_root),
+        tuple(invalid),
+        causal_violations,
+    )
 
 
 def _rows_for_chunk(
@@ -304,6 +436,13 @@ def run_streaming_materialization(
     contract = _run_contract(run_id, start, end_exclusive, verified)
     notify = phase_hook or (lambda _: None)
     with _exclusive_run_lock(staging_root):
+        pending_files = _pending_files(staging_root)
+        if pending_files:
+            raise ValueError(
+                "non-authoritative partial temporary artifacts require manual inspection; "
+                "after confirming no active run, remove only these .pending files, then resume: "
+                + ", ".join(str(path) for path in pending_files)
+            )
         marker = staging_root / "run.json"
         if marker.exists():
             normalized_contract = json.loads(_bytes(contract))
@@ -316,10 +455,11 @@ def run_streaming_materialization(
             artifact, checkpoint = _chunk_paths(staging_root, chunk)
             if artifact.exists() or checkpoint.exists():
                 _verify_checkpoint(chunk, artifact, checkpoint, verified)
+                notify(f"chunk_reused:{chunk.identity}")
             else:
                 chunk_materialize = factory(chunk, verified)
                 _write_checkpoint(chunk, staging_root, verified, chunk_materialize)
-            notify(f"chunk_completed:{chunk.identity}")
+                notify(f"chunk_completed:{chunk.identity}")
         return _finalize(
             chunks,
             staging_root,

@@ -719,12 +719,13 @@
         "app/cli.py",
         "app/tools"
       ],
-      "discovered_file_count": 36,
+      "discovered_file_count": 37,
       "discovered_modules": [
         "app.cli",
         "app.tools",
         "app.tools.behavioral_market_analyze",
         "app.tools.binance_breadth_authority_download",
+        "app.tools.capital_flow_free_v2_materialize",
         "app.tools.capital_rotation_analyze",
         "app.tools.chappie_ai_benchmark",
         "app.tools.chappie_ai_closed_loop_benchmark",
