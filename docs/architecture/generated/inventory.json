@@ -719,7 +719,7 @@
         "app/cli.py",
         "app/tools"
       ],
-      "discovered_file_count": 39,
+      "discovered_file_count": 40,
       "discovered_modules": [
         "app.cli",
         "app.tools",
@@ -759,6 +759,7 @@
         "app.tools.testnet_phase4",
         "app.tools.testnet_phase4_remediate_zero_fee",
         "app.tools.testnet_stage4_sell",
+        "app.tools.tsunami_predictive_research",
         "app.tools.tsunami_research_targets"
       ],
       "external_import_roots": [
@@ -817,7 +818,7 @@
       "declared_paths": [
         "app/research/capital_flow"
       ],
-      "discovered_file_count": 37,
+      "discovered_file_count": 40,
       "discovered_modules": [
         "app.research.capital_flow",
         "app.research.capital_flow.alignment",
@@ -854,12 +855,16 @@
         "app.research.capital_flow.free_v2_streaming_runner",
         "app.research.capital_flow.nasdaq_calendar",
         "app.research.capital_flow.providers",
+        "app.research.capital_flow.tsunami_fold_engine",
         "app.research.capital_flow.tsunami_forecast_contract",
+        "app.research.capital_flow.tsunami_predictive_research",
+        "app.research.capital_flow.tsunami_research_execution",
         "app.research.capital_flow.tsunami_research_targets"
       ],
       "external_import_roots": [
         "exchange_calendars",
         "httpx",
+        "numpy",
         "pyarrow"
       ],
       "id": "capital_flow_context",
