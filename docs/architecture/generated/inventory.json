@@ -719,12 +719,13 @@
         "app/cli.py",
         "app/tools"
       ],
-      "discovered_file_count": 37,
+      "discovered_file_count": 38,
       "discovered_modules": [
         "app.cli",
         "app.tools",
         "app.tools.behavioral_market_analyze",
         "app.tools.binance_breadth_authority_download",
+        "app.tools.capital_flow_free_v2_analytical_view",
         "app.tools.capital_flow_free_v2_materialize",
         "app.tools.capital_rotation_analyze",
         "app.tools.chappie_ai_benchmark",
@@ -815,7 +816,7 @@
       "declared_paths": [
         "app/research/capital_flow"
       ],
-      "discovered_file_count": 35,
+      "discovered_file_count": 36,
       "discovered_modules": [
         "app.research.capital_flow",
         "app.research.capital_flow.alignment",
@@ -845,6 +846,7 @@
         "app.research.capital_flow.free_source_validation",
         "app.research.capital_flow.free_v1",
         "app.research.capital_flow.free_v2",
+        "app.research.capital_flow.free_v2_analytical_view",
         "app.research.capital_flow.free_v2_formulas",
         "app.research.capital_flow.free_v2_materializer",
         "app.research.capital_flow.free_v2_publication",
@@ -855,7 +857,8 @@
       ],
       "external_import_roots": [
         "exchange_calendars",
-        "httpx"
+        "httpx",
+        "pyarrow"
       ],
       "id": "capital_flow_context",
       "internal_dependency_targets": [

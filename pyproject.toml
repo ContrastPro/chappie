@@ -14,6 +14,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "httpx>=0.28",
     "exchange_calendars>=4.11",
+    "pyarrow>=21.0,<22.0",
     "tzdata>=2025.2; sys_platform == 'win32'",
 ]
 
