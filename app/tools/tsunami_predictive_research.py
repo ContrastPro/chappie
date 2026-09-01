@@ -26,6 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--analytical-root", type=Path, default=ANALYTICAL_ROOT)
     parser.add_argument("--target-root", type=Path, default=RESEARCH_TARGET_ROOT)
     parser.add_argument("--output-root", type=Path, default=RESULT_ROOT)
+    parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--describe", action="store_true")
     parser.add_argument("--benchmark", action="store_true")
     command = parser.add_mutually_exclusive_group()
@@ -45,8 +46,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
     if args.execute:
+        if args.workers < 1:
+            raise SystemExit("--workers must be positive")
         verify_bound_manifests(args.analytical_root, args.target_root)
-        result = execute_production_v2(args.output_root, args.analytical_root, args.target_root)
+        result = execute_production_v2(
+            args.output_root, args.analytical_root, args.target_root, max_workers=args.workers
+        )
         print(json.dumps(result, sort_keys=True))
         return 0
     if not args.describe and not args.benchmark:

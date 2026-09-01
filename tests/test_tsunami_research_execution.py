@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -21,6 +22,7 @@ from app.research.capital_flow.tsunami_research_execution import (
     HEARTBEAT_INTERVAL_SECONDS,
     LOCK_NAME,
     PHASES,
+    ArtifactIndexV1,
     CheckpointError,
     ExecutionPhase,
     GraphWorkUnitV2,
@@ -583,6 +585,68 @@ def test_phased_v2_invalid_checkpoint_fails_closed(tmp_path: Path) -> None:
         )
 
 
+def test_artifact_index_matches_verified_checkpoint_payload(tmp_path: Path) -> None:
+    unit = _unit()
+    write_verified_checkpoint(tmp_path, unit, {"genuine": True})
+    artifact = json.loads(next(tmp_path.rglob("*.result.json")).read_text(encoding="utf-8"))
+    index = ArtifactIndexV1.build(tmp_path)
+    assert (
+        index.artifact(
+            hashlib.sha256(
+                json.dumps(artifact, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+        )
+        == artifact
+    )
+    assert index.by_unit_identity[unit.identity].name == f"{unit.identity}.result.json"
+
+
+def test_parallel_phase_has_serial_equivalent_artifacts(tmp_path: Path) -> None:
+    units = tuple(_unit(f"{index}h") for index in range(1, 5))
+    resolvers = ((ExecutionPhase.CANDIDATE_EVALUATION, lambda _evidence: units),)
+    serial = tmp_path / "serial"
+    parallel = tmp_path / "parallel"
+    execute_phased_v2(serial, resolvers, _calculator, emit=lambda _: None, max_workers=1)
+    execute_phased_v2(parallel, resolvers, _calculator, emit=lambda _: None, max_workers=4)
+    assert sorted(path.read_bytes() for path in serial.rglob("*.result.json")) == sorted(
+        path.read_bytes() for path in parallel.rglob("*.result.json")
+    )
+
+
+def test_parallel_phase_preserves_completed_work_when_a_worker_fails(tmp_path: Path) -> None:
+    units = (_unit("1h"), _unit("4h"), _unit("12h"))
+    resolvers = ((ExecutionPhase.CANDIDATE_EVALUATION, lambda _evidence: units),)
+
+    def calculator(unit, heartbeat):
+        if unit.horizon == "4h":
+            time.sleep(0.03)
+            raise RuntimeError("intentional worker failure")
+        return {"unit": unit.identity}
+
+    with pytest.raises(RuntimeError, match="intentional worker failure"):
+        execute_phased_v2(tmp_path, resolvers, calculator, emit=lambda _: None, max_workers=3)
+    inventory = checkpoint_inventory(tmp_path, units)
+    assert [item.status for item in inventory] == ["REUSED", "PENDING", "REUSED"]
+
+
+def test_fold_dataset_cache_reuses_only_immutable_raw_data(tmp_path: Path, monkeypatch) -> None:
+    graph = ProductionGraphV2(tmp_path, tmp_path / "analytical", tmp_path / "targets")
+    calls = []
+    raw_data = object()
+
+    def load_fold_dataset(*args, **kwargs):
+        calls.append((args, kwargs))
+        return raw_data
+
+    monkeypatch.setattr(
+        "app.research.capital_flow.tsunami_fold_engine.load_fold_dataset", load_fold_dataset
+    )
+    first = graph._fold_dataset("WF1", "ASSESSMENT", "24h", "TSUNAMI")
+    second = graph._fold_dataset("WF1", "ASSESSMENT", "24h", "TSUNAMI")
+    assert first is raw_data and second is raw_data
+    assert len(calls) == 1
+
+
 def test_production_v2_planner_is_internal_complete_and_result_dependent(tmp_path: Path) -> None:
     graph = ProductionGraphV2(tmp_path, tmp_path / "analytical", tmp_path / "targets")
     resolvers = graph.resolvers()
@@ -621,8 +685,8 @@ def test_cli_execute_and_status_use_internal_v2_binding(
     monkeypatch.setattr(
         cli,
         "execute_production_v2",
-        lambda output, analytical, target: (
-            calls.append((output, analytical, target))
+        lambda output, analytical, target, *, max_workers: (
+            calls.append((output, analytical, target, max_workers))
             or {"execution": "genuine-v2", "manifest": "last"}
         ),
     )
@@ -641,6 +705,7 @@ def test_cli_execute_and_status_use_internal_v2_binding(
     ]
     assert cli.main([*roots, "--execute"]) == 0
     assert calls and json.loads(capsys.readouterr().out)["execution"] == "genuine-v2"
+    assert calls[0][-1] == 2
     assert cli.main([*roots, "--status"]) == 0
     assert json.loads(capsys.readouterr().out)["current_phase"] == "INPUT_VERIFY"
 

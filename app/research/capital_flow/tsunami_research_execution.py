@@ -6,11 +6,14 @@ import hashlib
 import json
 import os
 import time
+from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import asdict, dataclass, field
 from datetime import timedelta
 from enum import StrEnum
 from pathlib import Path
+from threading import RLock
 from typing import Self
 
 from .free_v2_materializer import FEATURE_ORDER
@@ -271,6 +274,11 @@ class ProductionGraphV2:
     root: Path
     analytical_root: Path
     target_root: Path
+    _artifact_index: ArtifactIndexV1 | None = field(default=None, init=False, repr=False)
+    _fold_cache: dict[tuple[object, ...], object] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _cache_lock: RLock = field(default_factory=RLock, init=False, repr=False)
 
     def _candidate_specs(self) -> tuple[tuple[str, tuple[tuple[str, str], ...]], ...]:
         specs: list[tuple[str, tuple[tuple[str, str], ...]]] = []
@@ -302,11 +310,49 @@ class ProductionGraphV2:
         )
 
     def _artifact(self, digest: str) -> dict[str, object]:
-        for path in (self.root / CHECKPOINT_ROOT_NAME).glob("*/*.result.json"):
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            if _digest(payload) == digest:
+        with self._cache_lock:
+            if self._artifact_index is None:
+                self._artifact_index = ArtifactIndexV1.build(self.root)
+            payload = self._artifact_index.artifact(digest)
+            if payload is not None:
+                return payload
+            # A phase can have just published dependencies after the index was built.
+            # Refresh once on a miss; steady-state lookups remain O(1).
+            self._artifact_index = ArtifactIndexV1.build(self.root)
+            payload = self._artifact_index.artifact(digest)
+            if payload is not None:
                 return payload
         raise CheckpointError(f"verified dependency artifact not found: {digest}")
+
+    def _fold_dataset(self, fold: str, phase: str, horizon: str, task: str) -> object:
+        """Cache immutable raw joined fold data; fitted state is never shared."""
+        key = (
+            fold,
+            phase,
+            horizon,
+            task,
+            ANALYTICAL_SEMANTIC_DIGEST,
+            TARGET_SEMANTIC_DIGEST,
+            TARGET_MANIFEST_SEMANTIC_DIGEST,
+            RESEARCH_CONTRACT_DIGEST,
+            _digest((FEATURE_ORDER, CHECKPOINT_SCHEMA)),
+        )
+        with self._cache_lock:
+            cached = self._fold_cache.get(key)
+            if cached is not None:
+                return cached
+            from .tsunami_fold_engine import load_fold_dataset
+
+            loaded = load_fold_dataset(
+                fold,
+                phase,  # type: ignore[arg-type]
+                horizon,
+                task,
+                analytical_root=self.analytical_root,
+                target_root=self.target_root,
+            )
+            self._fold_cache[key] = loaded
+            return loaded
 
     def _selected_units(self, evidence: Mapping[str, str]) -> tuple[GraphWorkUnitV2, ...]:
         return tuple(
@@ -595,24 +641,13 @@ class ProductionGraphV2:
             from .tsunami_fold_engine import (
                 checkpoint_evidence_bindings,
                 evaluate_fold,
-                load_fold_dataset,
             )
 
-            train = load_fold_dataset(
-                unit.fold or "",
-                "TRAIN",
-                unit.horizon or "",
-                unit.task or "",
-                analytical_root=self.analytical_root,
-                target_root=self.target_root,
+            train = self._fold_dataset(
+                unit.fold or "", "TRAIN", unit.horizon or "", unit.task or ""
             )
-            assessment = load_fold_dataset(
-                unit.fold or "",
-                "ASSESSMENT",
-                unit.horizon or "",
-                unit.task or "",
-                analytical_root=self.analytical_root,
-                target_root=self.target_root,
+            assessment = self._fold_dataset(
+                unit.fold or "", "ASSESSMENT", unit.horizon or "", unit.task or ""
             )
             parameters = dict(unit.hyperparameters)
             result = evaluate_fold(
@@ -682,27 +717,16 @@ class ProductionGraphV2:
             from .tsunami_fold_engine import (
                 ablation_evaluation,
                 family_ablation_evaluation,
-                load_fold_dataset,
             )
 
             selected = self._selected(unit.selected_configuration_digest or "")
             values = []
             for fold in WALK_FORWARD_FOLDS:
-                train = load_fold_dataset(
-                    fold.identity,
-                    "TRAIN",
-                    unit.horizon or "",
-                    unit.task or "",
-                    analytical_root=self.analytical_root,
-                    target_root=self.target_root,
+                train = self._fold_dataset(
+                    fold.identity, "TRAIN", unit.horizon or "", unit.task or ""
                 )
-                assessment = load_fold_dataset(
-                    fold.identity,
-                    "ASSESSMENT",
-                    unit.horizon or "",
-                    unit.task or "",
-                    analytical_root=self.analytical_root,
-                    target_root=self.target_root,
+                assessment = self._fold_dataset(
+                    fold.identity, "ASSESSMENT", unit.horizon or "", unit.task or ""
                 )
                 l2 = float(dict(selected["hyperparameters"]).get("l2", "0"))
                 result = (
@@ -743,26 +767,16 @@ class ProductionGraphV2:
         if unit.phase is ExecutionPhase.PERMUTATION_IMPORTANCE:
             return self._dispatch_permutation(unit)
         if unit.phase is ExecutionPhase.INTERACTION_EVALUATION:
-            from .tsunami_fold_engine import evaluate_fold, load_fold_dataset
+            from .tsunami_fold_engine import evaluate_fold
 
             selected = self._selected(unit.additive_configuration_digest or "")
             metrics = []
             for fold in WALK_FORWARD_FOLDS:
-                train = load_fold_dataset(
-                    fold.identity,
-                    "TRAIN",
-                    unit.horizon or "",
-                    unit.task or "",
-                    analytical_root=self.analytical_root,
-                    target_root=self.target_root,
+                train = self._fold_dataset(
+                    fold.identity, "TRAIN", unit.horizon or "", unit.task or ""
                 )
-                assessment = load_fold_dataset(
-                    fold.identity,
-                    "ASSESSMENT",
-                    unit.horizon or "",
-                    unit.task or "",
-                    analytical_root=self.analytical_root,
-                    target_root=self.target_root,
+                assessment = self._fold_dataset(
+                    fold.identity, "ASSESSMENT", unit.horizon or "", unit.task or ""
                 )
                 result = evaluate_fold(
                     train, assessment, "explicit_interaction_candidate", interactions=True
@@ -866,7 +880,6 @@ class ProductionGraphV2:
             BtcBaselineModelV2,
             PreprocessingV1,
             load_fitted_model,
-            load_fold_dataset,
             permute_held_out_family,
             permute_held_out_sensor,
             predict_from_fitted_model,
@@ -881,13 +894,8 @@ class ProductionGraphV2:
         for digest in selected["selected_fold_artifact_digests"]:
             fold_result = self._fold_result(str(digest))
             evidence = fold_result["evidence"]
-            assessment = load_fold_dataset(
-                str(evidence["fold"]),
-                "ASSESSMENT",
-                unit.horizon or "",
-                unit.task or "",
-                analytical_root=self.analytical_root,
-                target_root=self.target_root,
+            assessment = self._fold_dataset(
+                str(evidence["fold"]), "ASSESSMENT", unit.horizon or "", unit.task or ""
             )
             permuted = (
                 primitive(assessment, unit.family_exclusion or "", unit.permutation_index or 0)
@@ -1366,9 +1374,12 @@ def execute_production_v2(
     target_root: Path,
     *,
     emit: Callable[[str], None] = print,
+    max_workers: int = 1,
 ) -> dict[str, object]:
     graph = ProductionGraphV2(root, analytical_root, target_root)
-    execution = execute_phased_v2(root, graph.resolvers(), graph.dispatch, emit=emit)
+    execution = execute_phased_v2(
+        root, graph.resolvers(), graph.dispatch, emit=emit, max_workers=max_workers
+    )
     manifest = publish_final_v2(graph)
     return {"execution": execution, "manifest": manifest}
 
@@ -1474,6 +1485,54 @@ class CheckpointStateV1:
 
 class CheckpointError(RuntimeError):
     pass
+
+
+@dataclass(slots=True)
+class ArtifactIndexV1:
+    """Read-only, process-local lookup index for verified result artifacts."""
+
+    root: Path
+    by_digest: dict[str, Path] = field(default_factory=dict)
+    by_unit_identity: dict[str, Path] = field(default_factory=dict)
+    _payload_cache: OrderedDict[str, dict[str, object]] = field(default_factory=OrderedDict)
+    max_cached_payloads: int = 12
+
+    @classmethod
+    def build(cls, root: Path) -> Self:
+        index = cls(root)
+        for path in sorted((root / CHECKPOINT_ROOT_NAME).glob("*/*.checkpoint.json")):
+            checkpoint = json.loads(path.read_text(encoding="utf-8"))
+            if checkpoint.get("completion_state") != "VERIFIED":
+                continue
+            digest = checkpoint.get("result_semantic_digest")
+            identity = checkpoint.get("work_unit_identity")
+            relative = checkpoint.get("artifact_relative_path")
+            if (
+                not isinstance(digest, str)
+                or not isinstance(identity, str)
+                or not isinstance(relative, str)
+            ):
+                continue
+            artifact = root / Path(relative)
+            index.by_digest[digest] = artifact
+            index.by_unit_identity[identity] = artifact
+        return index
+
+    def artifact(self, digest: str) -> dict[str, object] | None:
+        cached = self._payload_cache.get(digest)
+        if cached is not None:
+            self._payload_cache.move_to_end(digest)
+            return cached
+        path = self.by_digest.get(digest)
+        if path is None:
+            return None
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        if _digest(payload) != digest:
+            raise CheckpointError(f"indexed artifact semantic digest mismatch at {path}")
+        self._payload_cache[digest] = payload
+        if len(self._payload_cache) > self.max_cached_payloads:
+            self._payload_cache.popitem(last=False)
+        return payload
 
 
 class ProductionLock:
@@ -1655,6 +1714,7 @@ def _execute_resolved_phase(
     started: float,
     emit: Callable[[str], None],
     monotonic: Callable[[], float],
+    max_workers: int = 1,
 ) -> int:
     if not units:
         raise CheckpointError("resolved phase must contain at least one work unit")
@@ -1667,8 +1727,11 @@ def _execute_resolved_phase(
         raise CheckpointError(
             f"invalid checkpoint for {item.unit.identity} at {item.path}; manual recovery required"
         )
+    if max_workers < 1:
+        raise ValueError("max_workers must be positive")
     completed = completed_before
     phase_total = len(units)
+    pending: list[tuple[int, V2Unit]] = []
     for phase_index, (unit, state) in enumerate(zip(units, inventory, strict=True), 1):
         if state.status == "REUSED":
             completed += 1
@@ -1683,28 +1746,73 @@ def _execute_resolved_phase(
                 )
             )
             continue
-        last_heartbeat = monotonic()
+        pending.append((phase_index, unit))
 
-        def heartbeat(current_unit: V2Unit = unit, current_phase_index: int = phase_index) -> None:
-            nonlocal last_heartbeat
-            now = monotonic()
-            if now - last_heartbeat >= HEARTBEAT_INTERVAL_SECONDS:
-                emit(
-                    format_progress(
-                        current_unit,  # type: ignore[arg-type]
-                        "HEARTBEAT",
-                        current_phase_index - 1,
-                        phase_total,
-                        now - started,
-                        None,
+    if max_workers == 1:
+        for phase_index, unit in pending:
+            last_heartbeat = monotonic()
+
+            def heartbeat(
+                current_unit: V2Unit = unit, current_phase_index: int = phase_index
+            ) -> None:
+                nonlocal last_heartbeat
+                now = monotonic()
+                if now - last_heartbeat >= HEARTBEAT_INTERVAL_SECONDS:
+                    emit(
+                        format_progress(
+                            current_unit,  # type: ignore[arg-type]
+                            "HEARTBEAT",
+                            current_phase_index - 1,
+                            phase_total,
+                            now - started,
+                            None,
+                        )
                     )
-                )
-                last_heartbeat = now
+                    last_heartbeat = now
 
-        result = calculator(unit, heartbeat)
+            result = calculator(unit, heartbeat)
+            if not result:
+                raise CheckpointError(f"calculator returned empty evidence for {unit.identity}")
+            write_verified_checkpoint(root, unit, result)  # type: ignore[arg-type]
+            completed += 1
+            elapsed = monotonic() - started
+            throughput = completed / elapsed if completed >= 2 and elapsed > 0 else None
+            emit(
+                format_progress(
+                    unit,  # type: ignore[arg-type]
+                    "CALCULATED",
+                    phase_index,
+                    phase_total,
+                    elapsed,
+                    throughput if estimated_total is not None else None,
+                )
+            )
+        return completed
+    else:
+        # Results are committed atomically as workers finish so an interrupted
+        # batch retains every completed unit. Progress output is deferred to the
+        # frozen order; artifact bytes are independent of completion order.
+        calculated: dict[int, Mapping[str, object]] = {}
+
+        def calculate(unit: V2Unit) -> Mapping[str, object]:
+            return calculator(unit, lambda: None)
+
+        with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="tsunami") as pool:
+            futures = {
+                pool.submit(calculate, unit): (phase_index, unit) for phase_index, unit in pending
+            }
+            for future in as_completed(futures):
+                phase_index, unit = futures[future]
+                result = future.result()
+                if not result:
+                    raise CheckpointError(f"calculator returned empty evidence for {unit.identity}")
+                write_verified_checkpoint(root, unit, result)  # type: ignore[arg-type]
+                calculated[phase_index] = result
+
+    for phase_index, unit in pending:
+        result = calculated[phase_index]
         if not result:
             raise CheckpointError(f"calculator returned empty evidence for {unit.identity}")
-        write_verified_checkpoint(root, unit, result)  # type: ignore[arg-type]
         completed += 1
         elapsed = monotonic() - started
         throughput = completed / elapsed if completed >= 2 and elapsed > 0 else None
@@ -1729,6 +1837,7 @@ def execute_phased_v2(
     estimated_total_units: int | None = None,
     emit: Callable[[str], None] = print,
     monotonic: Callable[[], float] = time.monotonic,
+    max_workers: int = 1,
 ) -> dict[str, object]:
     """Resolve and execute V2 phases only after actual upstream evidence verifies."""
     if (root / "manifest.json").exists():
@@ -1755,6 +1864,7 @@ def execute_phased_v2(
                 started=started,
                 emit=emit,
                 monotonic=monotonic,
+                max_workers=max_workers,
             )
             phase_inventory = checkpoint_inventory(root, units)  # type: ignore[arg-type]
             if any(item.status != "REUSED" for item in phase_inventory):
