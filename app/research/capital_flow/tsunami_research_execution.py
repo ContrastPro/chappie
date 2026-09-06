@@ -671,18 +671,52 @@ class ProductionGraphV2:
             briers = [item["evidence"]["metrics"].get("brier") for item in folds]
             valid_primary = [float(item) for item in primary if isinstance(item, (int, float))]
             valid_briers = [float(item) for item in briers if isinstance(item, (int, float))]
-            if not valid_primary:
-                raise CheckpointError("candidate has no mathematically available primary metric")
+            fold_metric_states = []
+            for fold in folds:
+                evidence = fold["evidence"]
+                metric = evidence["metrics"].get(metric_name)
+                if isinstance(metric, (int, float)):
+                    state, reason = "AVAILABLE", None
+                else:
+                    state = "PRIMARY_METRIC_UNAVAILABLE"
+                    reason = str(evidence["metrics"].get("reason") or metric or "UNDEFINED")
+                fold_metric_states.append(
+                    {"fold": evidence["fold"], "state": state, "reason": reason}
+                )
             prediction_digest = _digest(
                 [item["bindings"]["held_out_prediction_artifact_digest"] for item in folds]
             )
+            if not valid_primary:
+                reasons = sorted(
+                    {
+                        str(item["reason"])
+                        for item in fold_metric_states
+                        if item["reason"] is not None
+                    }
+                )
+                return {
+                    "kind": "CANDIDATE_AGGREGATE",
+                    "model": unit.model,
+                    "hyperparameters": list(unit.hyperparameters),
+                    "fold_artifact_digests": list(unit.fold_evidence_digests),
+                    "fold_metric_states": fold_metric_states,
+                    "primary_metric_state": "PRIMARY_METRIC_UNAVAILABLE",
+                    "primary_metric_unavailable_reasons": reasons,
+                    "primary_metric": None,
+                    "brier": sum(valid_briers) / len(valid_briers) if valid_briers else None,
+                    "selection_eligible": False,
+                    "prediction_evidence_digest": prediction_digest,
+                }
             return {
                 "kind": "CANDIDATE_AGGREGATE",
                 "model": unit.model,
                 "hyperparameters": list(unit.hyperparameters),
                 "fold_artifact_digests": list(unit.fold_evidence_digests),
+                "fold_metric_states": fold_metric_states,
+                "primary_metric_state": "PRIMARY_METRIC_AVAILABLE",
                 "primary_metric": sum(valid_primary) / len(valid_primary),
                 "brier": sum(valid_briers) / len(valid_briers) if valid_briers else 1.0,
+                "selection_eligible": True,
                 "prediction_evidence_digest": prediction_digest,
             }
         if unit.phase is ExecutionPhase.MODEL_SELECTION:
@@ -694,13 +728,31 @@ class ProductionGraphV2:
             candidates = [
                 CandidateEvidenceV1(
                     str(item["model"]),
-                    float(item["primary_metric"]),
-                    float(item["brier"]),
+                    float(item["primary_metric"])
+                    if isinstance(item.get("primary_metric"), (int, float))
+                    else None,
+                    float(item["brier"]) if isinstance(item.get("brier"), (int, float)) else None,
                     tuple(tuple(pair) for pair in item["hyperparameters"]),
+                    bool(
+                        item.get(
+                            "selection_eligible",
+                            isinstance(item.get("primary_metric"), (int, float)),
+                        )
+                    ),
                 )
                 for item in aggregates
             ]
             selected = select_candidate(candidates)
+            if selected is None:
+                return {
+                    "identity": "NO_SELECTABLE_CANDIDATE",
+                    "horizon": unit.horizon,
+                    "task": unit.task,
+                    "selection_state": "NO_SELECTABLE_CANDIDATE",
+                    "selection_eligible": False,
+                    "candidate_aggregate_digests": list(unit.candidate_aggregate_digests),
+                    "validation_accessed": False,
+                }
             selected_index = candidates.index(selected)
             aggregate = aggregates[selected_index]
             return {
@@ -712,6 +764,8 @@ class ProductionGraphV2:
                 "selected_aggregate_digest": unit.candidate_aggregate_digests[selected_index],
                 "selected_fold_artifact_digests": aggregate["fold_artifact_digests"],
                 "selected_prediction_evidence_digest": aggregate["prediction_evidence_digest"],
+                "selection_state": "SELECTED",
+                "selection_eligible": True,
             }
         if unit.phase in {ExecutionPhase.ABLATION, ExecutionPhase.FAMILY_CONTRIBUTION}:
             from .tsunami_fold_engine import (

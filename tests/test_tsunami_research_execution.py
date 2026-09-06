@@ -647,6 +647,66 @@ def test_fold_dataset_cache_reuses_only_immutable_raw_data(tmp_path: Path, monke
     assert len(calls) == 1
 
 
+def test_candidate_aggregate_preserves_unavailable_primary_metric_state(
+    tmp_path: Path, monkeypatch
+) -> None:
+    graph = ProductionGraphV2(tmp_path, tmp_path / "analytical", tmp_path / "targets")
+    unit = candidate_aggregate_unit(
+        horizon="48h",
+        task="DOWN_TSUNAMI",
+        model="logistic_baseline",
+        hyperparameters=(),
+        preprocessing_identity="frozen",
+        calibration_identity="frozen",
+        fold_evidence_digests=tuple(str(index) * 64 for index in range(1, 7)),
+    )
+
+    def fold_result(digest):
+        return {
+            "evidence": {
+                "fold": f"WF{digest[0]}",
+                "metrics": {"pr_auc": None, "brier": None, "reason": "UNDEFINED"},
+            },
+            "bindings": {"held_out_prediction_artifact_digest": digest},
+        }
+
+    monkeypatch.setattr(
+        ProductionGraphV2, "_fold_result", lambda _self, digest: fold_result(digest)
+    )
+    result = graph.dispatch(unit, lambda: None)
+    assert result["primary_metric_state"] == "PRIMARY_METRIC_UNAVAILABLE"
+    assert result["primary_metric"] is None
+    assert result["brier"] is None
+    assert result["selection_eligible"] is False
+    assert result == graph.dispatch(unit, lambda: None)
+
+
+def test_model_selection_emits_explicit_no_selectable_candidate(
+    tmp_path: Path, monkeypatch
+) -> None:
+    graph = ProductionGraphV2(tmp_path, tmp_path / "analytical", tmp_path / "targets")
+    unit = model_selection_unit(
+        horizon="48h", task="DOWN_TSUNAMI", candidate_aggregate_digests=("a" * 64,)
+    )
+    monkeypatch.setattr(
+        ProductionGraphV2,
+        "_artifact",
+        lambda _self, _digest: {
+            "result": {
+                "model": "logistic_baseline",
+                "hyperparameters": [],
+                "primary_metric": None,
+                "brier": None,
+                "selection_eligible": False,
+            }
+        },
+    )
+    result = graph.dispatch(unit, lambda: None)
+    assert result["selection_state"] == "NO_SELECTABLE_CANDIDATE"
+    assert result["selection_eligible"] is False
+    assert result["validation_accessed"] is False
+
+
 def test_production_v2_planner_is_internal_complete_and_result_dependent(tmp_path: Path) -> None:
     graph = ProductionGraphV2(tmp_path, tmp_path / "analytical", tmp_path / "targets")
     resolvers = graph.resolvers()

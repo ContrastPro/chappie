@@ -666,19 +666,29 @@ def bh_decisions(p_values: Mapping[str, float], q: float = BH_FDR_Q) -> dict[str
 @dataclass(frozen=True, slots=True)
 class CandidateEvidenceV1:
     model: str
-    primary_metric: float
-    brier: float
+    primary_metric: float | None
+    brier: float | None
     hyperparameters: tuple[tuple[str, str], ...] = ()
+    selection_eligible: bool = True
 
 
-def select_candidate(candidates: Sequence[CandidateEvidenceV1]) -> CandidateEvidenceV1:
+def select_candidate(candidates: Sequence[CandidateEvidenceV1]) -> CandidateEvidenceV1 | None:
     if not candidates:
         raise ValueError("selection requires candidates")
     rank = {model.value: index for index, model in enumerate(MODEL_CATALOGUE)}
     if any(item.model not in rank for item in candidates):
         raise ValueError("selection contains an unfrozen model")
+    eligible = [
+        item
+        for item in candidates
+        if item.selection_eligible
+        and isinstance(item.primary_metric, (int, float))
+        and isinstance(item.brier, (int, float))
+    ]
+    if not eligible:
+        return None
     return min(
-        candidates,
+        eligible,
         key=lambda item: (-item.primary_metric, item.brier, rank[item.model], item.hyperparameters),
     )
 

@@ -101,6 +101,15 @@ def test_models_tasks_baselines_selection_and_research_seeds_are_frozen() -> Non
     assert select_candidate(evidence).model == "regularized_logistic"
 
 
+def test_unavailable_candidates_are_ineligible_without_score_substitution() -> None:
+    unavailable = CandidateEvidenceV1("logistic_baseline", None, None, selection_eligible=False)
+    valid = CandidateEvidenceV1("regularized_logistic", 0.4, 0.2)
+    assert select_candidate((unavailable, valid)) == valid
+    assert select_candidate((unavailable,)) is None
+    assert unavailable.primary_metric is None
+    assert unavailable.brier is None
+
+
 def test_research_firewall_has_no_validation_path_or_timestamp_api(tmp_path: Path) -> None:
     with pytest.raises(PermissionError, match="forbids Validation"):
         assert_research_timestamp(RESEARCH_END_EXCLUSIVE)
