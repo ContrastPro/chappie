@@ -354,6 +354,11 @@ class ProductionGraphV2:
             self._fold_cache[key] = loaded
             return loaded
 
+    def clear_fold_cache(self) -> None:
+        """Release immutable raw fold data between memory-intensive refits."""
+        with self._cache_lock:
+            self._fold_cache.clear()
+
     def _selected_units(self, evidence: Mapping[str, str]) -> tuple[GraphWorkUnitV2, ...]:
         return tuple(
             unit
@@ -1430,9 +1435,30 @@ def execute_production_v2(
     emit: Callable[[str], None] = print,
     max_workers: int = 1,
 ) -> dict[str, object]:
+    import gc
+
     graph = ProductionGraphV2(root, analytical_root, target_root)
+
+    def memory_bounded_dispatch(
+        unit: V2Unit, heartbeat: Callable[[], None]
+    ) -> Mapping[str, object]:
+        try:
+            return graph.dispatch(unit, heartbeat)
+        finally:
+            if unit.phase is ExecutionPhase.ABLATION:
+                graph.clear_fold_cache()
+                gc.collect()
+
+    def workers_for_phase(phase: ExecutionPhase, workers: int) -> int:
+        return 1 if phase is ExecutionPhase.ABLATION else workers
+
     execution = execute_phased_v2(
-        root, graph.resolvers(), graph.dispatch, emit=emit, max_workers=max_workers
+        root,
+        graph.resolvers(),
+        memory_bounded_dispatch,
+        emit=emit,
+        max_workers=max_workers,
+        workers_for_phase=workers_for_phase,
     )
     manifest = publish_final_v2(graph)
     return {"execution": execution, "manifest": manifest}
@@ -1892,6 +1918,7 @@ def execute_phased_v2(
     emit: Callable[[str], None] = print,
     monotonic: Callable[[], float] = time.monotonic,
     max_workers: int = 1,
+    workers_for_phase: Callable[[ExecutionPhase, int], int] | None = None,
 ) -> dict[str, object]:
     """Resolve and execute V2 phases only after actual upstream evidence verifies."""
     if (root / "manifest.json").exists():
@@ -1918,7 +1945,11 @@ def execute_phased_v2(
                 started=started,
                 emit=emit,
                 monotonic=monotonic,
-                max_workers=max_workers,
+                max_workers=(
+                    workers_for_phase(expected_phase, max_workers)
+                    if workers_for_phase is not None
+                    else max_workers
+                ),
             )
             phase_inventory = checkpoint_inventory(root, units)  # type: ignore[arg-type]
             if any(item.status != "REUSED" for item in phase_inventory):

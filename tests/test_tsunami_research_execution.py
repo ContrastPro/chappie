@@ -707,6 +707,34 @@ def test_model_selection_emits_explicit_no_selectable_candidate(
     assert result["validation_accessed"] is False
 
 
+def test_production_uses_serial_workers_for_ablation_only(tmp_path: Path, monkeypatch) -> None:
+    from app.research.capital_flow import tsunami_research_execution as execution_module
+
+    observed = {}
+
+    def execute_stub(root, resolvers, calculator, **kwargs):
+        observed["ablation_workers"] = kwargs["workers_for_phase"](ExecutionPhase.ABLATION, 2)
+        observed["candidate_workers"] = kwargs["workers_for_phase"](
+            ExecutionPhase.CANDIDATE_EVALUATION, 2
+        )
+        return {"completed_phases": []}
+
+    monkeypatch.setattr(execution_module, "execute_phased_v2", execute_stub)
+    monkeypatch.setattr(execution_module, "publish_final_v2", lambda _graph: {"manifest": True})
+    result = execution_module.execute_production_v2(
+        tmp_path, tmp_path / "analytical", tmp_path / "targets", max_workers=2
+    )
+    assert observed == {"ablation_workers": 1, "candidate_workers": 2}
+    assert result["manifest"] == {"manifest": True}
+
+
+def test_fold_cache_can_be_released_between_ablation_refits(tmp_path: Path) -> None:
+    graph = ProductionGraphV2(tmp_path, tmp_path / "analytical", tmp_path / "targets")
+    graph._fold_cache[("test",)] = object()
+    graph.clear_fold_cache()
+    assert graph._fold_cache == {}
+
+
 def test_production_v2_planner_is_internal_complete_and_result_dependent(tmp_path: Path) -> None:
     graph = ProductionGraphV2(tmp_path, tmp_path / "analytical", tmp_path / "targets")
     resolvers = graph.resolvers()
