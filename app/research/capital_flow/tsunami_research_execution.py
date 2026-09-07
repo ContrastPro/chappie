@@ -1445,12 +1445,19 @@ def execute_production_v2(
         try:
             return graph.dispatch(unit, heartbeat)
         finally:
-            if unit.phase is ExecutionPhase.ABLATION:
+            if unit.phase in {
+                ExecutionPhase.ABLATION,
+                ExecutionPhase.FAMILY_CONTRIBUTION,
+            }:
                 graph.clear_fold_cache()
                 gc.collect()
 
     def workers_for_phase(phase: ExecutionPhase, workers: int) -> int:
-        return 1 if phase is ExecutionPhase.ABLATION else workers
+        return (
+            1
+            if phase in {ExecutionPhase.ABLATION, ExecutionPhase.FAMILY_CONTRIBUTION}
+            else workers
+        )
 
     execution = execute_phased_v2(
         root,

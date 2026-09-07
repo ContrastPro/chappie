@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
 import time
@@ -707,13 +708,16 @@ def test_model_selection_emits_explicit_no_selectable_candidate(
     assert result["validation_accessed"] is False
 
 
-def test_production_uses_serial_workers_for_ablation_only(tmp_path: Path, monkeypatch) -> None:
+def test_production_uses_serial_workers_for_memory_intensive_refits(tmp_path: Path, monkeypatch) -> None:
     from app.research.capital_flow import tsunami_research_execution as execution_module
 
     observed = {}
 
     def execute_stub(root, resolvers, calculator, **kwargs):
         observed["ablation_workers"] = kwargs["workers_for_phase"](ExecutionPhase.ABLATION, 2)
+        observed["family_workers"] = kwargs["workers_for_phase"](
+            ExecutionPhase.FAMILY_CONTRIBUTION, 2
+        )
         observed["candidate_workers"] = kwargs["workers_for_phase"](
             ExecutionPhase.CANDIDATE_EVALUATION, 2
         )
@@ -724,15 +728,54 @@ def test_production_uses_serial_workers_for_ablation_only(tmp_path: Path, monkey
     result = execution_module.execute_production_v2(
         tmp_path, tmp_path / "analytical", tmp_path / "targets", max_workers=2
     )
-    assert observed == {"ablation_workers": 1, "candidate_workers": 2}
+    assert observed == {"ablation_workers": 1, "family_workers": 1, "candidate_workers": 2}
     assert result["manifest"] == {"manifest": True}
 
 
-def test_fold_cache_can_be_released_between_ablation_refits(tmp_path: Path) -> None:
+def test_fold_cache_can_be_released_between_memory_intensive_refits(tmp_path: Path) -> None:
     graph = ProductionGraphV2(tmp_path, tmp_path / "analytical", tmp_path / "targets")
     graph._fold_cache[("test",)] = object()
     graph.clear_fold_cache()
     assert graph._fold_cache == {}
+
+
+def test_family_refit_dispatch_evicts_cache_without_changing_result(tmp_path: Path, monkeypatch) -> None:
+    from app.research.capital_flow import tsunami_research_execution as execution_module
+
+    observed: dict[str, object] = {"clears": 0, "collections": 0}
+    unit = GraphWorkUnitV2(
+        ExecutionPhase.FAMILY_CONTRIBUTION,
+        horizon="24h",
+        task="TSUNAMI",
+        selected_configuration_digest="a" * 64,
+        family_exclusion="CRYPTO_PARTICIPATION",
+        family_operation="LEAVE_FAMILY_OUT",
+    )
+    expected = {"raw_metric": 0.5, "raw_delta": 0.1, "validation_accessed": False}
+
+    monkeypatch.setattr(ProductionGraphV2, "dispatch", lambda _self, _unit, _heartbeat: expected)
+    monkeypatch.setattr(
+        ProductionGraphV2,
+        "clear_fold_cache",
+        lambda _self: observed.__setitem__("clears", int(observed["clears"]) + 1),
+    )
+    monkeypatch.setattr(
+        gc,
+        "collect",
+        lambda: observed.__setitem__("collections", int(observed["collections"]) + 1),
+    )
+
+    def execute_stub(_root, _resolvers, calculator, **_kwargs):
+        observed["result"] = calculator(unit, lambda: None)
+        return {"completed_phases": []}
+
+    monkeypatch.setattr(execution_module, "execute_phased_v2", execute_stub)
+    monkeypatch.setattr(execution_module, "publish_final_v2", lambda _graph: {"manifest": True})
+    execution_module.execute_production_v2(
+        tmp_path, tmp_path / "analytical", tmp_path / "targets", max_workers=2
+    )
+
+    assert observed == {"clears": 1, "collections": 1, "result": expected}
 
 
 def test_production_v2_planner_is_internal_complete_and_result_dependent(tmp_path: Path) -> None:
