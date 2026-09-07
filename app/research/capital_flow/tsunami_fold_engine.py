@@ -21,6 +21,7 @@ from .tsunami_forecast_contract import (
 from .tsunami_predictive_research import (
     ANALYTICAL_SEMANTIC_DIGEST,
     HORIZON_NAMES,
+    INTERACTION_PAIRS,
     MODEL_CATALOGUE,
     RANDOM_SEEDS,
     TARGET_MANIFEST_SEMANTIC_DIGEST,
@@ -29,7 +30,6 @@ from .tsunami_predictive_research import (
     calibration_table,
     deterministic_block_permutation,
     event_metrics,
-    interaction_row,
     verify_bound_manifests,
 )
 from .tsunami_research_targets import RESEARCH_TARGET_ROOT
@@ -217,7 +217,13 @@ class PreprocessingV1:
         scales = np.where(scales > 0, scales, 1.0)
         return cls(tuple(medians.tolist()), tuple(means.tolist()), tuple(scales.tolist()))
 
-    def transform(self, dataset: FoldDatasetV1, feature_indexes: tuple[int, ...]):
+    def transform(
+        self,
+        dataset: FoldDatasetV1,
+        feature_indexes: tuple[int, ...],
+        *,
+        interactions: bool = False,
+    ):
         import numpy as np
 
         raw = np.asarray(
@@ -234,8 +240,28 @@ class PreprocessingV1:
         states = np.asarray(
             [[row[index] for index in feature_indexes] for row in dataset.states], dtype=int
         )
-        one_hot = np.eye(self.state_cardinality, dtype=float)[states].reshape(len(states), -1)
-        result = np.concatenate((numeric, one_hot), axis=1)
+        if interactions:
+            if feature_indexes != tuple(range(len(FEATURE_ORDER))):
+                raise ValueError("interaction candidate requires the exact full feature set")
+            numeric_width = len(feature_indexes)
+            state_width = numeric_width * self.state_cardinality
+            result = np.zeros(
+                (len(states), numeric_width + state_width + len(INTERACTION_PAIRS)), dtype=float
+            )
+            result[:, :numeric_width] = numeric
+            rows = np.arange(len(states))
+            for feature_offset in range(numeric_width):
+                result[
+                    rows,
+                    numeric_width + feature_offset * self.state_cardinality + states[:, feature_offset],
+                ] = 1.0
+            for interaction_offset, (left, right) in enumerate(INTERACTION_PAIRS):
+                result[:, numeric_width + state_width + interaction_offset] = (
+                    numeric[:, left] * numeric[:, right]
+                )
+        else:
+            one_hot = np.eye(self.state_cardinality, dtype=float)[states].reshape(len(states), -1)
+            result = np.concatenate((numeric, one_hot), axis=1)
         if not np.isfinite(result).all():
             raise ValueError("preprocessing produced nonfinite matrix")
         return result
@@ -746,8 +772,6 @@ def evaluate_fold(
     interactions: bool = False,
 ) -> HeldOutEvidenceV1:
     """Fit on TRAIN and persist genuine held-out assessment probabilities and metrics."""
-    import numpy as np
-
     if (
         (train.fold_identity, train.horizon, train.task)
         != (
@@ -779,25 +803,7 @@ def evaluate_fold(
         probabilities = predict_from_fitted_model(fitted, baseline_matrix)
     else:
         preprocessing = PreprocessingV1.fit(train, feature_indexes)
-        train_matrix = preprocessing.transform(train, feature_indexes)
-        assessment_matrix = preprocessing.transform(assessment, feature_indexes)
-        if interactions:
-            if feature_indexes != tuple(range(len(FEATURE_ORDER))):
-                raise ValueError("interaction candidate requires the exact full feature set")
-            train_interactions = np.asarray(
-                [
-                    interaction_row(row[: len(FEATURE_ORDER)])[len(FEATURE_ORDER) :]
-                    for row in train_matrix
-                ]
-            )
-            assessment_interactions = np.asarray(
-                [
-                    interaction_row(row[: len(FEATURE_ORDER)])[len(FEATURE_ORDER) :]
-                    for row in assessment_matrix
-                ]
-            )
-            train_matrix = np.concatenate((train_matrix, train_interactions), axis=1)
-            assessment_matrix = np.concatenate((assessment_matrix, assessment_interactions), axis=1)
+        train_matrix = preprocessing.transform(train, feature_indexes, interactions=interactions)
         if model == "deterministic_tree_boosting":
             fitted = fit_tree_probability(
                 train_matrix, labels, classes, preprocessing.digest, feature_indexes
@@ -812,6 +818,7 @@ def evaluate_fold(
                 preprocessing_digest=preprocessing.digest,
                 feature_indexes=feature_indexes,
             )
+        del train_matrix
         if fitted is None:
             return HeldOutEvidenceV1(
                 PREDICTION_ARTIFACT_IDENTITY,
@@ -829,6 +836,9 @@ def evaluate_fold(
                 None,
                 UNDEFINED,
             )
+        assessment_matrix = preprocessing.transform(
+            assessment, feature_indexes, interactions=interactions
+        )
         probabilities = (
             predict_tree_probability(fitted, assessment_matrix)
             if isinstance(fitted, TreeProbabilityModelV1)

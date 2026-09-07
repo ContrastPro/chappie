@@ -1448,6 +1448,7 @@ def execute_production_v2(
             if unit.phase in {
                 ExecutionPhase.ABLATION,
                 ExecutionPhase.FAMILY_CONTRIBUTION,
+                ExecutionPhase.INTERACTION_EVALUATION,
             }:
                 graph.clear_fold_cache()
                 gc.collect()
@@ -1455,7 +1456,12 @@ def execute_production_v2(
     def workers_for_phase(phase: ExecutionPhase, workers: int) -> int:
         return (
             1
-            if phase in {ExecutionPhase.ABLATION, ExecutionPhase.FAMILY_CONTRIBUTION}
+            if phase
+            in {
+                ExecutionPhase.ABLATION,
+                ExecutionPhase.FAMILY_CONTRIBUTION,
+                ExecutionPhase.INTERACTION_EVALUATION,
+            }
             else workers
         )
 

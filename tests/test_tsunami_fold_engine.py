@@ -33,6 +33,7 @@ from app.research.capital_flow.tsunami_fold_engine import (
     serialize_fitted_model,
 )
 from app.research.capital_flow.tsunami_forecast_contract import RESEARCH_END_EXCLUSIVE
+from app.research.capital_flow.tsunami_predictive_research import interaction_row
 
 
 def _dataset(phase: str, task: str = "MOVE", *, single_class: bool = False) -> FoldDatasetV1:
@@ -88,6 +89,21 @@ def test_preprocessing_is_train_fitted_deterministic_and_state_explicit() -> Non
     matrix = first.transform(assessment, indexes)
     assert matrix.shape == (9, 15 + 15 * first.state_cardinality)
     assert np.isfinite(matrix).all()
+
+
+def test_interaction_transform_preallocates_exact_legacy_term_order() -> None:
+    train = _dataset("TRAIN")
+    indexes = tuple(range(len(FEATURE_ORDER)))
+    preprocessing = PreprocessingV1.fit(train, indexes)
+    additive = preprocessing.transform(train, indexes)
+    interaction_columns = np.asarray(
+        [interaction_row(row[: len(FEATURE_ORDER)])[len(FEATURE_ORDER) :] for row in additive]
+    )
+    expected = np.concatenate((additive, interaction_columns), axis=1)
+
+    actual = preprocessing.transform(train, indexes, interactions=True)
+
+    np.testing.assert_array_equal(actual, expected)
 
 
 def test_binary_and_multiclass_logistic_are_genuine_and_normalized() -> None:
