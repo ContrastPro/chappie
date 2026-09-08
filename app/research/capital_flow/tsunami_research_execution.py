@@ -830,6 +830,7 @@ class ProductionGraphV2:
 
             selected = self._selected(unit.additive_configuration_digest or "")
             metrics = []
+            availability = []
             for fold in WALK_FORWARD_FOLDS:
                 train = self._fold_dataset(
                     fold.identity, "TRAIN", unit.horizon or "", unit.task or ""
@@ -845,9 +846,39 @@ class ProductionGraphV2:
                 )
                 if isinstance(metric, (int, float)):
                     metrics.append(float(metric))
-            if not metrics:
-                raise CheckpointError("interaction comparison produced no valid evidence")
+                    availability.append({"fold": fold.identity, "state": "DEFINED"})
+                else:
+                    availability.append(
+                        {
+                            "fold": fold.identity,
+                            "state": "UNAVAILABLE",
+                            "reason": str(result.metrics.get("reason", "METRIC_UNDEFINED")),
+                        }
+                    )
             additive = self._artifact(str(selected["selected_aggregate_digest"]))["result"]
+            if not metrics:
+                return {
+                    "kind": "INTERACTION_EVIDENCE_UNAVAILABLE",
+                    "horizon": unit.horizon,
+                    "task": unit.task,
+                    "metric": "balanced_accuracy" if unit.task == "DIRECTION" else "pr_auc",
+                    "selected_model": selected["model"],
+                    "additive_configuration_digest": unit.additive_configuration_digest,
+                    "interaction_configuration_digest": unit.interaction_configuration_digest,
+                    "additive_metric": additive.get("primary_metric"),
+                    "interaction_metric": None,
+                    "raw_delta": None,
+                    "classification": "UNAVAILABLE",
+                    "reason": "NO_FOLD_WITH_DEFINED_INTERACTION_METRIC",
+                    "fold_metric_availability": availability,
+                    "evidence_digest": _digest(
+                        {
+                            "additive": unit.additive_configuration_digest,
+                            "interaction": unit.interaction_configuration_digest,
+                            "availability": availability,
+                        }
+                    ),
+                }
             interaction_metric = sum(metrics) / len(metrics)
             return {
                 "kind": "INTERACTION_EVALUATION",
@@ -1123,6 +1154,20 @@ def _entity_contributions(root: Path, entity_field: str) -> list[dict[str, objec
 def _interaction_contributions(root: Path) -> list[dict[str, object]]:
     result = []
     for item in _result_payloads(root, ExecutionPhase.INTERACTION_EVALUATION):
+        if item.get("kind") == "INTERACTION_EVIDENCE_UNAVAILABLE":
+            result.append(
+                {
+                    "horizon": item["horizon"],
+                    "task": item["task"],
+                    "metric": item["metric"],
+                    "interaction_evidence_state": "UNAVAILABLE",
+                    "reason": item["reason"],
+                    "incremental_raw_delta": None,
+                    "sign": "UNAVAILABLE",
+                    "evidence_digest": item["evidence_digest"],
+                }
+            )
+            continue
         delta = float(item["raw_delta"])
         result.append(
             {
@@ -1133,6 +1178,7 @@ def _interaction_contributions(root: Path) -> list[dict[str, object]]:
                 "interaction_metric": item["interaction_metric"],
                 "incremental_raw_delta": delta,
                 "sign": _classification(delta),
+                "interaction_evidence_state": "DEFINED",
                 "evidence_digest": item["evidence_digest"],
             }
         )

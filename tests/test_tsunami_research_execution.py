@@ -1060,6 +1060,31 @@ def test_scoped_contribution_classification_and_normalization_are_independent(
     assert sections["interaction_contribution"][0]["incremental_raw_delta"] == 0.1
 
 
+def test_unavailable_interaction_is_explicit_and_never_coerced_to_a_delta(tmp_path: Path) -> None:
+    _write_aggregation_result(
+        tmp_path,
+        ExecutionPhase.INTERACTION_EVALUATION,
+        "interaction-unavailable",
+        {
+            "kind": "INTERACTION_EVIDENCE_UNAVAILABLE",
+            "horizon": "48h",
+            "task": "DOWN_TSUNAMI",
+            "metric": "pr_auc",
+            "raw_delta": None,
+            "classification": "UNAVAILABLE",
+            "reason": "NO_FOLD_WITH_DEFINED_INTERACTION_METRIC",
+            "evidence_digest": "u" * 64,
+        },
+    )
+
+    interaction = _scoped_contribution_sections(tmp_path)["interaction_contribution"]
+
+    assert interaction[0]["interaction_evidence_state"] == "UNAVAILABLE"
+    assert interaction[0]["incremental_raw_delta"] is None
+    assert interaction[0]["sign"] == "UNAVAILABLE"
+    assert interaction[0]["reason"] == "NO_FOLD_WITH_DEFINED_INTERACTION_METRIC"
+
+
 def test_bootstrap_and_multiple_testing_are_strictly_scoped(tmp_path: Path) -> None:
     scopes = (
         ("24h", "TSUNAMI", "pr_auc", "a" * 64, 1.0),
