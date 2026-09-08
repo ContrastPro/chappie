@@ -459,11 +459,15 @@ def benchmark_persisted_feature_store(
         columns = _projection_columns(features)
         train_end = pa.scalar(datetime(2025, 1, 1, tzinfo=UTC))
         assessment_end = pa.scalar(datetime(2025, 2, 1, tzinfo=UTC))
+        train_dataset = ds.dataset(parquet_paths[:12], format="parquet")
+        assessment_dataset = ds.dataset(parquet_paths[12:13], format="parquet")
         times = []
         for _ in range(repeats):
             started = time.perf_counter()
-            train = dataset.to_table(columns=columns, filter=ds.field("timestamp_utc") < train_end)
-            assessment = dataset.to_table(
+            train = train_dataset.to_table(
+                columns=columns, filter=ds.field("timestamp_utc") < train_end
+            )
+            assessment = assessment_dataset.to_table(
                 columns=columns,
                 filter=(ds.field("timestamp_utc") >= train_end)
                 & (ds.field("timestamp_utc") < assessment_end),
