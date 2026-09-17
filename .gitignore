@@ -13,11 +13,20 @@ logs/
 
 .pytest_cache/
 .pytest-tmp-*/
+/.pytest-*/
 .coverage
 .coverage.*
 .coverage-html/
 .mypy_cache/
 .ruff_cache/
+
+# Root-level local research-run output; canonical evidence lives under /data/.
+/.tsunami-*.stdout.log
+/.tsunami-*.stderr.log
+/.v2-*.out
+/.v2-*.err
+/.v2-*.log
+/.v2-seven-runtime-validation.json
 
 *.egg-info/
 
