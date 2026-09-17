@@ -32,6 +32,93 @@ from app.research.capital_flow.tsunami_fold_engine import (
     predict_probability_model,
     serialize_fitted_model,
 )
+
+
+def test_v2_literal_schema_and_target_bindings_are_frozen() -> None:
+    from app.research.capital_flow.tsunami_fold_engine import (
+        V2_DIRECTION_1H_TARGET_BINDING,
+        V2_DIRECTION_4H_TARGET_BINDING,
+        V2_FEATURE_SCHEMA,
+        schema_projection,
+    )
+
+    assert V2_FEATURE_SCHEMA.identity == "CHAPPIE_SHORT_HORIZON_DIRECTION_V2_FEATURE_SCHEMA/1.0.0"
+    assert V2_FEATURE_SCHEMA.feature_count == 60
+    assert (
+        V2_FEATURE_SCHEMA.dataset_semantic_digest
+        == "5f66259f5563ae625606f5a6527e3ba404b647b0346a49823e596d234dff0dfc"
+    )
+    assert (
+        V2_FEATURE_SCHEMA.manifest_semantic_digest
+        == "6f95ec4eaf0699af203d386fc636588873ac1ee6f61d2275cf9d6bf992f34071"
+    )
+    assert V2_DIRECTION_1H_TARGET_BINDING.horizon == "1h"
+    assert V2_DIRECTION_4H_TARGET_BINDING.horizon == "4h"
+    assert len(schema_projection(V2_FEATURE_SCHEMA, "CAPITAL_FLOW")) == 15
+    assert len(schema_projection(V2_FEATURE_SCHEMA, "TECHNICAL")) == 21
+    assert len(schema_projection(V2_FEATURE_SCHEMA, "VOLUME")) == 9
+    assert len(schema_projection(V2_FEATURE_SCHEMA, "MARKET_STRUCTURE")) == 11
+    assert len(schema_projection(V2_FEATURE_SCHEMA, "MTF")) == 4
+    assert len(schema_projection(V2_FEATURE_SCHEMA, "FULL_V2")) == 60
+
+
+def test_v2_fitted_artifact_fixture_and_tampers_fail_closed() -> None:
+    import copy
+
+    from app.research.capital_flow.tsunami_fold_engine import (
+        V2_DIRECTION_1H_TARGET_BINDING,
+        V2_FEATURE_SCHEMA,
+        ProbabilityModelV1,
+        load_fitted_model,
+        serialize_fitted_model,
+    )
+
+    model = ProbabilityModelV1(
+        "logistic_baseline",
+        ("UP", "DOWN", "NO_MOVE"),
+        ((0.0,), (0.0,), (0.0,)),
+        (0.0, 0.0, 0.0),
+        (("l2", "0.0"),),
+        "v2-preprocessing",
+        tuple(range(60)),
+    )
+    artifact = serialize_fitted_model(
+        model,
+        training_fold_identity="V2_WF1",
+        task="DIRECTION",
+        horizon="1h",
+        schema=V2_FEATURE_SCHEMA,
+        target_binding=V2_DIRECTION_1H_TARGET_BINDING,
+    )
+    loaded = load_fitted_model(
+        artifact,
+        expected_preprocessing_digest="v2-preprocessing",
+        expected_fold_identity="V2_WF1",
+        feature_schema=V2_FEATURE_SCHEMA,
+        target_binding=V2_DIRECTION_1H_TARGET_BINDING,
+    )
+    assert loaded == model
+    for key, value in (
+        ("feature_schema_identity", "wrong"),
+        ("dataset_semantic_digest", "wrong"),
+        ("manifest_semantic_digest", "wrong"),
+        ("feature_order", list(reversed(artifact["feature_order"]))),
+        ("fold_schedule_identity", "wrong"),
+        ("target_binding_identity", "wrong"),
+        ("target_semantic_digest", "wrong"),
+        ("target_manifest_semantic_digest", "wrong"),
+        ("classes", ["DOWN", "UP", "NO_MOVE"]),
+    ):
+        tampered = copy.deepcopy(artifact)
+        tampered[key] = value
+        with __import__("pytest").raises(ValueError):
+            load_fitted_model(
+                tampered,
+                feature_schema=V2_FEATURE_SCHEMA,
+                target_binding=V2_DIRECTION_1H_TARGET_BINDING,
+            )
+
+
 from app.research.capital_flow.tsunami_forecast_contract import RESEARCH_END_EXCLUSIVE
 from app.research.capital_flow.tsunami_predictive_research import interaction_row
 

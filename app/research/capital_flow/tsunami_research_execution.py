@@ -6,17 +6,25 @@ import hashlib
 import json
 import os
 import time
+import traceback
 from collections import OrderedDict
 from collections.abc import Callable, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import asdict, dataclass, field
-from datetime import timedelta
+from dataclasses import asdict, dataclass, field, replace
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 from threading import RLock
 from typing import Self
 
 from .free_v2_materializer import FEATURE_ORDER
+from .tsunami_fold_engine import (
+    V2_DIRECTION_1H_TARGET_BINDING,
+    V2_DIRECTION_4H_TARGET_BINDING,
+    V2_FEATURE_SCHEMA,
+    V2_WALK_FORWARD_FOLDS,
+    V2_WALK_FORWARD_IDENTITY,
+)
 from .tsunami_forecast_contract import FEATURE_FAMILY_MEMBERSHIP, WALK_FORWARD_FOLDS
 from .tsunami_predictive_research import (
     ANALYTICAL_SEMANTIC_DIGEST,
@@ -99,6 +107,390 @@ EXECUTION_BINDING = {
     "metrics": list(METRIC_CATALOGUE),
 }
 EXECUTION_BINDING_DIGEST = _digest(EXECUTION_BINDING)
+
+V2_PRODUCTION_EXECUTION_IDENTITY = "CHAPPIE_SHORT_HORIZON_DIRECTION_V2_RESEARCH_EXECUTION/1.0.0"
+V2_PRODUCTION_EXECUTION_BINDING = {
+    "execution_identity": V2_PRODUCTION_EXECUTION_IDENTITY,
+    "experiment_identity": "CHAPPIE_SHORT_HORIZON_MARKET_DIRECTION_V2/1.0.0",
+    "feature_schema_identity": V2_FEATURE_SCHEMA.identity,
+    "dataset_semantic_digest": V2_FEATURE_SCHEMA.dataset_semantic_digest,
+    "manifest_semantic_digest": V2_FEATURE_SCHEMA.manifest_semantic_digest,
+    "fold_schedule_identity": V2_WALK_FORWARD_IDENTITY,
+    "target_bindings": [V2_DIRECTION_1H_TARGET_BINDING.identity, V2_DIRECTION_4H_TARGET_BINDING.identity],
+    "confirmatory_model": "logistic_baseline",
+    "model_configuration": "V2_LOGISTIC_BASELINE_CONFIRMATORY/1.0.0",
+    "research_start": V2_FEATURE_SCHEMA.research_start.isoformat(),
+    "research_end_exclusive": V2_FEATURE_SCHEMA.research_end_exclusive.isoformat(),
+    "bootstrap": {"block_days": 7, "replicates": 2000},
+    "multiple_testing": {"holm_alpha": 0.05, "bh_q": 0.10},
+    "family_catalogue": ["CAPITAL_FLOW", "TECHNICAL", "VOLUME", "MARKET_STRUCTURE", "MTF", "FULL_V2"],
+}
+V2_PRODUCTION_EXECUTION_BINDING_DIGEST = _digest(V2_PRODUCTION_EXECUTION_BINDING)
+
+# This is the released confirmatory catalogue, expressed as projection identities
+# rather than executable scenarios.  Keep its order stable: it is part of every
+# generated work-unit identity and deliberately excludes model-search variants.
+V2_FROZEN_1H_FIT_PROJECTIONS = (
+    "BTC_ONLY",
+    "CAPITAL_FLOW",
+    "TECHNICAL",
+    "VOLUME",
+    "MARKET_STRUCTURE",
+    "TECHNICAL+VOLUME",
+    "TECHNICAL+MARKET_STRUCTURE",
+    "VOLUME+MARKET_STRUCTURE",
+    "CAPITAL_FLOW+TECHNICAL",
+    "CAPITAL_FLOW+TECHNICAL+VOLUME",
+    "FULL_V2",
+)
+V2_FROZEN_4H_FIT_PROJECTIONS = ("FULL_V2",)
+V2_FROZEN_FIT_FOLDS = tuple(fold.identity for fold in V2_WALK_FORWARD_FOLDS)
+
+
+def _v2_projection_raw_feature_count(feature_projection: str) -> int:
+    """Return the released raw width without loading a V2 dataset."""
+    if feature_projection == "BTC_ONLY":
+        return 2
+    if feature_projection == "FULL_V2":
+        return V2_FEATURE_SCHEMA.feature_count
+    families = feature_projection.split("+")
+    if not families or any(family not in V2_PRODUCTION_EXECUTION_BINDING["family_catalogue"] for family in families):
+        raise ValueError("unsupported frozen V2 feature projection")
+    return sum(
+        1 for family in families for value in V2_FEATURE_SCHEMA.family_mapping.values() if value == family
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class V2AuthoritativeFitWorkUnit:
+    """One non-executing authoritative V2 fit binding for existing checkpoint machinery."""
+
+    phase: ExecutionPhase = ExecutionPhase.BASE_MODEL_FITS
+    fold: str = "V2_WF1"
+    horizon: str = "1h"
+    task: str = "DIRECTION"
+    feature_projection: str = "FULL_V2"
+    model: str = "logistic_baseline"
+    model_configuration: str = "V2_LOGISTIC_BASELINE_CONFIRMATORY/1.0.0"
+    research_start: str = V2_PRODUCTION_EXECUTION_BINDING["research_start"]
+    research_end_exclusive: str = V2_PRODUCTION_EXECUTION_BINDING["research_end_exclusive"]
+
+    def __post_init__(self) -> None:
+        projections = (
+            V2_FROZEN_1H_FIT_PROJECTIONS
+            if self.horizon == "1h"
+            else V2_FROZEN_4H_FIT_PROJECTIONS
+            if self.horizon == "4h"
+            else ()
+        )
+        if (
+            self.phase is not ExecutionPhase.BASE_MODEL_FITS
+            or self.fold not in V2_FROZEN_FIT_FOLDS
+            or self.task != "DIRECTION"
+            or self.feature_projection not in projections
+            or self.model != "logistic_baseline"
+            or self.model_configuration
+            != V2_PRODUCTION_EXECUTION_BINDING["model_configuration"]
+            or self.research_start != V2_PRODUCTION_EXECUTION_BINDING["research_start"]
+            or self.research_end_exclusive
+            != V2_PRODUCTION_EXECUTION_BINDING["research_end_exclusive"]
+        ):
+            raise ValueError("V2 authoritative fit work-unit binding mismatch")
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "execution_identity": V2_PRODUCTION_EXECUTION_IDENTITY,
+            "execution_digest": V2_PRODUCTION_EXECUTION_BINDING_DIGEST,
+            "research_start": self.research_start,
+            "research_end_exclusive": self.research_end_exclusive,
+            "phase": self.phase,
+            "fold": self.fold,
+            "horizon": self.horizon,
+            "task": self.task,
+            "target_binding": (
+                V2_DIRECTION_1H_TARGET_BINDING.identity
+                if self.horizon == "1h"
+                else V2_DIRECTION_4H_TARGET_BINDING.identity
+            ),
+            "feature_schema": V2_FEATURE_SCHEMA.identity,
+            "dataset_digest": V2_FEATURE_SCHEMA.dataset_semantic_digest,
+            "manifest_digest": V2_FEATURE_SCHEMA.manifest_semantic_digest,
+            "fold_schedule": V2_WALK_FORWARD_IDENTITY,
+            "feature_projection": self.feature_projection,
+            "raw_feature_count": _v2_projection_raw_feature_count(self.feature_projection),
+            "model": self.model,
+            "model_configuration": self.model_configuration,
+        }
+
+    @property
+    def semantic_digest(self) -> str:
+        return _digest(self.payload())
+
+    @property
+    def identity(self) -> str:
+        return f"v2-authoritative-fit-{self.semantic_digest[:24]}"
+
+    @property
+    def checkpoint_identity(self) -> str:
+        return f"{V2_PRODUCTION_EXECUTION_IDENTITY}:{self.identity}"
+
+    def shared_fit_binding(self):
+        from .short_horizon_direction_v2_fit import (
+            build_v2_btc_only_binding,
+            build_v2_logistic_binding,
+        )
+
+        if self.feature_projection == "BTC_ONLY":
+            return replace(
+                build_v2_btc_only_binding(
+                    experiment_identity=V2_PRODUCTION_EXECUTION_BINDING["experiment_identity"]
+                ),
+                fold_identity=self.fold,
+            )
+        families = self.feature_projection.split("+")
+        projection = tuple(
+            feature
+            for feature in V2_FEATURE_SCHEMA.feature_order
+            if self.feature_projection == "FULL_V2"
+            or V2_FEATURE_SCHEMA.family_mapping[feature] in families
+        )
+
+        return build_v2_logistic_binding(
+            experiment_identity=V2_PRODUCTION_EXECUTION_BINDING["experiment_identity"],
+            fold_identity=self.fold,
+            horizon=self.horizon,
+            feature_projection=projection,
+        )
+
+
+V2_FULL_V2_LOGISTIC_1H_WF1 = V2AuthoritativeFitWorkUnit()
+
+
+def build_v2_authoritative_fit_work_units() -> tuple[V2AuthoritativeFitWorkUnit, ...]:
+    """Build the complete frozen V2 fit graph without touching Research data."""
+    units = tuple(
+        V2AuthoritativeFitWorkUnit(
+            fold=fold,
+            horizon=horizon,
+            feature_projection=feature_projection,
+        )
+        for horizon, projections in (
+            ("1h", V2_FROZEN_1H_FIT_PROJECTIONS),
+            ("4h", V2_FROZEN_4H_FIT_PROJECTIONS),
+        )
+        for feature_projection in projections
+        for fold in V2_FROZEN_FIT_FOLDS
+    )
+    if (
+        len({unit.identity for unit in units}) != len(units)
+        or len({unit.checkpoint_identity for unit in units}) != len(units)
+        or any(
+            unit.phase != ExecutionPhase.BASE_MODEL_FITS.value
+            or unit.model != "logistic_baseline"
+            or unit.research_start != V2_PRODUCTION_EXECUTION_BINDING["research_start"]
+            or unit.research_end_exclusive
+            != V2_PRODUCTION_EXECUTION_BINDING["research_end_exclusive"]
+            for unit in units
+        )
+    ):
+        raise ValueError("V2 authoritative fit graph invariant violation")
+    return units
+
+
+@dataclass(frozen=True, slots=True)
+class V2AuthoritativeInputVerifyWorkUnit:
+    """The authoritative root prerequisite for the frozen V2 FIT graph."""
+
+    phase: ExecutionPhase = ExecutionPhase.INPUT_VERIFY
+    research_start: str = V2_PRODUCTION_EXECUTION_BINDING["research_start"]
+    research_end_exclusive: str = V2_PRODUCTION_EXECUTION_BINDING["research_end_exclusive"]
+
+    def __post_init__(self) -> None:
+        if (
+            self.phase is not ExecutionPhase.INPUT_VERIFY
+            or self.research_start != V2_PRODUCTION_EXECUTION_BINDING["research_start"]
+            or self.research_end_exclusive
+            != V2_PRODUCTION_EXECUTION_BINDING["research_end_exclusive"]
+        ):
+            raise ValueError("V2 authoritative INPUT_VERIFY binding mismatch")
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "execution_identity": V2_PRODUCTION_EXECUTION_IDENTITY,
+            "execution_digest": V2_PRODUCTION_EXECUTION_BINDING_DIGEST,
+            "experiment_identity": V2_PRODUCTION_EXECUTION_BINDING["experiment_identity"],
+            "phase": self.phase,
+            "feature_schema": V2_FEATURE_SCHEMA.identity,
+            "dataset_digest": V2_FEATURE_SCHEMA.dataset_semantic_digest,
+            "manifest_digest": V2_FEATURE_SCHEMA.manifest_semantic_digest,
+            "feature_order": list(V2_FEATURE_SCHEMA.feature_order),
+            "raw_feature_count": V2_FEATURE_SCHEMA.feature_count,
+            "fold_schedule": V2_WALK_FORWARD_IDENTITY,
+            "target_bindings": [
+                V2_DIRECTION_1H_TARGET_BINDING.identity,
+                V2_DIRECTION_4H_TARGET_BINDING.identity,
+            ],
+            "research_start": self.research_start,
+            "research_end_exclusive": self.research_end_exclusive,
+            "validation_accessed": False,
+        }
+
+    @property
+    def semantic_digest(self) -> str:
+        return _digest(self.payload())
+
+    @property
+    def identity(self) -> str:
+        return f"v2-authoritative-input-verify-{self.semantic_digest[:24]}"
+
+    @property
+    def checkpoint_identity(self) -> str:
+        return f"{V2_PRODUCTION_EXECUTION_IDENTITY}:{self.identity}"
+
+    def persisted_verifier(self):
+        from .short_horizon_direction_v2_materializer import verify_feature_store
+
+        return verify_feature_store
+
+
+V2_AUTHORITATIVE_INPUT_VERIFY = V2AuthoritativeInputVerifyWorkUnit()
+V2_AUTHORITATIVE_INPUT_VERIFY_DEPENDENCY = V2_AUTHORITATIVE_INPUT_VERIFY.identity
+
+
+@dataclass(frozen=True, slots=True)
+class V2AuthoritativeInputVerifyDispatch:
+    unit: V2AuthoritativeInputVerifyWorkUnit
+    handler_name: str
+    persisted_verifier: object
+    checkpoint_contract: Mapping[str, object]
+
+
+def resolve_v2_authoritative_input_verify_dispatch(
+    unit: V2AuthoritativeInputVerifyWorkUnit = V2_AUTHORITATIVE_INPUT_VERIFY,
+) -> V2AuthoritativeInputVerifyDispatch:
+    """Resolve INPUT_VERIFY without reading the store or writing a checkpoint."""
+    if not isinstance(unit, V2AuthoritativeInputVerifyWorkUnit):
+        raise CheckpointError("V2 INPUT_VERIFY dispatch rejects non-V2 input work units")
+    verifier = unit.persisted_verifier()
+    return V2AuthoritativeInputVerifyDispatch(
+        unit=unit,
+        handler_name=verifier.__name__,
+        persisted_verifier=verifier,
+        checkpoint_contract={
+            "schema": CHECKPOINT_SCHEMA,
+            "artifact_schema": ARTIFACT_SCHEMA,
+            "execution_binding_digest": V2_PRODUCTION_EXECUTION_BINDING_DIGEST,
+            "work_unit": unit.payload(),
+            "work_unit_identity": unit.identity,
+            "checkpoint_identity": unit.checkpoint_identity,
+        },
+    )
+
+
+def v2_authoritative_input_verify_checkpoint_status(
+    dispatch: V2AuthoritativeInputVerifyDispatch,
+    synthetic_checkpoint: Mapping[str, object] | None = None,
+) -> str:
+    """Apply the existing checkpoint terminal-state vocabulary in memory only."""
+    if synthetic_checkpoint is None:
+        return "PENDING"
+    return (
+        "REUSED"
+        if dict(synthetic_checkpoint) == dict(dispatch.checkpoint_contract)
+        else "INVALID"
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class V2AuthoritativeFitDispatch:
+    """Dry, in-memory resolution through the existing checkpoint result contract."""
+
+    unit: V2AuthoritativeFitWorkUnit
+    handler_name: str
+    scientific_binding: object
+    dependency_identity: str
+    checkpoint_contract: Mapping[str, object]
+    eligible: bool
+
+
+def resolve_v2_authoritative_fit_dispatch(
+    unit: V2AuthoritativeFitWorkUnit,
+    *,
+    verified_dependencies: frozenset[str] = frozenset(),
+) -> V2AuthoritativeFitDispatch:
+    """Resolve one V2 fit without loading data, calling the handler, or writing state."""
+    from .short_horizon_direction_v2_fit import execute_v2_fit_unit
+
+    if not isinstance(unit, V2AuthoritativeFitWorkUnit):
+        raise CheckpointError("V2 authoritative dispatch rejects non-V2 fit work units")
+    binding = unit.shared_fit_binding()
+    checkpoint_contract: dict[str, object] = {
+        "schema": CHECKPOINT_SCHEMA,
+        "artifact_schema": ARTIFACT_SCHEMA,
+        "execution_binding_digest": V2_PRODUCTION_EXECUTION_BINDING_DIGEST,
+        "work_unit": unit.payload(),
+        "work_unit_identity": unit.identity,
+        "checkpoint_identity": unit.checkpoint_identity,
+        "dependency_identity": V2_AUTHORITATIVE_INPUT_VERIFY_DEPENDENCY,
+    }
+    return V2AuthoritativeFitDispatch(
+        unit=unit,
+        handler_name=execute_v2_fit_unit.__name__,
+        scientific_binding=binding,
+        dependency_identity=V2_AUTHORITATIVE_INPUT_VERIFY_DEPENDENCY,
+        checkpoint_contract=checkpoint_contract,
+        eligible=V2_AUTHORITATIVE_INPUT_VERIFY_DEPENDENCY in verified_dependencies,
+    )
+
+
+def v2_authoritative_fit_checkpoint_status(
+    dispatch: V2AuthoritativeFitDispatch,
+    synthetic_checkpoint: Mapping[str, object] | None = None,
+) -> str:
+    """Apply existing PENDING/REUSED/INVALID semantics to an in-memory checkpoint."""
+    if synthetic_checkpoint is None:
+        return "PENDING"
+    return (
+        "REUSED"
+        if dict(synthetic_checkpoint) == dict(dispatch.checkpoint_contract)
+        else "INVALID"
+    )
+
+
+def execute_v2_authoritative_fit_with_failure_capture(
+    root: Path, unit: V2AuthoritativeFitWorkUnit
+) -> dict[str, object]:
+    """Execute one V2 FIT and retain only pre-checkpoint failures in staging logs."""
+    from .short_horizon_direction_v2_fit import execute_v2_fit_unit
+
+    if not isinstance(unit, V2AuthoritativeFitWorkUnit):
+        raise CheckpointError("failure capture accepts only authoritative V2 FIT work units")
+    stage = "BINDING"
+
+    def mark(value: str) -> None:
+        nonlocal stage
+        stage = value
+
+    try:
+        binding = unit.shared_fit_binding()
+        return execute_v2_fit_unit(binding, stage_callback=mark)
+    except Exception as exc:
+        timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+        failure_log = root / "staging" / "logs" / f"{unit.identity}.{timestamp}.failure.json"
+        _atomic_write(
+            failure_log,
+            {
+                "timestamp": datetime.now(UTC).isoformat(),
+                "execution_identity": V2_PRODUCTION_EXECUTION_IDENTITY,
+                "work_unit_identity": unit.identity,
+                "phase": unit.phase.value,
+                "stage": stage,
+                "exception_class": type(exc).__name__,
+                "exception_message": str(exc),
+                "traceback": traceback.format_exc(),
+            },
+        )
+        raise
 
 
 @dataclass(frozen=True, slots=True)
@@ -1626,6 +2018,17 @@ class CheckpointError(RuntimeError):
     pass
 
 
+def _checkpoint_execution_binding_digest(
+    unit: WorkUnitV1 | GraphWorkUnitV2 | V2AuthoritativeFitWorkUnit | V2AuthoritativeInputVerifyWorkUnit,
+) -> str:
+    """Select the frozen execution binding without changing the V1 contract."""
+    return (
+        V2_PRODUCTION_EXECUTION_BINDING_DIGEST
+        if isinstance(unit, (V2AuthoritativeFitWorkUnit, V2AuthoritativeInputVerifyWorkUnit))
+        else EXECUTION_BINDING_DIGEST
+    )
+
+
 @dataclass(slots=True)
 class ArtifactIndexV1:
     """Read-only, process-local lookup index for verified result artifacts."""
@@ -1711,7 +2114,10 @@ class ProductionLock:
             self._held = False
 
 
-def _paths(root: Path, unit: WorkUnitV1) -> tuple[Path, Path, Path]:
+def _paths(
+    root: Path,
+    unit: WorkUnitV1 | GraphWorkUnitV2 | V2AuthoritativeFitWorkUnit | V2AuthoritativeInputVerifyWorkUnit,
+) -> tuple[Path, Path, Path]:
     directory = root / CHECKPOINT_ROOT_NAME / unit.phase.value.lower()
     return (
         directory / f"{unit.identity}.result.json",
@@ -1730,7 +2136,10 @@ def _atomic_write(path: Path, payload: Mapping[str, object]) -> None:
     os.replace(pending, path)
 
 
-def verify_checkpoint(root: Path, unit: WorkUnitV1) -> CheckpointStateV1:
+def verify_checkpoint(
+    root: Path,
+    unit: WorkUnitV1 | GraphWorkUnitV2 | V2AuthoritativeFitWorkUnit | V2AuthoritativeInputVerifyWorkUnit,
+) -> CheckpointStateV1:
     artifact, checkpoint, pending = _paths(root, unit)
     if pending.exists() or artifact.with_suffix(artifact.suffix + ".pending").exists():
         return CheckpointStateV1(unit, "INVALID", pending, "non-authoritative partial artifact")
@@ -1745,7 +2154,7 @@ def verify_checkpoint(root: Path, unit: WorkUnitV1) -> CheckpointStateV1:
         return CheckpointStateV1(unit, "INVALID", checkpoint, str(exc))
     expected = {
         "schema": CHECKPOINT_SCHEMA,
-        "execution_binding_digest": EXECUTION_BINDING_DIGEST,
+        "execution_binding_digest": _checkpoint_execution_binding_digest(unit),
         "work_unit": unit.payload(),
         "work_unit_identity": unit.identity,
         "artifact_relative_path": artifact.relative_to(root).as_posix(),
@@ -1759,7 +2168,9 @@ def verify_checkpoint(root: Path, unit: WorkUnitV1) -> CheckpointStateV1:
 
 
 def write_verified_checkpoint(
-    root: Path, unit: WorkUnitV1, result: Mapping[str, object]
+    root: Path,
+    unit: WorkUnitV1 | GraphWorkUnitV2 | V2AuthoritativeFitWorkUnit | V2AuthoritativeInputVerifyWorkUnit,
+    result: Mapping[str, object],
 ) -> CheckpointStateV1:
     existing = verify_checkpoint(root, unit)
     if existing.status == "REUSED":
@@ -1771,11 +2182,11 @@ def write_verified_checkpoint(
     artifact, checkpoint, _ = _paths(root, unit)
     payload = {
         "schema": ARTIFACT_SCHEMA,
-        "execution_binding_digest": EXECUTION_BINDING_DIGEST,
+        "execution_binding_digest": _checkpoint_execution_binding_digest(unit),
         "work_unit": unit.payload(),
         "result": dict(result),
     }
-    if isinstance(unit, GraphWorkUnitV2):
+    if isinstance(unit, (GraphWorkUnitV2, V2AuthoritativeFitWorkUnit, V2AuthoritativeInputVerifyWorkUnit)):
         payload = json.loads(_canonical(payload))
     _atomic_write(artifact, payload)
     reloaded = json.loads(artifact.read_text(encoding="utf-8"))
@@ -1783,7 +2194,7 @@ def write_verified_checkpoint(
         raise CheckpointError(f"artifact reload verification failed for {unit.identity}")
     checkpoint_payload = {
         "schema": CHECKPOINT_SCHEMA,
-        "execution_binding_digest": EXECUTION_BINDING_DIGEST,
+        "execution_binding_digest": _checkpoint_execution_binding_digest(unit),
         "work_unit": unit.payload(),
         "work_unit_identity": unit.identity,
         "artifact_relative_path": artifact.relative_to(root).as_posix(),
@@ -1796,6 +2207,34 @@ def write_verified_checkpoint(
     if verified.status != "REUSED":
         raise CheckpointError(f"checkpoint reload verification failed for {unit.identity}")
     return CheckpointStateV1(unit, "CALCULATED", checkpoint)
+
+
+def write_v2_fit_predictive_evaluation(
+    root: Path, unit: V2AuthoritativeFitWorkUnit, evidence: Mapping[str, object]
+) -> Path:
+    """Atomically persist one exact, FIT-only evaluation payload for a verified V2 unit."""
+    from .short_horizon_direction_v2_fit import V2_FIT_PREDICTIVE_EVALUATION_IDENTITY
+
+    if verify_checkpoint(root, unit).status != "REUSED":
+        raise CheckpointError("predictive evaluation requires a verified authoritative FIT checkpoint")
+    canonical_evidence = json.loads(_canonical(evidence))
+    if (
+        canonical_evidence.get("schema") != V2_FIT_PREDICTIVE_EVALUATION_IDENTITY
+        or canonical_evidence.get("work_unit_identity") != unit.identity
+        or canonical_evidence.get("validation_accessed") is not False
+        or canonical_evidence.get("blind_oos_accessed") is not False
+    ):
+        raise CheckpointError("predictive evaluation binding mismatch")
+    path = root / "staging" / "predictive_fit_evidence" / f"{unit.identity}.json"
+    if path.exists():
+        existing = json.loads(path.read_text(encoding="utf-8"))
+        if existing != canonical_evidence:
+            raise CheckpointError("existing predictive evaluation differs; preserve and fail closed")
+        return path
+    _atomic_write(path, canonical_evidence)
+    if json.loads(path.read_text(encoding="utf-8")) != canonical_evidence:
+        raise CheckpointError("predictive evaluation reload verification failed")
+    return path
 
 
 def checkpoint_inventory(root: Path, units: Sequence[WorkUnitV1]) -> tuple[CheckpointStateV1, ...]:

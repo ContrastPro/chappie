@@ -10,11 +10,24 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
-from .free_v2_analytical_view import ANALYTICAL_ROOT, STATE_NAME_BY_CODE
+from .free_v2_analytical_view import ANALYTICAL_ROOT, ANALYTICAL_VIEW_IDENTITY, STATE_NAME_BY_CODE
 from .free_v2_materializer import FEATURE_ORDER
+from .short_horizon_direction_v2_materializer import (
+    FEATURE_STORE_ROOT as V2_FEATURE_STORE_ROOT,
+)
+from .short_horizon_direction_v2_materializer import (
+    FINAL_FEATURE_ORDER as V2_FEATURE_ORDER,
+)
+from .short_horizon_direction_v2_materializer import (
+    STATE_CODES as V2_STATE_CODES,
+)
+from .short_horizon_direction_v2_materializer import (
+    verify_feature_store,
+)
 from .tsunami_forecast_contract import (
     FEATURE_FAMILY_MEMBERSHIP,
     RESEARCH_END_EXCLUSIVE,
+    RESEARCH_START,
     WALK_FORWARD_FOLDS,
     WalkForwardFoldV1,
 )
@@ -53,6 +66,163 @@ FITTED_MODEL_ARTIFACT_IDENTITY = "CHAPPIE_TSUNAMI_FITTED_MODEL/2.0.0"
 UNDEFINED = "UNAVAILABLE_UNDEFINED"
 
 
+@dataclass(frozen=True, slots=True)
+class FeatureSchema:
+    """Immutable, versioned input binding for the shared fold-engine machinery."""
+
+    identity: str
+    dataset_identity: str
+    dataset_semantic_digest: str
+    manifest_semantic_digest: str
+    feature_order: tuple[str, ...]
+    family_mapping: dict[str, str]
+    research_start: datetime
+    research_end_exclusive: datetime
+
+    @property
+    def feature_count(self) -> int:
+        return len(self.feature_order)
+
+
+V1_FEATURE_SCHEMA = FeatureSchema(
+    "CHAPPIE_CAPITAL_FLOW_TSUNAMI_FEATURE_SCHEMA/1.0.0",
+    ANALYTICAL_VIEW_IDENTITY,
+    ANALYTICAL_SEMANTIC_DIGEST,
+    "c60ab829c5ad31c80b74b34c672f800353edb61d27c4a8eb9dd098acd3c88a21",
+    FEATURE_ORDER,
+    {feature: family for family, members in FEATURE_FAMILY_MEMBERSHIP for feature in members},
+    RESEARCH_START,
+    RESEARCH_END_EXCLUSIVE,
+)
+V2_FEATURE_SCHEMA = FeatureSchema(
+    "CHAPPIE_SHORT_HORIZON_DIRECTION_V2_FEATURE_SCHEMA/1.0.0",
+    "CHAPPIE_SHORT_HORIZON_DIRECTION_V2_FEATURE_STORE/1.0.0",
+    "5f66259f5563ae625606f5a6527e3ba404b647b0346a49823e596d234dff0dfc",
+    "6f95ec4eaf0699af203d386fc636588873ac1ee6f61d2275cf9d6bf992f34071",
+    V2_FEATURE_ORDER,
+    {
+        name: "CAPITAL_FLOW"
+        if index < 15
+        else name.split(".", 1)[0].upper().replace("STRUCTURE", "MARKET_STRUCTURE")
+        for index, name in enumerate(V2_FEATURE_ORDER)
+    },
+    RESEARCH_START,
+    RESEARCH_END_EXCLUSIVE,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class TargetBinding:
+    identity: str
+    target_identity: str
+    target_semantic_digest: str
+    target_manifest_digest: str
+    horizon: str
+    task: str
+    classes: tuple[str, ...]
+    research_start: datetime
+    research_end_exclusive: datetime
+    timestamp_semantics: str
+    available_state: str = "AVAILABLE"
+
+
+@dataclass(frozen=True, slots=True)
+class V2WalkForwardFold:
+    identity: str
+    train_start: datetime
+    train_end_exclusive: datetime
+    assessment_start: datetime
+    assessment_end_exclusive: datetime
+    purge: timedelta = timedelta(hours=4)
+    embargo: timedelta = timedelta(hours=4)
+
+    def __post_init__(self) -> None:
+        if (
+            self.train_end_exclusive + self.purge != self.assessment_start
+            or self.purge != self.embargo
+        ):
+            raise ValueError("V2 fold requires exact four-hour purge/embargo")
+
+
+V2_WALK_FORWARD_IDENTITY = "CHAPPIE_SHORT_HORIZON_DIRECTION_V2_WALK_FORWARD/1.0.0"
+V2_WALK_FORWARD_FOLDS = tuple(
+    V2WalkForwardFold(f"V2_WF{index}", RESEARCH_START, start - timedelta(hours=4), start, end)
+    for index, (start, end) in enumerate(
+        (
+            (datetime(2024, 7, 1, tzinfo=UTC), datetime(2024, 9, 1, tzinfo=UTC)),
+            (datetime(2024, 9, 1, tzinfo=UTC), datetime(2024, 11, 1, tzinfo=UTC)),
+            (datetime(2024, 11, 1, tzinfo=UTC), datetime(2025, 1, 1, tzinfo=UTC)),
+            (datetime(2025, 1, 1, tzinfo=UTC), datetime(2025, 3, 1, tzinfo=UTC)),
+            (datetime(2025, 3, 1, tzinfo=UTC), datetime(2025, 4, 15, tzinfo=UTC)),
+            (datetime(2025, 4, 15, tzinfo=UTC), RESEARCH_END_EXCLUSIVE),
+        ),
+        1,
+    )
+)
+
+
+_V2_TARGET_IDENTITY = "CHAPPIE_CAPITAL_FLOW_TSUNAMI_RESEARCH_TARGETS/1.0.0"
+_V2_TARGET_DIGEST = "11d4323fecc384665cfff30c619598f95337252f155f703af9a9d1b28888eee8"
+_V2_TARGET_MANIFEST_DIGEST = "21f2a3e914528c13b2dd9ef28972969d56ad74b145622566e95f35dfb0a1c682"
+V2_DIRECTION_1H_TARGET_BINDING = TargetBinding(
+    "CHAPPIE_SHORT_HORIZON_DIRECTION_V2_TARGET_BINDING/1h/1.0.0",
+    _V2_TARGET_IDENTITY,
+    _V2_TARGET_DIGEST,
+    _V2_TARGET_MANIFEST_DIGEST,
+    "1h",
+    "DIRECTION",
+    DIRECTION_CLASSES,
+    RESEARCH_START,
+    RESEARCH_END_EXCLUSIVE,
+    "EXACT_FEATURE_TIMESTAMP",
+)
+V2_DIRECTION_4H_TARGET_BINDING = TargetBinding(
+    "CHAPPIE_SHORT_HORIZON_DIRECTION_V2_TARGET_BINDING/4h/1.0.0",
+    _V2_TARGET_IDENTITY,
+    _V2_TARGET_DIGEST,
+    _V2_TARGET_MANIFEST_DIGEST,
+    "4h",
+    "DIRECTION",
+    DIRECTION_CLASSES,
+    RESEARCH_START,
+    RESEARCH_END_EXCLUSIVE,
+    "EXACT_FEATURE_TIMESTAMP",
+)
+
+
+def validate_target_binding(
+    binding: TargetBinding, target_root: Path = RESEARCH_TARGET_ROOT
+) -> None:
+    payload = json.loads((target_root / "manifest.json").read_text(encoding="utf-8"))
+    if (
+        payload.get("target_identity"),
+        payload.get("target_semantic_digest"),
+        payload.get("manifest_semantic_digest"),
+    ) != (binding.target_identity, binding.target_semantic_digest, binding.target_manifest_digest):
+        raise ValueError("target authority digest binding mismatch")
+    if (
+        binding.task != "DIRECTION"
+        or binding.horizon not in ("1h", "4h")
+        or binding.classes != DIRECTION_CLASSES
+    ):
+        raise ValueError("target binding task/horizon/classes mismatch")
+    if (payload.get("research_start"), payload.get("research_end_exclusive")) != (
+        binding.research_start.isoformat(),
+        binding.research_end_exclusive.isoformat(),
+    ):
+        raise ValueError("target Research bounds mismatch")
+
+
+def schema_projection(schema: FeatureSchema, family: str) -> tuple[int, ...]:
+    if family == "FULL_V2" and schema is V2_FEATURE_SCHEMA:
+        return tuple(range(schema.feature_count))
+    return tuple(
+        index
+        for index, name in enumerate(schema.feature_order)
+        if schema.family_mapping[name] == family
+    )
+
+
 def _canonical(value: object) -> bytes:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
 
@@ -72,6 +242,7 @@ class FoldDatasetV1:
     phase: Literal["TRAIN", "ASSESSMENT"]
     horizon: str
     task: str
+    schema: FeatureSchema = V1_FEATURE_SCHEMA
 
     def __post_init__(self) -> None:
         count = len(self.timestamps)
@@ -79,10 +250,10 @@ class FoldDatasetV1:
             len(item) == count for item in (self.values, self.states, self.labels, self.btc_inputs)
         ):
             raise ValueError("fold dataset columns must be aligned and non-empty")
-        if any(item >= RESEARCH_END_EXCLUSIVE for item in self.timestamps):
+        if any(item >= self.schema.research_end_exclusive for item in self.timestamps):
             raise PermissionError("fold dataset may not enter Validation")
-        if any(len(row) != len(FEATURE_ORDER) for row in self.values + self.states):
-            raise ValueError("fold dataset requires exact feature order")
+        if any(len(row) != self.schema.feature_count for row in self.values + self.states):
+            raise ValueError("fold dataset requires exact schema feature order")
 
 
 def _fold(identity: str) -> WalkForwardFoldV1:
@@ -190,6 +361,99 @@ def load_fold_dataset(
     )
 
 
+def load_v2_fold_dataset(
+    fold_identity: str,
+    phase: Literal["TRAIN", "ASSESSMENT"],
+    horizon: str,
+    *,
+    target_root: Path = RESEARCH_TARGET_ROOT,
+    feature_root: Path = V2_FEATURE_STORE_ROOT,
+) -> FoldDatasetV1:
+    """Load V2 features with the existing Research-only target binding and shared dataset type."""
+    evidence = verify_feature_store(feature_root)
+    if (
+        evidence["dataset_semantic_digest"] != V2_FEATURE_SCHEMA.dataset_semantic_digest
+        or evidence["manifest_semantic_digest"] != V2_FEATURE_SCHEMA.manifest_semantic_digest
+    ):
+        raise ValueError("V2 feature-store digest binding mismatch")
+    binding = (
+        V2_DIRECTION_1H_TARGET_BINDING
+        if horizon == "1h"
+        else V2_DIRECTION_4H_TARGET_BINDING
+        if horizon == "4h"
+        else None
+    )
+    if binding is None:
+        raise ValueError("V2 direction binding supports only 1h/4h")
+    validate_target_binding(binding, target_root)
+    fold = next((item for item in V2_WALK_FORWARD_FOLDS if item.identity == fold_identity), None)
+    if fold is None:
+        raise ValueError("V2 execution requires an explicit V2 frozen fold")
+    start, end = _bounds(fold, phase, horizon)
+    import pyarrow as pa
+    import pyarrow.compute as pc
+    import pyarrow.dataset as ds
+
+    paths = sorted((feature_root / "experiment_matrix").glob("year=*/month=*/data.parquet"))
+    target_paths = sorted((target_root / f"horizon={horizon}").glob("year=*/month=*/data.parquet"))
+    columns = ["timestamp_utc"] + [
+        column for name in V2_FEATURE_SCHEMA.feature_order for column in (name, name + "__state")
+    ]
+    predicate = (ds.field("timestamp_utc") >= pa.scalar(start)) & (
+        ds.field("timestamp_utc") < pa.scalar(end)
+    )
+    features = ds.dataset([str(path) for path in paths], format="parquet").to_table(
+        columns=columns, filter=predicate
+    )
+    targets = ds.dataset([str(path) for path in target_paths], format="parquet").to_table(
+        columns=["timestamp_utc", "target_state", "direction_class", "entry_open", "sigma_h"],
+        filter=predicate,
+    )
+    targets = targets.filter(pc.equal(targets["target_state"], "AVAILABLE"))
+    source = features.to_pydict()
+    target = targets.to_pydict()
+    if len(source["timestamp_utc"]) != len(set(source["timestamp_utc"])) or len(
+        target["timestamp_utc"]
+    ) != len(set(target["timestamp_utc"])):
+        raise ValueError("V2 feature/target timestamp must be unique")
+    lookup = {value: index for index, value in enumerate(source["timestamp_utc"])}
+    timestamps = []
+    values = []
+    states = []
+    labels = []
+    btc = []
+    for index, timestamp in enumerate(target["timestamp_utc"]):
+        if timestamp not in lookup or timestamp >= binding.research_end_exclusive:
+            raise PermissionError("V2 target containment failure")
+        row = lookup[timestamp]
+        row_values = tuple(source[name][row] for name in V2_FEATURE_SCHEMA.feature_order)
+        row_states = tuple(
+            source[name + "__state"][row] for name in V2_FEATURE_SCHEMA.feature_order
+        )
+        if any(code not in V2_STATE_CODES.values() for code in row_states):
+            raise ValueError("invalid V2 feature state")
+        timestamps.append(timestamp.astimezone(UTC))
+        values.append(row_values)
+        states.append(row_states)
+        label = str(target["direction_class"][index])
+        if label not in binding.classes:
+            raise ValueError("invalid V2 Direction target class")
+        labels.append(label)
+        btc.append((float(target["entry_open"][index]), float(target["sigma_h"][index])))
+    return FoldDatasetV1(
+        tuple(timestamps),
+        tuple(values),
+        tuple(states),
+        tuple(labels),
+        tuple(btc),
+        fold_identity,
+        phase,
+        horizon,
+        "DIRECTION",
+        V2_FEATURE_SCHEMA,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class PreprocessingV1:
     medians: tuple[float, ...]
@@ -253,7 +517,9 @@ class PreprocessingV1:
             for feature_offset in range(numeric_width):
                 result[
                     rows,
-                    numeric_width + feature_offset * self.state_cardinality + states[:, feature_offset],
+                    numeric_width
+                    + feature_offset * self.state_cardinality
+                    + states[:, feature_offset],
                 ] = 1.0
             for interaction_offset, (left, right) in enumerate(INTERACTION_PAIRS):
                 result[:, numeric_width + state_width + interaction_offset] = (
@@ -269,6 +535,26 @@ class PreprocessingV1:
     @property
     def digest(self) -> str:
         return _digest(asdict(self))
+
+
+def preprocessing_binding_digest(dataset: FoldDatasetV1, feature_indexes: tuple[int, ...]) -> str:
+    """Versioned V2-safe identity; V1's historic PreprocessingV1.digest is unchanged."""
+    selected = tuple(dataset.schema.feature_order[index] for index in feature_indexes)
+    return _digest(
+        {
+            "identity": PREPROCESSING_IDENTITY,
+            "schema_identity": dataset.schema.identity,
+            "dataset_semantic_digest": dataset.schema.dataset_semantic_digest,
+            "manifest_semantic_digest": dataset.schema.manifest_semantic_digest,
+            "feature_order": selected,
+            "state_order": selected,
+            "fold": dataset.fold_identity,
+            "horizon": dataset.horizon,
+            "phase": dataset.phase,
+            "train_only": True,
+            "state_encoding": "ONE_HOT_DETERMINISTIC",
+        }
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -348,9 +634,15 @@ def serialize_fitted_model(
     task: str | None = None,
     horizon: str | None = None,
     calibration_digest: str = CALIBRATION_IDENTITY,
+    schema: FeatureSchema = V1_FEATURE_SCHEMA,
+    target_binding: TargetBinding | None = None,
 ) -> dict[str, object]:
     """Return canonical, path/time-free fitted state sufficient for prediction."""
-    if training_fold_identity not in {item.identity for item in WALK_FORWARD_FOLDS}:
+    valid_folds = {
+        item.identity
+        for item in (V2_WALK_FORWARD_FOLDS if schema is V2_FEATURE_SCHEMA else WALK_FORWARD_FOLDS)
+    }
+    if training_fold_identity not in valid_folds:
         raise ValueError("fitted model requires an exact frozen training fold")
     if isinstance(model, (BaselineProbabilityModelV2, BtcBaselineModelV2)) and (
         task is None or horizon is None
@@ -373,7 +665,7 @@ def serialize_fitted_model(
         "parameters": asdict(model),
         "preprocessing_digest": model.preprocessing_digest,
         "calibration_digest": calibration_digest,
-        "feature_order": list(FEATURE_ORDER),
+        "feature_order": list(schema.feature_order),
         "training_fold_identity": training_fold_identity,
         "task": task,
         "horizon": horizon,
@@ -382,6 +674,25 @@ def serialize_fitted_model(
         "target_manifest_semantic_digest": TARGET_MANIFEST_SEMANTIC_DIGEST,
         "numerical_representation": "IEEE_754_BINARY64",
     }
+    if schema is not V1_FEATURE_SCHEMA:
+        payload.update(
+            {
+                "feature_schema_identity": schema.identity,
+                "dataset_semantic_digest": schema.dataset_semantic_digest,
+                "manifest_semantic_digest": schema.manifest_semantic_digest,
+            }
+        )
+        if target_binding is None:
+            raise ValueError("V2 artifact requires explicit target binding")
+        payload.update(
+            {
+                "fold_schedule_identity": V2_WALK_FORWARD_IDENTITY,
+                "target_semantic_digest": target_binding.target_semantic_digest,
+                "target_manifest_semantic_digest": target_binding.target_manifest_digest,
+            }
+        )
+    if target_binding is not None:
+        payload["target_binding_identity"] = target_binding.identity
     if model.model == "explicit_interaction_candidate":
         payload["interaction_specification"] = "EXACT_PREDECLARED_WITHIN_FAMILY_PAIRS"
     payload["model_semantic_digest"] = _digest(payload)
@@ -393,13 +704,29 @@ def load_fitted_model(
     *,
     expected_preprocessing_digest: str | None = None,
     expected_fold_identity: str | None = None,
+    feature_schema: FeatureSchema = V1_FEATURE_SCHEMA,
+    target_binding: TargetBinding | None = None,
 ) -> ReloadableModel:
     """Validate all bindings and reconstruct fitted state without training data."""
     payload = dict(artifact)
     claimed = payload.pop("model_semantic_digest", None)
     if claimed != _digest(payload):
         raise ValueError("fitted model artifact semantic digest mismatch")
-    if (
+    if feature_schema is V2_FEATURE_SCHEMA:
+        if (
+            target_binding is None
+            or payload.get("feature_schema_identity") != feature_schema.identity
+            or payload.get("dataset_semantic_digest") != feature_schema.dataset_semantic_digest
+            or payload.get("manifest_semantic_digest") != feature_schema.manifest_semantic_digest
+            or payload.get("feature_order") != list(feature_schema.feature_order)
+            or payload.get("target_binding_identity") != target_binding.identity
+            or payload.get("target_semantic_digest") != target_binding.target_semantic_digest
+            or payload.get("target_manifest_semantic_digest")
+            != target_binding.target_manifest_digest
+            or payload.get("fold_schedule_identity") != V2_WALK_FORWARD_IDENTITY
+        ):
+            raise ValueError("V2 fitted model binding mismatch")
+    elif (
         payload.get("identity") != FITTED_MODEL_ARTIFACT_IDENTITY
         or payload.get("feature_order") != list(FEATURE_ORDER)
         or payload.get("analytical_semantic_digest") != ANALYTICAL_SEMANTIC_DIGEST
@@ -770,6 +1097,8 @@ def evaluate_fold(
     feature_indexes: tuple[int, ...] = tuple(range(len(FEATURE_ORDER))),
     l2: float = 0.0,
     interactions: bool = False,
+    schema: FeatureSchema = V1_FEATURE_SCHEMA,
+    target_binding: TargetBinding | None = None,
 ) -> HeldOutEvidenceV1:
     """Fit on TRAIN and persist genuine held-out assessment probabilities and metrics."""
     if (
@@ -874,6 +1203,8 @@ def evaluate_fold(
             training_fold_identity=train.fold_identity,
             task=train.task,
             horizon=train.horizon,
+            schema=schema,
+            target_binding=target_binding,
         )
         if fitted
         else None,

@@ -29,6 +29,8 @@ from .short_horizon_direction_v2_contract import (
     NEW_FEATURES,
     RESEARCH_END_EXCLUSIVE,
     RESEARCH_START,
+    VALIDATION_END_EXCLUSIVE,
+    VALIDATION_START,
 )
 from .tsunami_research_targets import BINANCE_V2_ROOT, BTC_CANONICAL_RELATIVE_PATH
 
@@ -38,6 +40,8 @@ FEATURE_STORE_ROOT = Path(
 MATRIX_ROOT = FEATURE_STORE_ROOT / "experiment_matrix"
 CAPITAL_FLOW_ROOT = Path("E:/projects/chappie/data/research/analytical/capital_flow/free_v2")
 IDENTITY = "CHAPPIE_SHORT_HORIZON_DIRECTION_V2_FEATURE_STORE/1.0.0"
+VALIDATION_FEATURE_STORE_IDENTITY = "CHAPPIE_SHORT_HORIZON_DIRECTION_V2_VALIDATION_FEATURE_STORE/1.0.0"
+VALIDATION_FEATURE_STORE_ROOT = FEATURE_STORE_ROOT / "validation_feature_authority"
 ROW_GROUP_ROWS = 20_160
 COMPRESSION = "zstd"
 STATE_AVAILABLE = "AVAILABLE"
@@ -260,6 +264,69 @@ def manifest_semantic_digest(manifest: dict[str, object]) -> str:
     payload.pop("root", None)
     payload.pop("created_at", None)
     return _digest(payload)
+
+
+@dataclass(frozen=True, slots=True)
+class ValidationFeatureStoreV2:
+    """Immutable manifest contract for the sealed V2 Validation feature authority."""
+
+    row_count: int
+    first_timestamp: str
+    last_timestamp: str
+    source_authority_identity: str = BINANCE_BREADTH_AUTHORITY_V2_IDENTITY
+    source_authority_digest: str = BINANCE_V2_AUTHORITY_DIGEST
+
+    def payload(self) -> dict[str, object]:
+        return {
+            "identity": VALIDATION_FEATURE_STORE_IDENTITY,
+            "phase": "VALIDATION",
+            "experiment_identity": EXPERIMENT_IDENTITY,
+            "start": VALIDATION_START.isoformat(),
+            "end_exclusive": VALIDATION_END_EXCLUSIVE.isoformat(),
+            "feature_schema_identity": IDENTITY,
+            "feature_semantic_digest": _feature_definition_digest(),
+            "source_authority_identity": self.source_authority_identity,
+            "source_authority_digest": self.source_authority_digest,
+            "row_count": self.row_count,
+            "first_timestamp": self.first_timestamp,
+            "last_timestamp": self.last_timestamp,
+            "publication_version": "validation-authority-v1",
+        }
+
+    def manifest(self) -> dict[str, object]:
+        payload = self.payload()
+        payload["manifest_semantic_digest"] = _digest(payload)
+        return payload
+
+
+def verify_validation_feature_manifest(manifest: dict[str, object]) -> dict[str, object]:
+    """Fail closed on any drift from the single frozen Validation authority contract."""
+    claimed = manifest.get("manifest_semantic_digest")
+    payload = dict(manifest)
+    payload.pop("manifest_semantic_digest", None)
+    if not isinstance(claimed, str) or claimed != _digest(payload):
+        raise ValueError("Validation feature manifest semantic digest mismatch")
+    expected = {
+        "identity": VALIDATION_FEATURE_STORE_IDENTITY,
+        "phase": "VALIDATION",
+        "experiment_identity": EXPERIMENT_IDENTITY,
+        "start": VALIDATION_START.isoformat(),
+        "end_exclusive": VALIDATION_END_EXCLUSIVE.isoformat(),
+        "feature_schema_identity": IDENTITY,
+        "feature_semantic_digest": _feature_definition_digest(),
+        "source_authority_identity": BINANCE_BREADTH_AUTHORITY_V2_IDENTITY,
+        "source_authority_digest": BINANCE_V2_AUTHORITY_DIGEST,
+        "publication_version": "validation-authority-v1",
+    }
+    if any(payload.get(key) != value for key, value in expected.items()):
+        raise ValueError("Validation feature manifest contract mismatch")
+    rows = payload.get("row_count")
+    first, last = payload.get("first_timestamp"), payload.get("last_timestamp")
+    if not isinstance(rows, int) or rows <= 0 or not isinstance(first, str) or not isinstance(last, str):
+        raise ValueError("Validation feature manifest row evidence invalid")
+    if first < expected["start"] or last < first or last >= expected["end_exclusive"]:
+        raise ValueError("Validation feature manifest timestamp boundary mismatch")
+    return {**payload, "manifest_semantic_digest": claimed}
 
 
 def verify_manifest(path: Path) -> dict[str, object]:
@@ -881,6 +948,372 @@ def build_new_features(minute):  # type: ignore[no-untyped-def]
         np.sign(asof(features["breakout_20h"])) + np.sign(asof(features["swing_trend_4h"]))
     ) / 2
     return out.reindex(columns=tuple(item.name for item in NEW_FEATURES))
+
+
+def _load_validation_btc_minute_source(source_root: Path):  # type: ignore[no-untyped-def]
+    """Load the causal BTC prefix needed to calculate the sealed Validation rows.
+
+    The calculation deliberately starts at the frozen Research start rather than
+    at the Validation boundary: rolling and EMA values at 2025-06-01 must retain
+    precisely the same history they had in the Research materialization.
+    """
+    import numpy as np
+    import pandas as pd
+
+    _source_manifest(source_root)
+    path = Path(source_root) / BTC_CANONICAL_RELATIVE_PATH
+    frame = pd.read_csv(path)
+    if tuple(frame.columns) != BINANCE_BREADTH_V2_SCHEMA:
+        raise ValueError("BTC Validation source schema mismatch")
+    timestamp = pd.to_datetime(frame["open_time_ms"], unit="ms", utc=True)
+    required_start = pd.Timestamp(RESEARCH_START)
+    required_end = pd.Timestamp(VALIDATION_END_EXCLUSIVE)
+    selected = (timestamp >= required_start) & (timestamp < required_end)
+    frame, timestamp = frame.loc[selected].reset_index(drop=True), timestamp.loc[selected].reset_index(
+        drop=True
+    )
+    expected = int((VALIDATION_END_EXCLUSIVE - RESEARCH_START) / timedelta(minutes=1))
+    if len(frame) != expected:
+        raise ValueError("incomplete BTC prefix required for Validation features")
+    if (
+        not timestamp.is_monotonic_increasing
+        or timestamp.duplicated().any()
+        or timestamp.iloc[0] != required_start
+        or timestamp.iloc[-1] != required_end - pd.Timedelta(minutes=1)
+        or not (timestamp.diff().dropna() == pd.Timedelta(minutes=1)).all()
+    ):
+        raise ValueError("BTC Validation source timestamp continuity/boundary violation")
+    numeric = frame[["open", "high", "low", "close", "volume"]].apply(
+        pd.to_numeric, errors="coerce"
+    )
+    if (
+        not np.isfinite(numeric.to_numpy()).all()
+        or (numeric[["open", "high", "low", "close"]] <= 0).any().any()
+        or (numeric["volume"] < 0).any()
+    ):
+        raise ValueError("BTC Validation source OHLCV finite/positive validation failed")
+    minute = numeric.set_index(timestamp)
+    minute.index.name = "timestamp_utc"
+    return minute
+
+
+def _load_validation_capital_flow_features(  # type: ignore[no-untyped-def]
+    timestamps, capital_flow_root: Path
+):
+    """Load exactly the frozen capital-flow columns for Validation timestamps."""
+    import pandas as pd
+    import pyarrow.parquet as pq
+
+    pieces = []
+    for period in timestamps.to_period("M").unique():
+        path = (
+            Path(capital_flow_root)
+            / "partitions"
+            / f"year={period.year}"
+            / f"month={period.month:02d}"
+            / "data.parquet"
+        )
+        if not path.exists():
+            raise FileNotFoundError(f"missing Validation capital-flow partition: {path}")
+        piece = pq.read_table(path).to_pandas().drop(columns=["year", "month"], errors="ignore")
+        required = _projection_columns(CAPITAL_FLOW_FEATURE_ORDER)
+        if set(required).difference(piece.columns):
+            raise ValueError(f"Validation capital-flow partition schema mismatch: {path}")
+        piece = piece.loc[:, required]
+        piece["timestamp_utc"] = pd.to_datetime(piece["timestamp_utc"], utc=True)
+        pieces.append(piece)
+    capital_flow = pd.concat(pieces, ignore_index=True).set_index("timestamp_utc")
+    capital_flow = capital_flow.reindex(timestamps)
+    if capital_flow.index.duplicated().any() or capital_flow.isna().all(axis=1).any():
+        raise ValueError("Validation capital-flow timestamp coverage mismatch")
+    return capital_flow
+
+
+def build_validation_feature_matrix(
+    source_root: Path = BINANCE_V2_ROOT,
+    capital_flow_root: Path = CAPITAL_FLOW_ROOT,
+):  # type: ignore[no-untyped-def]
+    """Construct frozen V2 Validation feature rows, without targets or scoring.
+
+    This is intentionally an in-memory construction step.  Publication and its
+    Validation manifest remain separate so this function cannot create a target,
+    candidate, model, or score authority.
+    """
+    import numpy as np
+    import pandas as pd
+
+    minute = _load_validation_btc_minute_source(Path(source_root))
+    new = build_new_features(minute)
+    if tuple(new.columns) != FINAL_FEATURE_ORDER[len(CAPITAL_FLOW_FEATURE_ORDER) :]:
+        raise RuntimeError("frozen V2 Validation technical feature order drift")
+    start, end = pd.Timestamp(VALIDATION_START), pd.Timestamp(VALIDATION_END_EXCLUSIVE)
+    new = new.loc[(new.index >= start) & (new.index < end)]
+    expected = int((VALIDATION_END_EXCLUSIVE - VALIDATION_START) / timedelta(minutes=1))
+    if (
+        len(new) != expected
+        or new.index.empty
+        or new.index[0] != start
+        or new.index[-1] != end - pd.Timedelta(minutes=1)
+        or not (new.index.diff()[1:] == pd.Timedelta(minutes=1)).all()
+    ):
+        raise ValueError("Validation technical feature timestamp boundary mismatch")
+    capital_flow = _load_validation_capital_flow_features(new.index, Path(capital_flow_root))
+    values: dict[str, object] = {}
+    for feature in CAPITAL_FLOW_FEATURE_ORDER:
+        values[feature] = capital_flow[feature]
+        values[f"{feature}__state"] = capital_flow[f"{feature}__state"]
+    for feature in new.columns:
+        values[feature] = new[feature]
+        values[f"{feature}__state"] = np.where(
+            np.isfinite(new[feature].to_numpy(dtype=float)),
+            STATE_CODES[STATE_AVAILABLE],
+            STATE_CODES[STATE_INSUFFICIENT_HISTORY],
+        ).astype("uint8")
+    ordered = _projection_columns(FINAL_FEATURE_ORDER)
+    final = pd.DataFrame(values, index=new.index)
+    final.index.name = "timestamp_utc"
+    final = final.reset_index().reindex(columns=ordered)
+    result_timestamps = pd.to_datetime(final["timestamp_utc"], utc=True)
+    if (result_timestamps < start).any() or (result_timestamps >= end).any():
+        raise ValueError("Validation feature matrix returned out-of-bound timestamp")
+    return final
+
+
+def _validation_dataset_semantic_digest(
+    partitions: list[dict[str, object]], quality: dict[str, object]
+) -> str:
+    return _digest(
+        {
+            "dataset_identity": VALIDATION_FEATURE_STORE_IDENTITY,
+            "experiment_identity": EXPERIMENT_IDENTITY,
+            "source_identity": BINANCE_BREADTH_AUTHORITY_V2_IDENTITY,
+            "source_digest": BINANCE_V2_AUTHORITY_DIGEST,
+            "feature_schema_identity": IDENTITY,
+            "feature_semantic_digest": _feature_definition_digest(),
+            "feature_order": list(FINAL_FEATURE_ORDER),
+            "state_mapping": STATE_CODES,
+            "validation_bounds": [VALIDATION_START.isoformat(), VALIDATION_END_EXCLUSIVE.isoformat()],
+            "partitions": [
+                {key: item[key] for key in ("partition", "semantic_sha256", "row_count")}
+                for item in partitions
+            ],
+            "quality": quality,
+        }
+    )
+
+
+def _validation_quality(partitions: list[dict[str, object]]) -> dict[str, object]:
+    """Reconcile feature/state evidence from canonical Validation partitions."""
+    if not partitions:
+        raise ValueError("Validation publication has no partitions")
+    total = sum(int(item["row_count"]) for item in partitions)
+    violations = {
+        key: sum(int(item["violations"][key]) for item in partitions)
+        for key in partitions[0]["violations"]  # type: ignore[index]
+    }
+    features: dict[str, object] = {}
+    for feature in FINAL_FEATURE_ORDER:
+        states = {
+            state: sum(int(item["feature_counts"][feature]["states"][state]) for item in partitions)
+            for state in STATE_CODES
+        }  # type: ignore[index]
+        features[feature] = {
+            "states": states,
+            "null": sum(int(item["feature_counts"][feature]["null"]) for item in partitions),
+            "non_null": sum(
+                int(item["feature_counts"][feature]["non_null"]) for item in partitions
+            ),
+            "finite_available": sum(
+                int(item["feature_counts"][feature]["finite_available"]) for item in partitions
+            ),
+        }  # type: ignore[index]
+        counts = features[feature]
+        if (
+            sum(counts["states"].values()) != total
+            or counts["states"][STATE_AVAILABLE] != counts["finite_available"]
+            or counts["non_null"] != counts["finite_available"]
+        ):  # type: ignore[index]
+            raise ValueError(f"Validation feature state reconciliation failed: {feature}")
+    if any(violations.values()):
+        raise ValueError("Validation partition quality violations")
+    return {
+        "row_count": total,
+        "first_timestamp": partitions[0]["first_timestamp"],
+        "last_timestamp": partitions[-1]["last_timestamp"],
+        "violations": violations,
+        "feature_counts": features,
+    }
+
+
+def verify_validation_feature_store(root: Path = VALIDATION_FEATURE_STORE_ROOT) -> dict[str, object]:
+    """Reload and fail closed on every persisted Validation feature authority binding."""
+    import pandas as pd
+    import pyarrow.parquet as pq
+
+    root = Path(root)
+    manifest_path = root / "manifest.json"
+    if not manifest_path.exists():
+        raise FileNotFoundError("Validation feature manifest is not published")
+    manifest = verify_validation_feature_manifest(json.loads(manifest_path.read_text(encoding="utf-8")))
+    if manifest.get("feature_order") != list(FINAL_FEATURE_ORDER) or manifest.get(
+        "availability_states"
+    ) != STATE_CODES:
+        raise ValueError("Validation feature schema/state binding mismatch")
+    inventory = manifest.get("partitions")
+    expected_partition_count = len(
+        pd.period_range(
+            pd.Timestamp(VALIDATION_START),
+            pd.Timestamp(VALIDATION_END_EXCLUSIVE) - pd.Timedelta(minutes=1),
+            freq="M",
+        )
+    )
+    if not isinstance(inventory, list) or len(inventory) != expected_partition_count:
+        raise ValueError("Validation partition inventory mismatch")
+    expected_columns = _projection_columns(FINAL_FEATURE_ORDER)
+    persisted: list[dict[str, object]] = []
+    for item in inventory:
+        if not isinstance(item, dict) or not isinstance(item.get("partition"), str):
+            raise TypeError("invalid Validation partition inventory item")
+        partition = str(item["partition"])
+        data = root / "experiment_matrix" / partition / "data.parquet"
+        checkpoint = root / "experiment_matrix" / partition / "checkpoint.json"
+        if not data.exists() or not checkpoint.exists():
+            raise ValueError(f"missing Validation partition artifact: {partition}")
+        # ParquetFile avoids Hive partition inference adding year/month columns.
+        table = pq.ParquetFile(data).read()
+        if table.column_names != expected_columns:
+            raise ValueError(f"Validation persisted column order mismatch: {partition}")
+        raw = table.to_pandas()
+        timestamps = pd.to_datetime(raw["timestamp_utc"], utc=True)
+        if (
+            timestamps.duplicated().any()
+            or not timestamps.is_monotonic_increasing
+            or (len(timestamps) > 1 and not (timestamps.diff().dropna() == pd.Timedelta(minutes=1)).all())
+            or (timestamps < pd.Timestamp(VALIDATION_START)).any()
+            or (timestamps >= pd.Timestamp(VALIDATION_END_EXCLUSIVE)).any()
+        ):
+            raise ValueError(f"Validation persisted timestamp violation: {partition}")
+        evidence = verify_persisted_partition(data)
+        if {"partition": partition, **evidence} != item:
+            raise ValueError(f"Validation partition evidence mismatch: {partition}")
+        check = json.loads(checkpoint.read_text(encoding="utf-8"))
+        binding = {
+            "dataset_identity": VALIDATION_FEATURE_STORE_IDENTITY,
+            "experiment_identity": EXPERIMENT_IDENTITY,
+            "feature_schema_identity": IDENTITY,
+            "feature_semantic_digest": _feature_definition_digest(),
+            "source_identity": BINANCE_BREADTH_AUTHORITY_V2_IDENTITY,
+            "source_digest": BINANCE_V2_AUTHORITY_DIGEST,
+            "partition": partition,
+        }
+        if check.get("status") != "VERIFIED" or check.get("binding") != binding or check.get(
+            "evidence"
+        ) != evidence:
+            raise ValueError(f"Validation checkpoint mismatch: {partition}")
+        persisted.append({"partition": partition, **evidence})
+    persisted.sort(key=lambda item: str(item["partition"]))
+    for previous, current in pairwise(persisted):
+        if pd.Timestamp(current["first_timestamp"]) - pd.Timestamp(previous["last_timestamp"]) != pd.Timedelta(
+            minutes=1
+        ):
+            raise ValueError("Validation partition continuity mismatch")
+    quality = _validation_quality(persisted)
+    expected_rows = int((VALIDATION_END_EXCLUSIVE - VALIDATION_START) / timedelta(minutes=1))
+    if (
+        quality["row_count"] != expected_rows
+        or quality["first_timestamp"] != _timestamp_text(VALIDATION_START)
+        or quality["last_timestamp"] != _timestamp_text(VALIDATION_END_EXCLUSIVE - timedelta(minutes=1))
+    ):
+        raise ValueError("Validation whole-dataset bounds mismatch")
+    if (
+        manifest.get("quality") != quality
+        or manifest.get("dataset_semantic_digest") != _validation_dataset_semantic_digest(persisted, quality)
+    ):
+        raise ValueError("Validation dataset evidence binding mismatch")
+    return manifest
+
+
+def materialize_validation_only(
+    root: Path = VALIDATION_FEATURE_STORE_ROOT,
+    source_root: Path = BINANCE_V2_ROOT,
+    capital_flow_root: Path = CAPITAL_FLOW_ROOT,
+) -> dict[str, object]:
+    """Create-only publication of the frozen Validation feature authority."""
+    import pandas as pd
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    root = Path(root)
+    manifest_path = root / "manifest.json"
+    if manifest_path.exists():
+        verified = verify_validation_feature_store(root)
+        return {"reused": True, **verified}
+    if root.exists():
+        raise FileExistsError("Validation artifact root exists without a final canonical manifest")
+    matrix = build_validation_feature_matrix(source_root, capital_flow_root)
+    expected_columns = _projection_columns(FINAL_FEATURE_ORDER)
+    if list(matrix.columns) != expected_columns:
+        raise ValueError("Validation matrix frozen column order mismatch before publication")
+    timestamps = pd.to_datetime(matrix["timestamp_utc"], utc=True)
+    if (
+        timestamps.duplicated().any()
+        or not timestamps.is_monotonic_increasing
+        or (timestamps < pd.Timestamp(VALIDATION_START)).any()
+        or (timestamps >= pd.Timestamp(VALIDATION_END_EXCLUSIVE)).any()
+    ):
+        raise ValueError("Validation matrix boundary violation before publication")
+    partitions: list[dict[str, object]] = []
+    for period, piece in matrix.groupby(timestamps.dt.to_period("M"), sort=True):
+        partition = f"year={period.year}/month={period.month:02d}"
+        directory = root / "experiment_matrix" / partition
+        data = directory / "data.parquet"
+        checkpoint = directory / "checkpoint.json"
+        directory.mkdir(parents=True, exist_ok=False)
+        temporary = data.with_suffix(".parquet.partial")
+        pq.write_table(
+            pa.Table.from_pandas(piece, preserve_index=False),
+            temporary,
+            compression=COMPRESSION,
+            compression_level=9,
+            row_group_size=ROW_GROUP_ROWS,
+        )
+        evidence = verify_persisted_partition(temporary)
+        os.replace(temporary, data)
+        evidence = verify_persisted_partition(data, expected=evidence)
+        binding = {
+            "dataset_identity": VALIDATION_FEATURE_STORE_IDENTITY,
+            "experiment_identity": EXPERIMENT_IDENTITY,
+            "feature_schema_identity": IDENTITY,
+            "feature_semantic_digest": _feature_definition_digest(),
+            "source_identity": BINANCE_BREADTH_AUTHORITY_V2_IDENTITY,
+            "source_digest": BINANCE_V2_AUTHORITY_DIGEST,
+            "partition": partition,
+        }
+        _atomic_json(
+            checkpoint,
+            {"status": "VERIFIED", "partition": partition, "binding": binding, "evidence": evidence},
+        )
+        partitions.append({"partition": partition, **evidence})
+    partitions.sort(key=lambda item: str(item["partition"]))
+    quality = _validation_quality(partitions)
+    manifest = ValidationFeatureStoreV2(
+        row_count=int(quality["row_count"]),
+        first_timestamp=str(quality["first_timestamp"]),
+        last_timestamp=str(quality["last_timestamp"]),
+    ).payload()
+    manifest.update(
+        {
+            "feature_order": list(FINAL_FEATURE_ORDER),
+            "availability_states": STATE_CODES,
+            "partitions": partitions,
+            "quality": quality,
+            "dataset_semantic_digest": _validation_dataset_semantic_digest(partitions, quality),
+        }
+    )
+    manifest["manifest_semantic_digest"] = _digest(manifest)
+    _atomic_json(manifest_path, manifest)
+    verified = verify_validation_feature_store(root)
+    return {"reused": False, **verified}
 
 
 @dataclass(slots=True)
